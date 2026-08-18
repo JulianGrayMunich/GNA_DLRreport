@@ -2756,6 +2756,405 @@ namespace GNA_DLRreport
 
         #endregion
 
+
+        #region Project Rename
+
+        private async void ProjectNameTextBox_LostFocus(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Validate Event Source
+
+            if (sender is not TextBox projectNameTextBox)
+            {
+                throw new InvalidOperationException(
+                    "Project-name edit was raised by an invalid control.");
+            }
+
+            if (projectNameTextBox.DataContext
+                is not ProjectConfigurationItem selectedProject)
+            {
+                throw new InvalidOperationException(
+                    "Project-name edit does not contain a valid project.");
+            }
+
+            #endregion
+
+
+            #region Read Edited Project Name
+
+            string newProjectName =
+                projectNameTextBox.Text?.Trim()
+                ?? throw new InvalidOperationException(
+                    "Project-name edit control returned null.");
+
+            string originalProjectName =
+                selectedProject.OriginalProjectName?.Trim()
+                ?? throw new InvalidOperationException(
+                    "Original project name is not available.");
+
+            #endregion
+
+
+            #region Handle Unchanged Project Name
+
+            if (string.Equals(
+                a: newProjectName,
+                b: originalProjectName,
+                comparisonType: StringComparison.Ordinal))
+            {
+                selectedProject.ProjectName =
+                    originalProjectName;
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Validate Edited Project Name
+
+            if (string.IsNullOrWhiteSpace(newProjectName))
+            {
+                selectedProject.ProjectName =
+                    originalProjectName;
+
+                projectNameTextBox.Text =
+                    originalProjectName;
+
+                txtProjectManagementStatus.Text =
+                    "Project name cannot be blank.";
+
+                return;
+            }
+
+            if (newProjectName.Length > 200)
+            {
+                selectedProject.ProjectName =
+                    originalProjectName;
+
+                projectNameTextBox.Text =
+                    originalProjectName;
+
+                txtProjectManagementStatus.Text =
+                    "Project name cannot exceed 200 characters.";
+
+                return;
+            }
+
+            #endregion
+
+
+            try
+            {
+                #region Rename Project In Database
+
+                await RenameProjectAsync(
+                    projectId: selectedProject.Project_ID,
+                    originalProjectName: originalProjectName,
+                    newProjectName: newProjectName);
+
+                #endregion
+
+
+                #region Update Local Project Item
+
+                selectedProject.ProjectName =
+                    newProjectName;
+
+                selectedProject.OriginalProjectName =
+                    newProjectName;
+
+                #endregion
+
+
+                #region Update Active Project Runtime State
+
+                if (_activeProjectId.HasValue &&
+                    _activeProjectId.Value == selectedProject.Project_ID)
+                {
+                    // Project_ID remains the authoritative operational identity.
+                    //
+                    // Only the process-local display name changes.
+
+                    _activeProjectName =
+                        newProjectName;
+
+                    txtActiveProject.Text =
+                        newProjectName;
+
+                    #region Update Persisted Startup Name Safely
+
+                    UpdatePersistedActiveProjectNameIfCurrent(
+                        projectId: selectedProject.Project_ID,
+                        projectName: newProjectName);
+
+                    #endregion
+                }
+
+                #endregion
+
+
+                #region Report Successful Rename
+
+                txtProjectManagementStatus.Text =
+                    $"Project renamed to '{newProjectName}'.";
+
+                #endregion
+            }
+
+            #region Handle Duplicate Project Name
+
+            catch (SqlException ex)
+                when (ex.Number == 2601 ||
+                      ex.Number == 2627)
+            {
+                await LoadProjectsAsync();
+
+                txtProjectManagementStatus.Text =
+                    $"Project name '{newProjectName}' already exists.";
+            }
+
+            #endregion
+
+
+            #region Handle Rename Errors
+
+            catch (Exception ex)
+            {
+                // SQL remains authoritative.
+                // Reload the complete list to remove any uncommitted UI value.
+
+                await LoadProjectsAsync();
+
+                txtProjectManagementStatus.Text =
+                    $"Unable to rename project: {ex.Message}";
+            }
+
+            #endregion
+        }
+
+
+        private async Task RenameProjectAsync(
+            int projectId,
+            string originalProjectName,
+            string newProjectName)
+        {
+            #region Validate Project ID
+
+            if (projectId <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    paramName: nameof(projectId),
+                    message: "Project_ID must be greater than zero.");
+            }
+
+            #endregion
+
+
+            #region Validate Original Project Name
+
+            string validatedOriginalProjectName =
+                originalProjectName?.Trim()
+                ?? throw new ArgumentNullException(
+                    paramName: nameof(originalProjectName));
+
+            if (string.IsNullOrWhiteSpace(validatedOriginalProjectName))
+            {
+                throw new ArgumentException(
+                    message: "Original project name cannot be empty.",
+                    paramName: nameof(originalProjectName));
+            }
+
+            #endregion
+
+
+            #region Validate New Project Name
+
+            string validatedNewProjectName =
+                newProjectName?.Trim()
+                ?? throw new ArgumentNullException(
+                    paramName: nameof(newProjectName));
+
+            if (string.IsNullOrWhiteSpace(validatedNewProjectName))
+            {
+                throw new ArgumentException(
+                    message: "New project name cannot be empty.",
+                    paramName: nameof(newProjectName));
+            }
+
+            if (validatedNewProjectName.Length > 200)
+            {
+                throw new ArgumentException(
+                    message: "New project name cannot exceed 200 characters.",
+                    paramName: nameof(newProjectName));
+            }
+
+            #endregion
+
+
+            #region Read Database Connection String
+
+            string connectionString =
+                txtDbConnectionString.Text?.Trim()
+                ?? throw new InvalidOperationException(
+                    "Database connection string control returned null.");
+
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                throw new InvalidOperationException(
+                    "Database connection string has not been configured.");
+            }
+
+            #endregion
+
+
+            #region Build Database Connection String
+
+            SqlConnectionStringBuilder databaseConnectionBuilder =
+                new(
+                    connectionString: connectionString)
+                {
+                    InitialCatalog = TrackGeometryDatabaseName
+                };
+
+            #endregion
+
+
+            #region Define Rename Command
+
+            const string renameProjectSql = """
+        UPDATE [dbo].[Project]
+        SET
+            [ProjectName] = @NewProjectName
+        WHERE
+            [Project_ID] = @Project_ID
+            AND [ProjectName] = @OriginalProjectName;
+        """;
+
+            #endregion
+
+
+            #region Rename Project
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        databaseConnectionBuilder.ConnectionString);
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand renameProjectCommand =
+                new(
+                    cmdText: renameProjectSql,
+                    connection: databaseConnection);
+
+            renameProjectCommand.Parameters.AddWithValue(
+                parameterName: "@Project_ID",
+                value: projectId);
+
+            renameProjectCommand.Parameters.AddWithValue(
+                parameterName: "@OriginalProjectName",
+                value: validatedOriginalProjectName);
+
+            renameProjectCommand.Parameters.AddWithValue(
+                parameterName: "@NewProjectName",
+                value: validatedNewProjectName);
+
+            int affectedRows =
+                await renameProjectCommand.ExecuteNonQueryAsync();
+
+            if (affectedRows != 1)
+            {
+                throw new InvalidOperationException(
+                    $"Project_ID {projectId} could not be renamed because its " +
+                    "database state changed after this Project Management window " +
+                    "was loaded.");
+            }
+
+            #endregion
+        }
+
+
+        private static void UpdatePersistedActiveProjectNameIfCurrent(
+            int projectId,
+            string projectName)
+        {
+            #region Validate Parameters
+
+            if (projectId <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    paramName: nameof(projectId),
+                    message: "Project_ID must be greater than zero.");
+            }
+
+            string validatedProjectName =
+                projectName?.Trim()
+                ?? throw new ArgumentNullException(
+                    paramName: nameof(projectName));
+
+            if (string.IsNullOrWhiteSpace(validatedProjectName))
+            {
+                throw new ArgumentException(
+                    message: "Project name cannot be empty.",
+                    paramName: nameof(projectName));
+            }
+
+            #endregion
+
+
+            #region Open Persisted Startup Configuration
+
+            using RegistryKey? registryKey =
+                Registry.CurrentUser.OpenSubKey(
+                    name: RegistryPath,
+                    writable: true);
+
+            if (registryKey is null)
+            {
+                return;
+            }
+
+            #endregion
+
+
+            #region Verify Persisted Startup Project
+
+            object? persistedProjectIdValue =
+                registryKey.GetValue(
+                    name: RegistryActiveProjectId,
+                    defaultValue: null);
+
+            if (persistedProjectIdValue is not int persistedProjectId ||
+                persistedProjectId != projectId)
+            {
+                // Another running instance has changed the persisted startup
+                // project since this process started.
+                //
+                // Do not overwrite that newer startup default.
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Update Persisted Project Name
+
+            registryKey.SetValue(
+                name: RegistryActiveProjectName,
+                value: validatedProjectName,
+                valueKind: RegistryValueKind.String);
+
+            #endregion
+        }
+
+        #endregion
+
+
+
+
         #region Project Soft Delete And Restore
 
         private async void DeletedProjectCheckBox_Click(
@@ -2829,7 +3228,15 @@ namespace GNA_DLRreport
             {
                 #region Update Project Deleted State
 
+                // Persist the requested soft-delete or restore state to SQL Server.
+                //
+                // SetProjectDeletedStateAsync() also enforces the cross-instance rule:
+                // deletion requires an Exclusive application lock and therefore cannot
+                // proceed while the project is active in another running instance.
 
+                await SetProjectDeletedStateAsync(
+                    projectId: selectedProject.Project_ID,
+                    isDeleted: requestedDeletedState);
 
                 #endregion
 
