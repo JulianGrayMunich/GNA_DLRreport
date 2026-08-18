@@ -5,60 +5,111 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:GNA_DLRreport"
         mc:Ignorable="d"
-        Title="DLR Report" Height="590" Width="960"
-        Background="LightGray"  FontFamily="Arial" FontSize="12" 
-        ResizeMode="NoResize" Cursor="Arrow" 
-        WindowStartupLocation="CenterScreen" >
+        Title="DLR Report"
+        Height="590"
+        Width="960"
+        Background="LightGray"
+        FontFamily="Arial"
+        FontSize="12"
+        ResizeMode="NoResize"
+        Cursor="Arrow"
+        WindowStartupLocation="CenterScreen">
 
-        <Grid>
-        <Grid>
+    <Grid>
 
-            <TabControl>
+        <!-- #region MAIN TAB CONTROL -->
 
-                <TabItem Header="Tab 1">
-                    <Grid>
+        <TabControl>
 
-                    </Grid>
-                </TabItem>
 
-                <TabItem Header="Housekeeping">
-                    <Grid Margin="20">
 
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="20"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="*"/>
-                        </Grid.RowDefinitions>
+            <!-- #region REPORT GENERATION TAB -->
 
-                        <!-- ========================================================= -->
-                        <!-- DATABASE CONNECTION                                      -->
-                        <!-- ========================================================= -->
+            <TabItem Header="Report Generation">
 
-                        <GroupBox Grid.Row="0"
-                  Header="Database Connection"
-                  Padding="15">
+                <Grid Margin="20">
 
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="10"/>
-                                    <RowDefinition Height="Auto"/>
-                                </Grid.RowDefinitions>
+                    <!-- #region REPORT GENERATION BUTTONS -->
 
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="140"/>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="15"/>
-                                    <ColumnDefinition Width="130"/>
-                                </Grid.ColumnDefinitions>
+                    <StackPanel Width="220"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center">
 
-                                <TextBlock Grid.Row="0"
-                           Grid.Column="0"
-                           VerticalAlignment="Center"
-                           Text="Connection string:"/>
+                        <!-- #region REPORT SCHEDULER BUTTON -->
 
-                                <TextBox x:Name="txtDbConnectionString"
+                        <Button x:Name="btnReportScheduler"
+                    Height="35"
+                    Margin="0,0,0,12"
+                    Content="Report Scheduler"/>
+
+                        <!-- #endregion -->
+
+
+                        <!-- #region REPORT GENERATION BUTTON -->
+
+                        <Button x:Name="btnReportGeneration"
+                    Height="35"
+                    Content="Report Generation"/>
+
+                        <!-- #endregion -->
+
+                    </StackPanel>
+
+                    <!-- #endregion -->
+
+                </Grid>
+
+            </TabItem>
+
+            <!-- #endregion -->
+
+
+
+
+            <!-- #region HOUSEKEEPING TAB -->
+
+            <TabItem Header="Housekeeping">
+
+                <Grid Margin="20">
+
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="20"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+
+                    <!-- #region DATABASE CONNECTION -->
+
+                    <GroupBox Grid.Row="0"
+                              Header="Database Connection"
+                              Padding="15">
+
+                        <Grid>
+
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="10"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="140"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="15"/>
+                                <ColumnDefinition Width="130"/>
+                            </Grid.ColumnDefinitions>
+
+
+                            <!-- #region CONNECTION STRING -->
+
+                            <TextBlock Grid.Row="0"
+                                       Grid.Column="0"
+                                       VerticalAlignment="Center"
+                                       Text="Connection string:"/>
+
+                            <TextBox x:Name="txtDbConnectionString"
                                      Grid.Row="0"
                                      Grid.Column="1"
                                      Height="52"
@@ -67,61 +118,67 @@
                                      HorizontalScrollBarVisibility="Auto"
                                      TextWrapping="Wrap"/>
 
-                                <Button x:Name="btnTestDbConnection"
+                            <!-- #endregion -->
+
+
+                            <!-- #region TEST DATABASE CONNECTION -->
+
+                            <Button x:Name="btnTestDbConnection"
                                     Grid.Row="0"
                                     Grid.Column="3"
                                     Height="28"
                                     Content="Test Connection"
                                     Click="btnTestDbConnection_Click"/>
 
-                                <TextBlock x:Name="txtDbConnectionStatus"
-                           Grid.Row="2"
-                           Grid.Column="1"
-                           Grid.ColumnSpan="3"
-                           VerticalAlignment="Center"
-                           Text=""/>
+                            <TextBlock x:Name="txtDbConnectionStatus"
+                                       Grid.Row="2"
+                                       Grid.Column="1"
+                                       Grid.ColumnSpan="3"
+                                       VerticalAlignment="Center"
+                                       Text=""/>
 
-                            </Grid>
+                            <!-- #endregion -->
 
-                        </GroupBox>
+                        </Grid>
 
+                    </GroupBox>
 
-                        <!-- ========================================================= -->
-                        <!-- DATABASE HOUSEKEEPING                                     -->
-                        <!-- ========================================================= -->
-
-                        <GroupBox Grid.Row="2"
-                  Header="Database Housekeeping"
-                  Padding="15">
-
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="18"/>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="18"/>
-                                    <RowDefinition Height="Auto"/>
-                                </Grid.RowDefinitions>
-
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="180"/>
-                                    <ColumnDefinition Width="230"/>
-                                    <ColumnDefinition Width="20"/>
-                                    <ColumnDefinition Width="160"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
+                    <!-- #endregion -->
 
 
-                                <!-- ================================================= -->
-                                <!-- CREATE DATABASE                                   -->
-                                <!-- ================================================= -->
+                    <!-- #region DATABASE HOUSEKEEPING -->
 
-                                <TextBlock Grid.Row="0"
-                           Grid.Column="0"
-                           VerticalAlignment="Center"
-                           Text="Create database:"/>
+                    <GroupBox Grid.Row="2"
+                              Header="Database Housekeeping"
+                              Padding="15">
 
-                                <Button x:Name="btnCreateDb"
+                        <Grid>
+
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="18"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="18"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="180"/>
+                                <ColumnDefinition Width="230"/>
+                                <ColumnDefinition Width="20"/>
+                                <ColumnDefinition Width="160"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+
+                            <!-- #region CREATE DATABASE -->
+
+                            <TextBlock Grid.Row="0"
+                                       Grid.Column="0"
+                                       VerticalAlignment="Center"
+                                       Text="Create database:"/>
+
+                            <Button x:Name="btnCreateDb"
                                     Grid.Row="0"
                                     Grid.Column="1"
                                     Width="150"
@@ -130,106 +187,537 @@
                                     Content="Create DB"
                                     Click="btnCreateDb_Click"/>
 
+                            <!-- #endregion -->
 
-                                <!-- ================================================= -->
-                                <!-- CLEAR TABLES                                      -->
-                                <!-- ================================================= -->
 
-                                <TextBlock Grid.Row="2"
+                            <!-- #region CLEAR TABLES -->
+
+                            <TextBlock Grid.Row="2"
+                                       Grid.Column="0"
+                                       VerticalAlignment="Center"
+                                       Text="Clear table:"/>
+
+                            <ComboBox x:Name="cmbClearTables"
+                                      Grid.Row="2"
+                                      Grid.Column="1"
+                                      Height="28"
+                                      SelectedIndex="0"
+                                      VerticalContentAlignment="Center">
+
+                                <ComboBoxItem Content="Select table..."/>
+
+                                <ComboBoxItem Content="Project"/>
+                                <ComboBoxItem Content="PointName"/>
+                                <ComboBoxItem Content="PrismPairs"/>
+
+                                <ComboBoxItem Content="CoordinatesReference"/>
+                                <ComboBoxItem Content="CoordinatesCurrent"/>
+                                <ComboBoxItem Content="CoordinatesDaily"/>
+
+                                <ComboBoxItem Content="DhEpochs"/>
+                                <ComboBoxItem Content="DhDaily"/>
+
+                                <ComboBoxItem Content="SlewEpochs"/>
+                                <ComboBoxItem Content="SlewDaily"/>
+
+                                <ComboBoxItem Content="TopEpochs"/>
+                                <ComboBoxItem Content="TopDaily"/>
+
+                                <ComboBoxItem Content="CantEpochs"/>
+                                <ComboBoxItem Content="CantDaily"/>
+
+                                <ComboBoxItem Content="ShortTwistEpochs"/>
+                                <ComboBoxItem Content="ShortTwistDaily"/>
+
+                                <ComboBoxItem Content="LongTwistEpochs"/>
+                                <ComboBoxItem Content="LongTwistDaily"/>
+
+                                <ComboBoxItem Content="All Tables"/>
+
+                            </ComboBox>
+
+                            <Button x:Name="btnClearTables"
+                                    Grid.Row="2"
+                                    Grid.Column="3"
+                                    Height="30"
+                                    Content="Clear Tables"/>
+
+                            <!-- #endregion -->
+
+
+                            <!-- #region CLEAR LATEST READING -->
+
+                            <TextBlock Grid.Row="4"
+                                       Grid.Column="0"
+                                       VerticalAlignment="Center"
+                                       Text="Clear latest reading:"/>
+
+                            <ComboBox x:Name="cmbClearLatestReading"
+                                      Grid.Row="4"
+                                      Grid.Column="1"
+                                      Height="28"
+                                      SelectedIndex="0"
+                                      VerticalContentAlignment="Center">
+
+                                <ComboBoxItem Content="Select table..."/>
+
+                                <ComboBoxItem Content="CoordinatesDaily"/>
+
+                                <ComboBoxItem Content="DhEpochs"/>
+                                <ComboBoxItem Content="DhDaily"/>
+
+                                <ComboBoxItem Content="SlewEpochs"/>
+                                <ComboBoxItem Content="SlewDaily"/>
+
+                                <ComboBoxItem Content="TopEpochs"/>
+                                <ComboBoxItem Content="TopDaily"/>
+
+                                <ComboBoxItem Content="CantEpochs"/>
+                                <ComboBoxItem Content="CantDaily"/>
+
+                                <ComboBoxItem Content="ShortTwistEpochs"/>
+                                <ComboBoxItem Content="ShortTwistDaily"/>
+
+                                <ComboBoxItem Content="LongTwistEpochs"/>
+                                <ComboBoxItem Content="LongTwistDaily"/>
+
+                                <ComboBoxItem Content="All Epoch Tables"/>
+                                <ComboBoxItem Content="All Daily Tables"/>
+                                <ComboBoxItem Content="All Time-Series Tables"/>
+
+                            </ComboBox>
+
+                            <Button x:Name="btnClearLatestReading"
+                                    Grid.Row="4"
+                                    Grid.Column="3"
+                                    Height="30"
+                                    Content="Clear Latest Reading"/>
+
+                            <!-- #endregion -->
+
+                        </Grid>
+
+                    </GroupBox>
+
+                    <!-- #endregion -->
+
+                </Grid>
+
+            </TabItem>
+
+            <!-- #endregion -->
+
+            <!-- #region CONFIGURATION TAB -->
+
+            <TabItem Header="Configuration">
+
+                <Grid Margin="20">
+
+                    <!-- #region CONFIGURATION TAB LAYOUT -->
+
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="20"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- #endregion -->
+
+
+                    <!-- #region PROJECT CONFIGURATION SUMMARY -->
+
+                    <GroupBox Grid.Row="0"
+                  Header="Project Configuration"
+                  Padding="15">
+
+                        <Grid>
+
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="15"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="140"/>
+                                <ColumnDefinition Width="300"/>
+                                <ColumnDefinition Width="20"/>
+                                <ColumnDefinition Width="160"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+
+                            <!-- #region ACTIVE PROJECT DISPLAY -->
+
+                            <TextBlock Grid.Row="0"
                            Grid.Column="0"
                            VerticalAlignment="Center"
-                           Text="Clear table:"/>
+                           Text="Active project:"/>
 
-                                <ComboBox x:Name="cmbClearTables"
-                          Grid.Row="2"
-                          Grid.Column="1"
-                          Height="28"
-                          SelectedIndex="0"
-                          VerticalContentAlignment="Center">
+                            <TextBox x:Name="txtActiveProject"
+                         Grid.Row="0"
+                         Grid.Column="1"
+                         Height="28"
+                         IsReadOnly="True"
+                         VerticalContentAlignment="Center"
+                         Text="No active project"/>
 
-                                    <ComboBoxItem Content="Select table..."/>
-                                    <ComboBoxItem Content="Project"/>
-                                    <ComboBoxItem Content="PointName"/>
-                                    <ComboBoxItem Content="Coordinates_reference"/>
-                                    <ComboBoxItem Content="PrismPairs"/>
-                                    <ComboBoxItem Content="HistoricDh"/>
-                                    <ComboBoxItem Content="HistoricSlew"/>
-                                    <ComboBoxItem Content="HistoricTop"/>
-                                    <ComboBoxItem Content="HistoricCant"/>
-                                    <ComboBoxItem Content="HistoricLongCant"/>
-                                    <ComboBoxItem Content="HistoricTwist"/>
-                                    <ComboBoxItem Content="All Tables"/>
+                            <!-- #endregion -->
 
-                                </ComboBox>
+                            
+                            
+                            
+                            
+                            
+                            
+                            <!-- #region MANAGE PROJECTS BUTTON -->
 
-                                <Button x:Name="btnClearTables"
-                        Grid.Row="2"
-                        Grid.Column="3"
-                        Height="30"
-                        Content="Clear Tables"/>
+                            <Button x:Name="btnManageProjects"
+                                Grid.Row="0"
+                                Grid.Column="3"
+                                Width="150"
+                                Height="30"
+                                Content="Manage Projects"
+                                Click="btnManageProjects_Click"/>
+
+                            <!-- #endregion -->
+
+                        </Grid>
+
+                    </GroupBox>
+
+                    <!-- #endregion -->
 
 
-                                <!-- ================================================= -->
-                                <!-- CLEAR LATEST READING                              -->
-                                <!-- ================================================= -->
+                    <!-- #region PROJECT MANAGEMENT OVERLAY -->
 
-                                <TextBlock Grid.Row="4"
-                           Grid.Column="0"
-                           VerticalAlignment="Center"
-                           Text="Clear latest reading:"/>
+                    <Border x:Name="brdProjectManagement"
+                Grid.Row="0"
+                Grid.RowSpan="4"
+                Margin="35"
+                Padding="20"
+                Background="WhiteSmoke"
+                BorderBrush="DarkGray"
+                BorderThickness="1"
+                CornerRadius="4"
+                Visibility="Collapsed"
+                Panel.ZIndex="100">
 
-                                <ComboBox x:Name="cmbClearLatestReading"
-                          Grid.Row="4"
-                          Grid.Column="1"
-                          Height="28"
-                          SelectedIndex="0"
-                          VerticalContentAlignment="Center">
+                        <Grid>
 
-                                    <ComboBoxItem Content="Select table..."/>
-                                    <ComboBoxItem Content="HistoricDh"/>
-                                    <ComboBoxItem Content="HistoricSlew"/>
-                                    <ComboBoxItem Content="HistoricTop"/>
-                                    <ComboBoxItem Content="HistoricCant"/>
-                                    <ComboBoxItem Content="HistoricLongCant"/>
-                                    <ComboBoxItem Content="HistoricTwist"/>
-                                    <ComboBoxItem Content="All Historic Tables"/>
+                            <!-- #region PROJECT MANAGEMENT LAYOUT -->
 
-                                </ComboBox>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="20"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="20"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="20"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
 
-                                <Button x:Name="btnClearLatestReading"
-                        Grid.Row="4"
-                        Grid.Column="3"
-                        Height="30"
-                        Content="Clear Latest Reading"/>
+                            <!-- #endregion -->
+
+
+                            <!-- #region PROJECT MANAGEMENT HEADER -->
+
+                            <Grid Grid.Row="0">
+
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Column="0"
+                               VerticalAlignment="Center"
+                               FontSize="16"
+                               FontWeight="Bold"
+                               Text="Project Management"/>
+
+                                <!-- #region CLOSE PROJECT MANAGEMENT -->
+
+                                <Button x:Name="btnCloseProjectManagement"
+                                    Grid.Column="1"
+                                    Width="80"
+                                    Height="28"
+                                    Content="Close"
+                                    Click="btnCloseProjectManagement_Click"/>
+
+                                <!-- #endregion -->
 
                             </Grid>
 
-                        </GroupBox>
+                            <!-- #endregion -->
 
-                    </Grid>
-                </TabItem>
-                <TabItem Header="Configuration">
-                    <Grid>
 
-                    </Grid>
-                </TabItem>
+                            <!-- #region ADD PROJECT -->
 
-            </TabControl>
+                            <Grid Grid.Row="2">
 
-        </Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120"/>
+                                    <ColumnDefinition Width="350"/>
+                                    <ColumnDefinition Width="15"/>
+                                    <ColumnDefinition Width="130"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Column="0"
+                               VerticalAlignment="Center"
+                               Text="New project:"/>
+
+                                <TextBox x:Name="txtNewProjectName"
+                             Grid.Column="1"
+                             Height="28"
+                             MaxLength="200"
+                             VerticalContentAlignment="Center"/>
+
+                                <!-- #region ADD PROJECT BUTTON -->
+
+                                <Button x:Name="btnAddProject"
+                                    Grid.Column="3"
+                                    Height="30"
+                                    Content="Add Project"
+                                    Click="btnAddProject_Click"/>
+
+                                <!-- #endregion -->
+
+                            </Grid>
+
+                            <!-- #endregion -->
+
+
+                            <!-- #region PROJECT DATAGRID -->
+
+                            <DataGrid x:Name="dgProjects"
+                          Grid.Row="4"
+                          AutoGenerateColumns="False"
+                          CanUserAddRows="False"
+                          CanUserDeleteRows="False"
+                          CanUserReorderColumns="False"
+                          CanUserResizeRows="False"
+                          SelectionMode="Single"
+                          SelectionUnit="FullRow"
+                          HeadersVisibility="Column"
+                          GridLinesVisibility="Horizontal">
+
+                                <DataGrid.Columns>
+
+                                    <!-- #region HIDDEN PROJECT ID -->
+
+                                    <DataGridTextColumn Header="Project ID"
+                                            Binding="{Binding Project_ID}"
+                                            Visibility="Collapsed"
+                                            IsReadOnly="True"/>
+
+                                    <!-- #endregion -->
+
+                                    <!-- #region ACTIVE PROJECT -->
+
+                                    <DataGridTemplateColumn Header="Active"
+                        Width="80"
+                        IsReadOnly="False">
+
+                                        <DataGridTemplateColumn.CellTemplate>
+
+                                            <DataTemplate>
+
+                                                <!-- #region ACTIVE PROJECT RADIO BUTTON -->
+
+                                                <RadioButton HorizontalAlignment="Center"
+                         VerticalAlignment="Center"
+                         GroupName="ActiveProject"
+                         IsChecked="{Binding IsActive,
+                                             Mode=TwoWay,
+                                             UpdateSourceTrigger=PropertyChanged}"
+                         Click="ActiveProjectRadioButton_Click">
+
+                                                    <!-- #region DISABLE ACTIVE SELECTION FOR DELETED PROJECTS -->
+
+                                                    <RadioButton.Style>
+
+                                                        <Style TargetType="RadioButton">
+
+                                                            <Setter Property="IsEnabled"
+                                Value="True"/>
+
+                                                            <Style.Triggers>
+
+                                                                <DataTrigger Binding="{Binding IsDeleted}"
+                                         Value="True">
+
+                                                                    <Setter Property="IsEnabled"
+                                        Value="False"/>
+
+                                                                </DataTrigger>
+
+                                                            </Style.Triggers>
+
+                                                        </Style>
+
+                                                    </RadioButton.Style>
+
+                                                    <!-- #endregion -->
+
+                                                </RadioButton>
+
+                                                <!-- #endregion -->
+
+                                            </DataTemplate>
+
+                                        </DataGridTemplateColumn.CellTemplate>
+
+                                    </DataGridTemplateColumn>
+
+                                    <!-- #endregion -->
+
+
+                                    <!-- #region PROJECT NAME -->
+
+                                    <DataGridTextColumn Header="Project Name"
+                                            Width="*"
+                                            Binding="{Binding ProjectName,
+                                                              Mode=TwoWay,
+                                                              UpdateSourceTrigger=LostFocus}"/>
+
+                                    <!-- #endregion -->
+
+
+                                    <!-- #region DELETED PROJECT -->
+
+                                    <DataGridTemplateColumn Header="Deleted"
+                        Width="90"
+                        IsReadOnly="False">
+
+                                        <DataGridTemplateColumn.CellTemplate>
+
+                                            <DataTemplate>
+
+                                                <!-- #region DELETED PROJECT CHECKBOX -->
+
+                                                <CheckBox HorizontalAlignment="Center"
+                      VerticalAlignment="Center"
+                      IsChecked="{Binding IsDeleted,
+                                          Mode=TwoWay,
+                                          UpdateSourceTrigger=PropertyChanged}"
+                      Click="DeletedProjectCheckBox_Click">
+
+                                                    <!-- #region PREVENT ACTIVE PROJECT DELETION -->
+
+                                                    <CheckBox.Style>
+
+                                                        <Style TargetType="CheckBox">
+
+                                                            <Setter Property="IsEnabled"
+                                Value="True"/>
+
+                                                            <Style.Triggers>
+
+                                                                <!--
+                                An active project cannot be deleted.
+                                Restoration remains available for deleted projects.
+                            -->
+
+                                                                <DataTrigger Binding="{Binding IsActive}"
+                                         Value="True">
+
+                                                                    <Setter Property="IsEnabled"
+                                        Value="False"/>
+
+                                                                </DataTrigger>
+
+                                                            </Style.Triggers>
+
+                                                        </Style>
+
+                                                    </CheckBox.Style>
+
+                                                    <!-- #endregion -->
+
+                                                </CheckBox>
+
+                                                <!-- #endregion -->
+
+                                            </DataTemplate>
+
+                                        </DataGridTemplateColumn.CellTemplate>
+
+                                    </DataGridTemplateColumn>
+
+                                    <!-- #endregion -->
+
+                                </DataGrid.Columns>
+
+                            </DataGrid>
+
+                            <!-- #endregion -->
+
+
+                            <!-- #region PROJECT MANAGEMENT STATUS -->
+
+                            <Grid Grid.Row="6">
+
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock x:Name="txtProjectManagementStatus"
+                               Grid.Column="0"
+                               VerticalAlignment="Center"
+                               Text=""/>
+
+                                <TextBlock Grid.Column="1"
+                               VerticalAlignment="Center"
+                               Foreground="DimGray"
+                               Text="Changes are saved after validation."/>
+
+                            </Grid>
+
+                            <!-- #endregion -->
+
+                        </Grid>
+
+                    </Border>
+
+                    <!-- #endregion -->
+
+                </Grid>
+
+            </TabItem>
+
+            <!-- #endregion -->
+
+        </TabControl>
+
+        <!-- #endregion -->
+
+
+        <!-- #region COPYRIGHT -->
 
         <TextBlock x:Name="extras_tbCopyright"
-                       HorizontalAlignment="Left"
-                       Height="14"
-                       Margin="9,436,0,0"
-                       TextAlignment="Right"
-                       TextWrapping="Wrap"
-                       VerticalAlignment="Top"
-                       Width="117"
-                       FontFamily="Century Gothic"
-                       FontSize="9"
-                       Foreground="LightGray">  
-            <Run FontFamily="Century Gothic" FontSize="9" Foreground="DarkSlateGray" Text="© 2026 GNA Software"/>
+                   HorizontalAlignment="Left"
+                   Height="14"
+                   Margin="9,436,0,0"
+                   TextAlignment="Right"
+                   TextWrapping="Wrap"
+                   VerticalAlignment="Top"
+                   Width="117"
+                   FontFamily="Century Gothic"
+                   FontSize="9"
+                   Foreground="LightGray">
+
+            <Run FontFamily="Century Gothic"
+                 FontSize="9"
+                 Foreground="DarkSlateGray"
+                 Text="© 2026 GNA Software"/>
+
         </TextBlock>
+
+        <!-- #endregion -->
+
     </Grid>
+
 </Window>
