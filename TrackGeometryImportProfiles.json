@@ -1,0 +1,33 @@
+{
+  "StartMarkers": [
+    "Rail Start",
+    "Rail_Start"
+  ],
+  "EndMarkers": [
+    "Rail End",
+    "Rail_End"
+  ],
+  "WorksheetProfiles": [
+    {
+      "WorksheetName": "SPN010",
+      "StartRow": 8,
+      "PrimaryRailColumn": "A",
+      "SecondaryRailColumn": "E",
+      "TrackLabelColumn": "AC"
+    },
+    {
+      "WorksheetName": "CIV177",
+      "StartRow": 8,
+      "PrimaryRailColumn": "A",
+      "SecondaryRailColumn": "C",
+      "TrackLabelColumn": "AC"
+    },
+    {
+      "WorksheetName": "TrackGeometry",
+      "StartRow": 8,
+      "PrimaryRailColumn": "A",
+      "SecondaryRailColumn": "D",
+      "TrackLabelColumn": "AC"
+    }
+  ]
+}

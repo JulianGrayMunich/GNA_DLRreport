@@ -1,7 +1,27 @@
-﻿using System;
+﻿#region System Preparation
+
+using System;
 using System.Collections.ObjectModel;
 using System.Threading.Tasks;
 using System.Windows;
+
+
+#region Import Processing Namespaces
+
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Text;
+using System.Text.Json;
+using OfficeOpenXml;
+
+#endregion
+
+#region GNA classes
+using GNAgeneraltools;
+
+#endregion
+
 
 #region WPF Control Namespaces
 
@@ -13,6 +33,23 @@ using System.Windows.Controls;
 using Microsoft.Data.SqlClient;
 using Microsoft.Win32;
 
+using GNAspreadsheettools;
+
+#region Disable warnings
+
+#pragma warning disable IDE0028
+#pragma warning disable IDE0031
+#pragma warning disable IDE0042
+#pragma warning disable IDE0059
+#pragma warning disable IDE0079
+#pragma warning disable IDE0300
+
+#pragma warning disable IDE1006
+#pragma warning disable IDE0306
+
+#endregion
+
+#endregion
 
 namespace GNA_DLRreport
 {
@@ -21,6 +58,15 @@ namespace GNA_DLRreport
     /// </summary>
     public partial class MainWindow : Window
     {
+
+
+        #region Setting State
+        private readonly gnaTools gnaT =
+            new();
+
+        #endregion
+
+
         #region Registry Configuration
 
         private const string RegistryPath =
@@ -104,6 +150,5794 @@ namespace GNA_DLRreport
         #endregion
 
 
+        #region Reference Coordinate Import State
+
+        private readonly ObservableCollection<ReferenceCoordinateImportItem>
+            _referenceImportItems =
+                new();
+
+        private string _selectedReferenceCsvPath =
+            string.Empty;
+
+
+        // ---------------------------------------------------------------------
+        // IMPORT PROJECT CONTEXT
+        //
+        // The Project_ID is captured when the CSV is selected.
+        //
+        // The complete validation operation is then tied to that Project_ID.
+        // Changing the active project clears the current import.
+        //
+        // Registry values are never used as operational import context.
+        // ---------------------------------------------------------------------
+
+        private int? _referenceImportProjectId;
+
+        private string _referenceImportProjectName =
+            string.Empty;
+
+
+        // ---------------------------------------------------------------------
+        // DUPLICATE COORDINATE RULE
+        //
+        // Duplicate proximity is based on horizontal E/N separation only.
+        //
+        // Duplicate when:
+        //      distance < 0.05 m
+        //
+        // Exactly 0.0500 m is permitted.
+        // ---------------------------------------------------------------------
+
+        private const decimal ReferenceDuplicateCoordinateTolerance =
+            0.05m;
+
+        private const decimal ReferenceDuplicateCoordinateToleranceSquared =
+            0.0025m;
+
+        #endregion
+
+
+        #region Prism Pair Import State
+
+        private const string PrismPairImportProfileFileName =
+            "TrackGeometryImportProfiles.json";
+
+        private static readonly JsonSerializerOptions PrismPairJsonSerializerOptions =
+            new()
+            {
+                PropertyNameCaseInsensitive =
+                    true
+            };
+
+
+        private const string PrismPairRoleRightRail =
+            "Right (Primary) Rail";
+
+        private const string PrismPairRoleLeftRail =
+            "Left Rail";
+
+        private const string PrismPairRoleRailTag =
+            "Rail Tag";
+
+
+        private const string PrismPairImportLockResourcePrefix =
+            "GNA_DLRreport:PrismPairImport:";
+
+
+        private readonly List<PrismPairImportItem> _prismPairImportItems =
+            new();
+
+
+        private string _selectedPrismPairWorkbookPath =
+            string.Empty;
+
+        private TrackGeometryImportConfiguration? _prismPairImportConfiguration;
+
+        private TrackGeometryWorksheetProfile? _selectedPrismPairWorksheetProfile;
+
+        private bool _isUpdatingPrismPairColumnRoles;
+
+
+        private int? _prismPairImportProjectId;
+
+        private string _prismPairImportProjectName =
+            string.Empty;
+
+        #endregion
+
+        #region Reference Coordinate Import
+
+        #region Prism Pair Import UI
+
+        #region Prism Pair Preview Selection
+
+        private void dgPrismPairImport_SelectionChanged(
+            object sender,
+            SelectionChangedEventArgs e)
+        {
+            #region Display Selected Prism Pair Validation
+
+            if (dgPrismPairImport.SelectedItem
+                is not PrismPairImportItem selectedItem)
+            {
+                return;
+            }
+
+            txtPrismPairImportStatus.Text =
+                selectedItem.ValidationStatus;
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Prism Pair Preview Extraction
+
+
+
+
+
+        private void btnPreviewPrismPairs_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Refresh Prism Pair Preview
+
+            PopulatePrismPairPreview();
+
+            #endregion
+        }
+
+
+        private void PopulatePrismPairPreview()
+        {
+            #region Validate Preview Context
+
+            if (string.IsNullOrWhiteSpace(_selectedPrismPairWorkbookPath))
+            {
+                dgPrismPairImport.ItemsSource =
+                    null;
+
+                txtPrismPairImportStatus.Text =
+                    "Select a Track Geometry workbook.";
+
+                return;
+            }
+
+            if (_prismPairImportConfiguration is null)
+            {
+                dgPrismPairImport.ItemsSource =
+                    null;
+
+                txtPrismPairImportStatus.Text =
+                    "The Track Geometry import configuration is not loaded.";
+
+                return;
+            }
+
+            if (_selectedPrismPairWorksheetProfile is null)
+            {
+                dgPrismPairImport.ItemsSource =
+                    null;
+
+                txtPrismPairImportStatus.Text =
+                    "Select a supported worksheet.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Resolve Column Roles
+
+            if (!TryGetPrismPairColumnRoleMapping(
+                rightRailSourceIndex: out int rightRailSourceIndex,
+                leftRailSourceIndex: out int leftRailSourceIndex,
+                railTagSourceIndex: out int railTagSourceIndex))
+            {
+                dgPrismPairImport.ItemsSource =
+                    null;
+
+                btnPreviewPrismPairs.IsEnabled =
+                    false;
+
+                btnCommitPrismPairImport.IsEnabled =
+                    false;
+
+                txtPrismPairImportStatus.Text =
+                    "Right Rail, Left Rail and Rail Tag must each be assigned exactly once.";
+
+                return;
+            }
+
+            #endregion
+
+
+            try
+            {
+                #region Extract Prism Pairs
+
+                List<PrismPairImportItem> prismPairs =
+                    ExtractPrismPairPreview(
+                        workbookPath: _selectedPrismPairWorkbookPath,
+                        configuration: _prismPairImportConfiguration,
+                        profile: _selectedPrismPairWorksheetProfile,
+                        rightRailSourceIndex: rightRailSourceIndex,
+                        leftRailSourceIndex: leftRailSourceIndex,
+                        railTagSourceIndex: railTagSourceIndex,
+                        railSectionCount: out int railSectionCount);
+
+                #endregion
+
+
+                #region Populate Prism Pair DataGrid
+
+                _prismPairImportItems.Clear();
+
+                foreach (PrismPairImportItem prismPair
+                    in prismPairs)
+                {
+                    _prismPairImportItems.Add(
+                        item: prismPair);
+                }
+
+                dgPrismPairImport.ItemsSource =
+                    null;
+
+                dgPrismPairImport.ItemsSource =
+                    _prismPairImportItems;
+
+                #endregion
+
+
+                #region Report Preview Result
+
+                btnCommitPrismPairImport.IsEnabled =
+                    false;
+
+                if (railSectionCount == 0)
+                {
+                    txtPrismPairImportStatus.Text =
+                        $"No Rail Start marker was found in worksheet " +
+                        $"'{_selectedPrismPairWorksheetProfile.WorksheetName}'.";
+
+                    return;
+                }
+
+                if (_prismPairImportItems.Count == 0)
+                {
+                    txtPrismPairImportStatus.Text =
+                        $"{railSectionCount} rail section(s) found, " +
+                        "but no prism pairs were extracted.";
+
+                    return;
+                }
+
+
+                int invalidRowCount =
+                    0;
+
+                foreach (PrismPairImportItem importItem
+                    in _prismPairImportItems)
+                {
+                    if (!importItem.IsValid)
+                    {
+                        invalidRowCount++;
+                    }
+                }
+
+
+                if (invalidRowCount > 0)
+                {
+                    txtPrismPairImportStatus.Text =
+                        $"{_prismPairImportItems.Count} pair(s) extracted; " +
+                        $"{invalidRowCount} row(s) contain validation errors.";
+
+                    return;
+                }
+
+
+                if (!_prismPairImportProjectId.HasValue)
+                {
+                    txtPrismPairImportStatus.Text =
+                        "Preview complete, but no target project is associated with the import.";
+
+                    return;
+                }
+
+
+                if (!_activeProjectId.HasValue ||
+                    _activeProjectId.Value != _prismPairImportProjectId.Value)
+                {
+                    txtPrismPairImportStatus.Text =
+                        "Preview complete, but the active project has changed. " +
+                        "Select the workbook again.";
+
+                    return;
+                }
+
+
+                btnCommitPrismPairImport.IsEnabled =
+                    true;
+
+                txtPrismPairImportStatus.Text =
+                    $"{_prismPairImportItems.Count} prism pair(s) extracted from " +
+                    $"{railSectionCount} track(s). " +
+                    $"Ready to commit to project '{_prismPairImportProjectName}'.";
+
+                #endregion
+
+
+
+
+            }
+            catch (Exception ex)
+            {
+                #region Report Preview Failure
+
+                dgPrismPairImport.ItemsSource =
+                    null;
+
+                btnCommitPrismPairImport.IsEnabled =
+                    false;
+
+                txtPrismPairImportStatus.Text =
+                    $"Unable to extract prism pairs: {ex.Message}";
+
+                #endregion
+            }
+        }
+
+
+        private static List<PrismPairImportItem> ExtractPrismPairPreview(
+            string workbookPath,
+            TrackGeometryImportConfiguration configuration,
+            TrackGeometryWorksheetProfile profile,
+            int rightRailSourceIndex,
+            int leftRailSourceIndex,
+            int railTagSourceIndex,
+            out int railSectionCount)
+        {
+            #region Validate Parameters
+
+            if (string.IsNullOrWhiteSpace(workbookPath))
+            {
+                throw new ArgumentException(
+                    message: "Workbook path cannot be blank.",
+                    paramName: nameof(workbookPath));
+            }
+
+            ArgumentNullException.ThrowIfNull(
+                argument: configuration);
+
+            ArgumentNullException.ThrowIfNull(
+                argument: profile);
+
+            if (!File.Exists(
+                path: workbookPath))
+            {
+                throw new FileNotFoundException(
+                    message: "The selected Track Geometry workbook does not exist.",
+                    fileName: workbookPath);
+            }
+
+            #endregion
+
+
+            #region Open Workbook
+
+            FileInfo workbookFile =
+                new(
+                    fileName: workbookPath);
+
+            using ExcelPackage excelPackage =
+                new(
+                    newFile: workbookFile);
+
+            #endregion
+
+
+            #region Locate Worksheet
+
+            ExcelWorksheet? selectedWorksheet =
+                null;
+
+            foreach (ExcelWorksheet worksheet
+                in excelPackage.Workbook.Worksheets)
+            {
+                if (string.Equals(
+                    a: worksheet.Name.Trim(),
+                    b: profile.WorksheetName.Trim(),
+                    comparisonType: StringComparison.OrdinalIgnoreCase))
+                {
+                    selectedWorksheet =
+                        worksheet;
+
+                    break;
+                }
+            }
+
+            if (selectedWorksheet is null)
+            {
+                throw new InvalidOperationException(
+                    $"Worksheet '{profile.WorksheetName}' was not found.");
+            }
+
+            if (selectedWorksheet.Dimension is null)
+            {
+                throw new InvalidOperationException(
+                    $"Worksheet '{profile.WorksheetName}' contains no used cells.");
+            }
+
+            #endregion
+
+
+            #region Resolve Physical Source Columns
+
+            int sourceColumn1 =
+                ExcelColumnReferenceToNumber(
+                    columnReference: profile.PrimaryRailColumn);
+
+            int sourceColumn2 =
+                ExcelColumnReferenceToNumber(
+                    columnReference: profile.SecondaryRailColumn);
+
+            int sourceColumn3 =
+                ExcelColumnReferenceToNumber(
+                    columnReference: profile.TrackLabelColumn);
+
+            #endregion
+
+
+            #region Initialise Extraction
+
+            List<PrismPairImportItem> prismPairs =
+                new();
+
+            railSectionCount =
+                0;
+
+            int pairOrder =
+                0;
+
+            string currentTrackName =
+                string.Empty;
+
+            bool insideRailSection =
+                false;
+
+            int lastUsedRow =
+                selectedWorksheet.Dimension.End.Row;
+
+            #endregion
+
+
+            #region Extract Worksheet Rail Sections
+
+            for (int rowNumber = profile.StartRow;
+                 rowNumber <= lastUsedRow;
+                 rowNumber++)
+            {
+                #region Read Three Configured Source Values
+
+                string sourceValue1 =
+                    selectedWorksheet.Cells[
+                        rowNumber,
+                        sourceColumn1]
+                    .Text
+                    .Trim();
+
+                string sourceValue2 =
+                    selectedWorksheet.Cells[
+                        rowNumber,
+                        sourceColumn2]
+                    .Text
+                    .Trim();
+
+                string sourceValue3 =
+                    selectedWorksheet.Cells[
+                        rowNumber,
+                        sourceColumn3]
+                    .Text
+                    .Trim();
+
+                #endregion
+
+
+                #region Resolve Selected Roles
+
+                string rightPointName =
+                    GetPrismPairSourceValue(
+                        sourceValue1: sourceValue1,
+                        sourceValue2: sourceValue2,
+                        sourceValue3: sourceValue3,
+                        sourceIndex: rightRailSourceIndex);
+
+                string leftPointName =
+                    GetPrismPairSourceValue(
+                        sourceValue1: sourceValue1,
+                        sourceValue2: sourceValue2,
+                        sourceValue3: sourceValue3,
+                        sourceIndex: leftRailSourceIndex);
+
+                string railTag =
+                    GetPrismPairSourceValue(
+                        sourceValue1: sourceValue1,
+                        sourceValue2: sourceValue2,
+                        sourceValue3: sourceValue3,
+                        sourceIndex: railTagSourceIndex);
+
+                #endregion
+
+
+                #region Identify Rail Markers
+
+                bool isRailStart =
+                    IsConfiguredRailMarker(
+                        value: railTag,
+                        markers: configuration.StartMarkers);
+
+                bool isRailEnd =
+                    IsConfiguredRailMarker(
+                        value: railTag,
+                        markers: configuration.EndMarkers);
+
+                #endregion
+
+
+                #region Handle Rail Start
+
+                if (isRailStart)
+                {
+                    railSectionCount++;
+
+                    currentTrackName =
+                        $"Track_{railSectionCount}";
+
+                    pairOrder =
+                        0;
+
+                    insideRailSection =
+                        true;
+                }
+
+                #endregion
+
+
+                #region Ignore Rows Outside Rail Section
+
+                if (!insideRailSection)
+                {
+                    continue;
+                }
+
+                #endregion
+
+
+                #region Handle Blank Prism Pair
+
+                if (string.IsNullOrWhiteSpace(leftPointName) &&
+                    string.IsNullOrWhiteSpace(rightPointName))
+                {
+                    if (isRailStart)
+                    {
+                        continue;
+                    }
+
+                    insideRailSection =
+                        false;
+
+                    continue;
+                }
+
+                #endregion
+
+
+                #region Determine Preview Validation
+
+                string validationStatus;
+
+                if (string.IsNullOrWhiteSpace(leftPointName))
+                {
+                    validationStatus =
+                        "Left prism is blank.";
+                }
+                else if (string.IsNullOrWhiteSpace(rightPointName))
+                {
+                    validationStatus =
+                        "Right prism is blank.";
+                }
+                else if (string.Equals(
+                    a: leftPointName,
+                    b: rightPointName,
+                    comparisonType: StringComparison.OrdinalIgnoreCase))
+                {
+                    validationStatus =
+                        "Left and Right prism are identical.";
+                }
+                else
+                {
+                    validationStatus =
+                        "Valid";
+                }
+
+                #endregion
+
+
+                #region Add Prism Pair Preview Row
+
+                pairOrder++;
+
+                bool isValid =
+                    string.Equals(
+                        a: validationStatus,
+                        b: "Valid",
+                        comparisonType: StringComparison.Ordinal);
+
+                PrismPairImportItem prismPair =
+                    new()
+                    {
+                        SourceRow =
+                            rowNumber,
+
+                        RailSection =
+                            railSectionCount,
+
+                        TrackName =
+                            currentTrackName,
+
+                        PairOrder =
+                            pairOrder,
+
+                        SourceColumn1Value =
+                            sourceValue1,
+
+                        SourceColumn2Value =
+                            sourceValue2,
+
+                        SourceColumn3Value =
+                            sourceValue3,
+
+                        LeftPointName =
+                            leftPointName,
+
+                        RightPointName =
+                            rightPointName,
+
+                        IsValid =
+                            isValid,
+
+                        ValidationStatus =
+                            validationStatus
+                    };
+
+                prismPairs.Add(
+                    item: prismPair);
+
+                #endregion
+
+
+                #region Handle Rail End
+
+                // The Rail End row is itself a valid prism-pair row.
+                //
+                // It must therefore be extracted before the current rail section
+                // is closed.
+
+                if (isRailEnd)
+                {
+                    insideRailSection =
+                        false;
+                }
+
+                #endregion
+            }
+
+            #endregion
+
+
+            #region Return Prism Pair Preview
+
+            return prismPairs;
+
+            #endregion
+        }
+
+
+        private static string GetPrismPairSourceValue(
+            string sourceValue1,
+            string sourceValue2,
+            string sourceValue3,
+            int sourceIndex)
+        {
+            #region Return Selected Source Value
+
+            return sourceIndex switch
+            {
+                1 => sourceValue1,
+                2 => sourceValue2,
+                3 => sourceValue3,
+
+                _ => throw new ArgumentOutOfRangeException(
+                    paramName: nameof(sourceIndex),
+                    message: "Prism Pair source index must be 1, 2 or 3.")
+            };
+
+            #endregion
+        }
+
+
+        #region Rail Marker Matching
+
+        private static bool IsConfiguredRailMarker(
+            string value,
+            List<string> markers)
+        {
+            #region Validate Marker Value
+
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return false;
+            }
+
+            #endregion
+
+
+            #region Normalise Source Marker
+
+            string normalisedValue =
+                NormaliseRailMarker(
+                    value: value);
+
+            #endregion
+
+
+            #region Compare Configured Markers
+
+            foreach (string marker in markers)
+            {
+                string normalisedMarker =
+                    NormaliseRailMarker(
+                        value: marker);
+
+                if (string.Equals(
+                    a: normalisedValue,
+                    b: normalisedMarker,
+                    comparisonType: StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+
+            #endregion
+        }
+
+
+        private static string NormaliseRailMarker(
+            string value)
+        {
+            #region Normalise Rail Marker
+
+            return value
+                .Trim()
+                .Replace(
+                    oldValue: " ",
+                    newValue: string.Empty)
+                .Replace(
+                    oldValue: "_",
+                    newValue: string.Empty)
+                .ToUpperInvariant();
+
+            #endregion
+        }
+
+        #endregion
+
+
+        private static int ExcelColumnReferenceToNumber(
+            string columnReference)
+        {
+            #region Validate Column Reference
+
+            if (string.IsNullOrWhiteSpace(columnReference))
+            {
+                throw new ArgumentException(
+                    message: "Excel column reference cannot be blank.",
+                    paramName: nameof(columnReference));
+            }
+
+            #endregion
+
+
+            #region Convert Excel Column Reference
+
+            string validatedColumnReference =
+                columnReference
+                    .Trim()
+                    .ToUpperInvariant();
+
+            int columnNumber =
+                0;
+
+            foreach (char character in validatedColumnReference)
+            {
+                if (character < 'A' ||
+                    character > 'Z')
+                {
+                    throw new ArgumentException(
+                        message:
+                            $"Invalid Excel column reference " +
+                            $"'{columnReference}'.",
+                        paramName: nameof(columnReference));
+                }
+
+                columnNumber =
+                    (columnNumber * 26) +
+                    (character - 'A' + 1);
+            }
+
+            return columnNumber;
+
+            #endregion
+        }
+
+        #endregion
+
+        #region Prism Pair Database Commit
+
+        private async void btnCommitPrismPairImport_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Validate Commit Context
+
+            if (!_prismPairImportProjectId.HasValue)
+            {
+                btnCommitPrismPairImport.IsEnabled =
+                    false;
+
+                txtPrismPairImportStatus.Text =
+                    "Import blocked: no project is associated with the preview.";
+
+                return;
+            }
+
+
+            if (!_activeProjectId.HasValue ||
+                _activeProjectId.Value != _prismPairImportProjectId.Value)
+            {
+                btnCommitPrismPairImport.IsEnabled =
+                    false;
+
+                txtPrismPairImportStatus.Text =
+                    "Import blocked: the active project has changed. " +
+                    "Select the workbook again.";
+
+                return;
+            }
+
+
+            if (_prismPairImportItems.Count == 0)
+            {
+                btnCommitPrismPairImport.IsEnabled =
+                    false;
+
+                txtPrismPairImportStatus.Text =
+                    "Import blocked: there are no prism pairs to import.";
+
+                return;
+            }
+
+
+            foreach (PrismPairImportItem importItem
+                in _prismPairImportItems)
+            {
+                if (!importItem.IsValid)
+                {
+                    btnCommitPrismPairImport.IsEnabled =
+                        false;
+
+                    txtPrismPairImportStatus.Text =
+                        "Import blocked: the preview contains validation errors.";
+
+                    return;
+                }
+            }
+
+            #endregion
+
+
+            #region Count Tracks
+
+            HashSet<string> trackNames =
+                new(
+                    comparer: StringComparer.OrdinalIgnoreCase);
+
+            foreach (PrismPairImportItem importItem
+                in _prismPairImportItems)
+            {
+                trackNames.Add(
+                    item: importItem.TrackName);
+            }
+
+            #endregion
+
+
+            #region Confirm Prism Pair Import
+
+            string confirmationMessage =
+                $"Project: {_prismPairImportProjectName}\n\n" +
+                $"Tracks to create: {trackNames.Count}\n" +
+                $"Prism pairs to import: {_prismPairImportItems.Count}\n\n" +
+                "Commit this import?";
+
+            MessageBoxResult confirmationResult =
+                MessageBox.Show(
+                    owner: this,
+                    messageBoxText: confirmationMessage,
+                    caption: "Confirm Prism Pair Import",
+                    button: MessageBoxButton.YesNo,
+                    icon: MessageBoxImage.Question);
+
+            if (confirmationResult != MessageBoxResult.Yes)
+            {
+                txtPrismPairImportStatus.Text =
+                    "Import cancelled. No data was written to the database.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Prepare Prism Pair Commit
+
+            btnCommitPrismPairImport.IsEnabled =
+                false;
+
+            btnPreviewPrismPairs.IsEnabled =
+                false;
+
+            btnSelectPrismPairWorkbook.IsEnabled =
+                false;
+
+            btnClearPrismPairImport.IsEnabled =
+                false;
+
+            cmbPrismPairWorksheet.IsEnabled =
+                false;
+
+            cmbPrismPairColumn1Role.IsEnabled =
+                false;
+
+            cmbPrismPairColumn2Role.IsEnabled =
+                false;
+
+            cmbPrismPairColumn3Role.IsEnabled =
+                false;
+
+            txtPrismPairImportStatus.Text =
+                $"Revalidating and importing {_prismPairImportItems.Count} " +
+                $"prism pair(s) into project '{_prismPairImportProjectName}'...";
+
+            #endregion
+
+
+            try
+            {
+                #region Execute Atomic Prism Pair Import
+
+                (int TrackCount, int PairCount) importResult =
+                    await CommitPrismPairImportAsync(
+                        projectId: _prismPairImportProjectId.Value,
+                        projectName: _prismPairImportProjectName);
+
+                #endregion
+
+
+                #region Report Successful Prism Pair Import
+
+                btnCommitPrismPairImport.IsEnabled =
+                    false;
+
+                txtPrismPairImportStatus.Text =
+                    $"{importResult.TrackCount} track(s) and " +
+                    $"{importResult.PairCount} prism pair(s) " +
+                    $"imported successfully into project " +
+                    $"'{_prismPairImportProjectName}'.";
+
+                #endregion
+            }
+            catch (Exception ex)
+            {
+                #region Report Failed Prism Pair Import
+
+                dgPrismPairImport.Items.Refresh();
+
+                bool previewStillValid =
+                    true;
+
+                foreach (PrismPairImportItem importItem
+                    in _prismPairImportItems)
+                {
+                    if (!importItem.IsValid)
+                    {
+                        previewStillValid =
+                            false;
+
+                        break;
+                    }
+                }
+
+                btnCommitPrismPairImport.IsEnabled =
+                    previewStillValid;
+
+                txtPrismPairImportStatus.Text =
+                    $"Import failed. No data committed. {ex.Message}";
+
+                #endregion
+            }
+            finally
+            {
+                #region Restore Prism Pair Import Controls
+
+                btnSelectPrismPairWorkbook.IsEnabled =
+                    true;
+
+                btnClearPrismPairImport.IsEnabled =
+                    true;
+
+                cmbPrismPairWorksheet.IsEnabled =
+                    true;
+
+                cmbPrismPairColumn1Role.IsEnabled =
+                    true;
+
+                cmbPrismPairColumn2Role.IsEnabled =
+                    true;
+
+                cmbPrismPairColumn3Role.IsEnabled =
+                    true;
+
+                btnPreviewPrismPairs.IsEnabled =
+                    true;
+
+                #endregion
+            }
+        }
+
+
+        private async Task<(int TrackCount, int PairCount)>
+            CommitPrismPairImportAsync(
+                int projectId,
+                string projectName)
+        {
+            #region Validate Prism Pair Commit Parameters
+
+            if (projectId <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    paramName: nameof(projectId),
+                    message: "Project_ID must be greater than zero.");
+            }
+
+            if (string.IsNullOrWhiteSpace(projectName))
+            {
+                throw new ArgumentException(
+                    message: "Project name cannot be blank.",
+                    paramName: nameof(projectName));
+            }
+
+            #endregion
+
+
+            #region Capture Prism Pair Preview Dataset
+
+            List<PrismPairImportItem> importItems =
+                new(
+                    collection: _prismPairImportItems);
+
+            if (importItems.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "The Prism Pair preview contains no records.");
+            }
+
+            #endregion
+
+
+            #region Read Prism Pair Database Connection String
+
+            string connectionString =
+                txtDbConnectionString.Text?.Trim()
+                ?? throw new InvalidOperationException(
+                    "Database connection string control returned null.");
+
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                throw new InvalidOperationException(
+                    "Database connection string has not been configured.");
+            }
+
+            SqlConnectionStringBuilder databaseConnectionBuilder =
+                new(
+                    connectionString: connectionString)
+                {
+                    InitialCatalog =
+                        TrackGeometryDatabaseName
+                };
+
+            #endregion
+
+
+            #region Ensure Track And Prism Pair Database Schema
+
+            await EnsureTrackAndPrismPairSchemaAsync(
+                connectionString:
+                    databaseConnectionBuilder.ConnectionString);
+
+            #endregion
+
+
+
+
+            #region Open Prism Pair Database Connection
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        databaseConnectionBuilder.ConnectionString);
+
+            await databaseConnection.OpenAsync();
+
+            #endregion
+
+
+            #region Begin Serializable Prism Pair Transaction
+
+            using SqlTransaction transaction =
+                databaseConnection.BeginTransaction(
+                    iso:
+                        System.Data.IsolationLevel.Serializable);
+
+            bool transactionCommitted =
+                false;
+
+            #endregion
+
+
+            try
+            {
+                #region Acquire Prism Pair Import Transaction Lock
+
+                await AcquirePrismPairImportTransactionLockAsync(
+                    projectId: projectId,
+                    databaseConnection: databaseConnection,
+                    transaction: transaction);
+
+                #endregion
+
+
+                #region Revalidate Prism Pair Target Project
+
+                await ValidatePrismPairImportTargetProjectAsync(
+                    projectId: projectId,
+                    expectedProjectName: projectName,
+                    databaseConnection: databaseConnection,
+                    transaction: transaction);
+
+                #endregion
+
+
+                #region Load Prism Pair Point Names
+
+                Dictionary<string, int> pointIds =
+                    await LoadPrismPairPointIdsAsync(
+                        projectId: projectId,
+                        databaseConnection: databaseConnection,
+                        transaction: transaction);
+
+                #endregion
+
+
+                #region Load Existing Track Names
+
+                HashSet<string> existingTrackNames =
+                    await LoadExistingTrackNamesAsync(
+                        projectId: projectId,
+                        databaseConnection: databaseConnection,
+                        transaction: transaction);
+
+                #endregion
+
+
+                #region Load Existing Paired Points
+
+                HashSet<int> existingPairedPointIds =
+                    await LoadExistingPairedPointIdsAsync(
+                        projectId: projectId,
+                        databaseConnection: databaseConnection,
+                        transaction: transaction);
+
+                #endregion
+
+
+                #region Final Prism Pair Validation
+
+                ValidatePrismPairImportForCommit(
+                    importItems: importItems,
+                    pointIds: pointIds,
+                    existingTrackNames: existingTrackNames,
+                    existingPairedPointIds: existingPairedPointIds);
+
+                dgPrismPairImport.Items.Refresh();
+
+
+                int invalidRowCount =
+                    0;
+
+                foreach (PrismPairImportItem importItem
+                    in importItems)
+                {
+                    if (!importItem.IsValid)
+                    {
+                        invalidRowCount++;
+                    }
+                }
+
+                if (invalidRowCount > 0)
+                {
+                    throw new InvalidOperationException(
+                        $"{invalidRowCount} row(s) failed final validation.");
+                }
+
+                #endregion
+
+
+                #region Insert Tracks
+
+                Dictionary<string, int> trackIds =
+                    new(
+                        comparer: StringComparer.OrdinalIgnoreCase);
+
+                foreach (PrismPairImportItem importItem
+                    in importItems)
+                {
+                    if (trackIds.ContainsKey(
+                        key: importItem.TrackName))
+                    {
+                        continue;
+                    }
+
+                    int trackId =
+                        await InsertTrackAsync(
+                            projectId: projectId,
+                            trackName: importItem.TrackName,
+                            databaseConnection: databaseConnection,
+                            transaction: transaction);
+
+                    trackIds.Add(
+                        key: importItem.TrackName,
+                        value: trackId);
+                }
+
+                #endregion
+
+
+                #region Insert Prism Pairs
+
+                foreach (PrismPairImportItem importItem
+                    in importItems)
+                {
+                    int trackId =
+                        trackIds[importItem.TrackName];
+
+                    int leftPointId =
+                        pointIds[importItem.LeftPointName];
+
+                    int rightPointId =
+                        pointIds[importItem.RightPointName];
+
+                    await InsertPrismPairAsync(
+                        trackId: trackId,
+                        pairOrder: importItem.PairOrder,
+                        leftPointId: leftPointId,
+                        rightPointId: rightPointId,
+                        databaseConnection: databaseConnection,
+                        transaction: transaction);
+                }
+
+                #endregion
+
+
+                #region Commit Prism Pair Transaction
+
+                transaction.Commit();
+
+                transactionCommitted =
+                    true;
+
+                return
+                (
+                    TrackCount:
+                        trackIds.Count,
+
+                    PairCount:
+                        importItems.Count
+                );
+
+                #endregion
+            }
+            catch
+            {
+                #region Roll Back Prism Pair Transaction
+
+                if (!transactionCommitted)
+                {
+                    try
+                    {
+                        transaction.Rollback();
+                    }
+                    catch
+                    {
+                        // Preserve the original exception.
+                    }
+                }
+
+                throw;
+
+                #endregion
+            }
+        }
+
+
+        private static async Task AcquirePrismPairImportTransactionLockAsync(
+            int projectId,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Define Prism Pair Import Lock
+
+            string lockResource =
+                $"{PrismPairImportLockResourcePrefix}{projectId}";
+
+            const string lockSql = """
+        DECLARE @LockResult int;
+
+        EXEC @LockResult = sys.sp_getapplock
+            @Resource = @Resource,
+            @LockMode = 'Exclusive',
+            @LockOwner = 'Transaction',
+            @LockTimeout = 0;
+
+        SELECT @LockResult;
+        """;
+
+            #endregion
+
+
+            #region Acquire Prism Pair Import Lock
+
+            await using SqlCommand lockCommand =
+                new(
+                    cmdText: lockSql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            lockCommand.Parameters.Add(
+                parameterName: "@Resource",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 255)
+                .Value =
+                    lockResource;
+
+            object? lockResultValue =
+                await lockCommand.ExecuteScalarAsync();
+
+            int lockResult =
+                Convert.ToInt32(
+                    value: lockResultValue,
+                    provider: CultureInfo.InvariantCulture);
+
+            if (lockResult < 0)
+            {
+                throw new InvalidOperationException(
+                    "Another Prism Pair import is currently modifying this project.");
+            }
+
+            #endregion
+        }
+
+
+        private static async Task ValidatePrismPairImportTargetProjectAsync(
+            int projectId,
+            string expectedProjectName,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Define Prism Pair Project Validation Query
+
+            const string projectSql = """
+        SELECT
+            [ProjectName]
+        FROM [dbo].[Project] WITH (UPDLOCK, HOLDLOCK)
+        WHERE
+            [Project_ID] = @Project_ID
+            AND [IsDeleted] = 0;
+        """;
+
+            #endregion
+
+
+            #region Read Prism Pair Target Project
+
+            await using SqlCommand projectCommand =
+                new(
+                    cmdText: projectSql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            projectCommand.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    projectId;
+
+            object? projectNameValue =
+                await projectCommand.ExecuteScalarAsync();
+
+            if (projectNameValue is null ||
+                projectNameValue == DBNull.Value)
+            {
+                throw new InvalidOperationException(
+                    "The target project no longer exists or has been deleted.");
+            }
+
+            string databaseProjectName =
+                Convert.ToString(
+                    value: projectNameValue,
+                    provider: CultureInfo.InvariantCulture)
+                ?? throw new InvalidOperationException(
+                    "The target project name could not be read.");
+
+            #endregion
+
+
+            #region Verify Prism Pair Project Name
+
+            if (!string.Equals(
+                a: databaseProjectName,
+                b: expectedProjectName,
+                comparisonType: StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"The target project name has changed from " +
+                    $"'{expectedProjectName}' to '{databaseProjectName}'. " +
+                    "Select the workbook again.");
+            }
+
+            #endregion
+        }
+
+
+        #region Prism Pair Point Name Lookup
+
+        private static async Task<Dictionary<string, int>>
+            LoadPrismPairPointIdsAsync(
+                int projectId,
+                SqlConnection databaseConnection,
+                SqlTransaction transaction)
+        {
+            #region Define Prism Pair Point Query
+
+            // Track Geometry normally displays ReplacementName.
+            //
+            // Prism Pair import must therefore resolve each worksheet prism
+            // against BOTH:
+            //
+            //     PointName
+            //     ReplacementName
+            //
+            // Both names identify the same PointName_ID.
+
+            const string pointSql = """
+        SELECT
+            PN.[PointName],
+            PN.[ReplacementName],
+            PN.[PointName_ID]
+        FROM [dbo].[PointName] AS PN WITH (UPDLOCK, HOLDLOCK)
+        INNER JOIN [dbo].[CoordinatesReference] AS CR WITH (HOLDLOCK)
+            ON CR.[PointName_ID] = PN.[PointName_ID]
+        WHERE
+            PN.[Project_ID] = @Project_ID
+            AND PN.[IsDeleted] = 0;
+        """;
+
+            #endregion
+
+
+            #region Initialise Prism Pair Point Lookup
+
+            Dictionary<string, int> pointIds =
+                new(
+                    comparer: StringComparer.OrdinalIgnoreCase);
+
+            #endregion
+
+
+            #region Execute Prism Pair Point Query
+
+            await using SqlCommand pointCommand =
+                new(
+                    cmdText: pointSql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            pointCommand.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    projectId;
+
+            await using SqlDataReader reader =
+                await pointCommand.ExecuteReaderAsync();
+
+            #endregion
+
+
+            #region Register Point And Replacement Names
+
+            while (await reader.ReadAsync())
+            {
+                string pointName =
+                    reader.GetString(
+                        i: 0)
+                    .Trim();
+
+                string replacementName =
+                    reader.GetString(
+                        i: 1)
+                    .Trim();
+
+                int pointId =
+                    reader.GetInt32(
+                        i: 2);
+
+
+                #region Register Point Name
+
+                RegisterPrismPairPointLookupName(
+                    pointIds: pointIds,
+                    lookupName: pointName,
+                    pointId: pointId,
+                    nameType: "PointName");
+
+                #endregion
+
+
+                #region Register Replacement Name
+
+                if (!string.IsNullOrWhiteSpace(replacementName))
+                {
+                    RegisterPrismPairPointLookupName(
+                        pointIds: pointIds,
+                        lookupName: replacementName,
+                        pointId: pointId,
+                        nameType: "ReplacementName");
+                }
+
+                #endregion
+            }
+
+            #endregion
+
+
+            #region Return Prism Pair Point Lookup
+
+            return pointIds;
+
+            #endregion
+        }
+
+
+        private static void RegisterPrismPairPointLookupName(
+            Dictionary<string, int> pointIds,
+            string lookupName,
+            int pointId,
+            string nameType)
+        {
+            #region Validate Lookup Name
+
+            if (string.IsNullOrWhiteSpace(lookupName))
+            {
+                if (string.Equals(
+                    a: nameType,
+                    b: "PointName",
+                    comparisonType: StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"PointName_ID {pointId} contains a blank PointName.");
+                }
+
+                return;
+            }
+
+            string validatedLookupName =
+                lookupName.Trim();
+
+            #endregion
+
+
+            #region Check Existing Lookup
+
+            if (pointIds.TryGetValue(
+                key: validatedLookupName,
+                value: out int existingPointId))
+            {
+                // PointName and ReplacementName may legitimately be identical
+                // for the SAME database point.
+
+                if (existingPointId == pointId)
+                {
+                    return;
+                }
+
+                // The same name resolving to two different PointName_ID values
+                // would make the Track Geometry prism reference ambiguous.
+                //
+                // Never silently select one of them.
+
+                throw new InvalidOperationException(
+                    $"Database prism-name collision: '{validatedLookupName}' " +
+                    $"resolves to both PointName_ID {existingPointId} and " +
+                    $"PointName_ID {pointId}. " +
+                    "PointName and ReplacementName values must form an " +
+                    "unambiguous project namespace.");
+            }
+
+            #endregion
+
+
+            #region Register Lookup Name
+
+            pointIds.Add(
+                key: validatedLookupName,
+                value: pointId);
+
+            #endregion
+        }
+
+        #endregion
+
+
+        private static async Task<HashSet<string>>
+            LoadExistingTrackNamesAsync(
+                int projectId,
+                SqlConnection databaseConnection,
+                SqlTransaction transaction)
+        {
+            #region Define Existing Track Query
+
+            const string trackSql = """
+        SELECT
+            [TrackName]
+        FROM [dbo].[Track] WITH (UPDLOCK, HOLDLOCK)
+        WHERE
+            [Project_ID] = @Project_ID;
+        """;
+
+            #endregion
+
+
+            #region Load Existing Track Names
+
+            HashSet<string> trackNames =
+                new(
+                    comparer: StringComparer.OrdinalIgnoreCase);
+
+            await using SqlCommand trackCommand =
+                new(
+                    cmdText: trackSql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            trackCommand.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    projectId;
+
+            await using SqlDataReader reader =
+                await trackCommand.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                trackNames.Add(
+                    item:
+                        reader.GetString(
+                            i: 0));
+            }
+
+            return trackNames;
+
+            #endregion
+        }
+
+
+        private static async Task<HashSet<int>>
+            LoadExistingPairedPointIdsAsync(
+                int projectId,
+                SqlConnection databaseConnection,
+                SqlTransaction transaction)
+        {
+            #region Define Existing Paired Point Query
+
+            const string prismPairSql = """
+        SELECT
+            PP.[Left_ID],
+            PP.[Right_ID]
+        FROM [dbo].[PrismPairs] AS PP WITH (UPDLOCK, HOLDLOCK)
+        INNER JOIN [dbo].[Track] AS T WITH (HOLDLOCK)
+            ON T.[Track_ID] = PP.[Track_ID]
+        WHERE
+            T.[Project_ID] = @Project_ID;
+        """;
+
+            #endregion
+
+
+            #region Load Existing Paired Point IDs
+
+            HashSet<int> pointIds =
+                new();
+
+            await using SqlCommand prismPairCommand =
+                new(
+                    cmdText: prismPairSql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            prismPairCommand.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    projectId;
+
+            await using SqlDataReader reader =
+                await prismPairCommand.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                pointIds.Add(
+                    item:
+                        reader.GetInt32(
+                            i: 0));
+
+                pointIds.Add(
+                    item:
+                        reader.GetInt32(
+                            i: 1));
+            }
+
+            return pointIds;
+
+            #endregion
+        }
+
+
+        private static void ValidatePrismPairImportForCommit(
+            List<PrismPairImportItem> importItems,
+            Dictionary<string, int> pointIds,
+            HashSet<string> existingTrackNames,
+            HashSet<int> existingPairedPointIds)
+        {
+            #region Initialise Final Prism Pair Validation
+
+            HashSet<int> incomingPairedPointIds =
+                new();
+
+            HashSet<string> trackPairOrders =
+                new(
+                    comparer: StringComparer.OrdinalIgnoreCase);
+
+            foreach (PrismPairImportItem importItem
+                in importItems)
+            {
+                importItem.IsValid =
+                    true;
+
+                importItem.ValidationStatus =
+                    "Valid";
+            }
+
+            #endregion
+
+
+            #region Validate Individual Prism Pair Rows
+
+            foreach (PrismPairImportItem importItem
+                in importItems)
+            {
+                if (string.IsNullOrWhiteSpace(importItem.TrackName))
+                {
+                    AddPrismPairValidationError(
+                        importItem: importItem,
+                        message: "Track Tag is blank.");
+                }
+
+                if (importItem.PairOrder <= 0)
+                {
+                    AddPrismPairValidationError(
+                        importItem: importItem,
+                        message: "Pair Order must be greater than zero.");
+                }
+
+
+                if (existingTrackNames.Contains(
+                    item: importItem.TrackName))
+                {
+                    AddPrismPairValidationError(
+                        importItem: importItem,
+                        message:
+                            $"Track '{importItem.TrackName}' already exists in the project.");
+                }
+
+
+                string pairOrderKey =
+                    $"{importItem.TrackName}\u001F{importItem.PairOrder}";
+
+                if (!trackPairOrders.Add(
+                    item: pairOrderKey))
+                {
+                    AddPrismPairValidationError(
+                        importItem: importItem,
+                        message:
+                            $"Pair Order {importItem.PairOrder} is duplicated within " +
+                            $"'{importItem.TrackName}'.");
+                }
+
+
+                if (!pointIds.TryGetValue(
+                    key: importItem.LeftPointName,
+                    value: out int leftPointId))
+                {
+                    AddPrismPairValidationError(
+                        importItem: importItem,
+                        message:
+                            $"Left prism '{importItem.LeftPointName}': No PointName or ReplacementName match in this project");
+
+                    continue;
+                }
+
+
+                if (!pointIds.TryGetValue(
+                    key: importItem.RightPointName,
+                    value: out int rightPointId))
+                {
+                    AddPrismPairValidationError(
+                        importItem: importItem,
+                        message:
+                            $"Right prism '{importItem.RightPointName}': No PointName or ReplacementName match in this project");
+
+                    continue;
+                }
+
+
+                if (leftPointId == rightPointId)
+                {
+                    AddPrismPairValidationError(
+                        importItem: importItem,
+                        message: "Left and Right prism are identical.");
+
+                    continue;
+                }
+
+
+                if (existingPairedPointIds.Contains(
+                    item: leftPointId))
+                {
+                    AddPrismPairValidationError(
+                        importItem: importItem,
+                        message:
+                            $"Left prism '{importItem.LeftPointName}' is already used " +
+                            "by an existing prism pair.");
+                }
+
+
+                if (existingPairedPointIds.Contains(
+                    item: rightPointId))
+                {
+                    AddPrismPairValidationError(
+                        importItem: importItem,
+                        message:
+                            $"Right prism '{importItem.RightPointName}' is already used " +
+                            "by an existing prism pair.");
+                }
+
+
+                if (!incomingPairedPointIds.Add(
+                    item: leftPointId))
+                {
+                    AddPrismPairValidationError(
+                        importItem: importItem,
+                        message:
+                            $"Left prism '{importItem.LeftPointName}' is used more than once " +
+                            "in this import.");
+                }
+
+
+                if (!incomingPairedPointIds.Add(
+                    item: rightPointId))
+                {
+                    AddPrismPairValidationError(
+                        importItem: importItem,
+                        message:
+                            $"Right prism '{importItem.RightPointName}' is used more than once " +
+                            "in this import.");
+                }
+            }
+
+            #endregion
+        }
+
+
+        private static void AddPrismPairValidationError(
+            PrismPairImportItem importItem,
+            string message)
+        {
+            #region Append Prism Pair Validation Error
+
+            importItem.IsValid =
+                false;
+
+            if (string.IsNullOrWhiteSpace(importItem.ValidationStatus) ||
+                string.Equals(
+                    a: importItem.ValidationStatus,
+                    b: "Valid",
+                    comparisonType: StringComparison.Ordinal))
+            {
+                importItem.ValidationStatus =
+                    message;
+            }
+            else
+            {
+                importItem.ValidationStatus +=
+                    $" {message}";
+            }
+
+            #endregion
+        }
+
+
+        private static async Task<int> InsertTrackAsync(
+            int projectId,
+            string trackName,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Define Track Insert
+
+            const string trackSql = """
+        INSERT INTO [dbo].[Track]
+        (
+            [Project_ID],
+            [TrackName],
+            [IsDeleted]
+        )
+        VALUES
+        (
+            @Project_ID,
+            @TrackName,
+            0
+        );
+
+        SELECT CAST(SCOPE_IDENTITY() AS int);
+        """;
+
+            #endregion
+
+
+            #region Insert Track
+
+            await using SqlCommand trackCommand =
+                new(
+                    cmdText: trackSql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            trackCommand.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    projectId;
+
+            trackCommand.Parameters.Add(
+                parameterName: "@TrackName",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 200)
+                .Value =
+                    trackName;
+
+            object? trackIdValue =
+                await trackCommand.ExecuteScalarAsync();
+
+            if (trackIdValue is null ||
+                trackIdValue == DBNull.Value)
+            {
+                throw new InvalidOperationException(
+                    $"SQL Server did not return Track_ID for '{trackName}'.");
+            }
+
+            return Convert.ToInt32(
+                value: trackIdValue,
+                provider: CultureInfo.InvariantCulture);
+
+            #endregion
+        }
+
+
+        private static async Task InsertPrismPairAsync(
+            int trackId,
+            int pairOrder,
+            int leftPointId,
+            int rightPointId,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Define Prism Pair Insert
+
+            const string prismPairSql = """
+        INSERT INTO [dbo].[PrismPairs]
+        (
+            [Track_ID],
+            [PairOrder],
+            [Left_ID],
+            [Right_ID],
+            [IsDeleted]
+        )
+        VALUES
+        (
+            @Track_ID,
+            @PairOrder,
+            @Left_ID,
+            @Right_ID,
+            0
+        );
+        """;
+
+            #endregion
+
+
+            #region Insert Prism Pair
+
+            await using SqlCommand prismPairCommand =
+                new(
+                    cmdText: prismPairSql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            prismPairCommand.Parameters.Add(
+                parameterName: "@Track_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    trackId;
+
+            prismPairCommand.Parameters.Add(
+                parameterName: "@PairOrder",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    pairOrder;
+
+            prismPairCommand.Parameters.Add(
+                parameterName: "@Left_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    leftPointId;
+
+            prismPairCommand.Parameters.Add(
+                parameterName: "@Right_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    rightPointId;
+
+            await prismPairCommand.ExecuteNonQueryAsync();
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Prism Pair Profile Configuration
+
+        private static TrackGeometryImportConfiguration
+            LoadPrismPairImportConfiguration()
+        {
+
+
+            #region Locate Configuration File
+
+            string configurationPath =
+                Path.Combine(
+                    path1: AppContext.BaseDirectory,
+                    path2: PrismPairImportProfileFileName);
+
+
+            // During normal deployment the JSON file must reside beside the executable.
+            //
+            // During Visual Studio development, also search upward from the executable
+            // folder for the project copy of the configuration file.
+
+            if (!File.Exists(
+                path: configurationPath))
+            {
+                DirectoryInfo? searchDirectory =
+                    new(
+                        path: AppContext.BaseDirectory);
+
+                while (searchDirectory is not null)
+                {
+                    string candidatePath =
+                        Path.Combine(
+                            path1: searchDirectory.FullName,
+                            path2: PrismPairImportProfileFileName);
+
+                    if (File.Exists(
+                        path: candidatePath))
+                    {
+                        configurationPath =
+                            candidatePath;
+
+                        break;
+                    }
+
+                    searchDirectory =
+                        searchDirectory.Parent;
+                }
+            }
+
+
+            if (!File.Exists(
+                path: configurationPath))
+            {
+                throw new FileNotFoundException(
+                    message:
+                        $"Prism Pair import configuration file " +
+                        $"'{PrismPairImportProfileFileName}' was not found. " +
+                        $"Application folder: '{AppContext.BaseDirectory}'.",
+                    fileName: configurationPath);
+            }
+
+            #endregion
+
+
+            #region Read Configuration File
+
+            string configurationJson =
+                File.ReadAllText(
+                    path: configurationPath);
+
+            if (string.IsNullOrWhiteSpace(configurationJson))
+            {
+                throw new InvalidOperationException(
+                    $"Prism Pair import configuration file " +
+                    $"'{PrismPairImportProfileFileName}' is empty.");
+            }
+
+            #endregion
+
+            #region Deserialize Configuration
+
+            TrackGeometryImportConfiguration configuration =
+                JsonSerializer.Deserialize<TrackGeometryImportConfiguration>(
+                    json: configurationJson,
+                    options: PrismPairJsonSerializerOptions)
+                ?? throw new InvalidOperationException(
+                    "Prism Pair import configuration could not be read.");
+
+            #endregion
+
+
+            #region Validate Configuration
+
+            ValidatePrismPairImportConfiguration(
+                configuration: configuration);
+
+            #endregion
+
+
+            #region Return Configuration
+
+            return configuration;
+
+            #endregion
+        }
+
+
+        private static void ValidatePrismPairImportConfiguration(
+            TrackGeometryImportConfiguration configuration)
+        {
+            #region Validate Configuration Object
+
+            ArgumentNullException.ThrowIfNull(
+                argument: configuration);
+
+            #endregion
+
+
+            #region Validate Rail Markers
+
+            if (configuration.StartMarkers.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "No rail start markers are defined.");
+            }
+
+            if (configuration.EndMarkers.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "No rail end markers are defined.");
+            }
+
+            #endregion
+
+
+            #region Validate Worksheet Profiles
+
+            if (configuration.WorksheetProfiles.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "No supported worksheet profiles are defined.");
+            }
+
+            HashSet<string> worksheetNames =
+                new(
+                    comparer: StringComparer.OrdinalIgnoreCase);
+
+            foreach (TrackGeometryWorksheetProfile profile
+                in configuration.WorksheetProfiles)
+            {
+                if (string.IsNullOrWhiteSpace(profile.WorksheetName))
+                {
+                    throw new InvalidOperationException(
+                        "A worksheet profile contains a blank WorksheetName.");
+                }
+
+                if (!worksheetNames.Add(
+                    item: profile.WorksheetName.Trim()))
+                {
+                    throw new InvalidOperationException(
+                        $"Duplicate worksheet profile " +
+                        $"'{profile.WorksheetName}' exists.");
+                }
+
+                if (profile.StartRow <= 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Worksheet profile '{profile.WorksheetName}' " +
+                        "contains an invalid StartRow.");
+                }
+
+                if (!IsValidExcelColumnReference(
+                    columnReference: profile.PrimaryRailColumn))
+                {
+                    throw new InvalidOperationException(
+                        $"Worksheet profile '{profile.WorksheetName}' contains " +
+                        $"invalid PrimaryRailColumn " +
+                        $"'{profile.PrimaryRailColumn}'.");
+                }
+
+                if (!IsValidExcelColumnReference(
+                    columnReference: profile.SecondaryRailColumn))
+                {
+                    throw new InvalidOperationException(
+                        $"Worksheet profile '{profile.WorksheetName}' contains " +
+                        $"invalid SecondaryRailColumn " +
+                        $"'{profile.SecondaryRailColumn}'.");
+                }
+
+                if (!IsValidExcelColumnReference(
+                    columnReference: profile.TrackLabelColumn))
+                {
+                    throw new InvalidOperationException(
+                        $"Worksheet profile '{profile.WorksheetName}' contains " +
+                        $"invalid TrackLabelColumn " +
+                        $"'{profile.TrackLabelColumn}'.");
+                }
+            }
+
+            #endregion
+        }
+
+
+        private static bool IsValidExcelColumnReference(
+            string columnReference)
+        {
+            #region Validate Column Reference
+
+            if (string.IsNullOrWhiteSpace(columnReference))
+            {
+                return false;
+            }
+
+            string validatedColumnReference =
+                columnReference.Trim();
+
+            foreach (char character in validatedColumnReference)
+            {
+                if (!char.IsLetter(
+                    c: character))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+
+            #endregion
+        }
+
+
+        private static TrackGeometryWorksheetProfile?
+            FindPrismPairWorksheetProfile(
+                TrackGeometryImportConfiguration configuration,
+                string worksheetName)
+        {
+            #region Locate Worksheet Profile
+
+            foreach (TrackGeometryWorksheetProfile profile
+                in configuration.WorksheetProfiles)
+            {
+                if (string.Equals(
+                    a: profile.WorksheetName,
+                    b: worksheetName,
+                    comparisonType: StringComparison.OrdinalIgnoreCase))
+                {
+                    return profile;
+                }
+            }
+
+            return null;
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Select Track Geometry Workbook
+
+        private void btnSelectPrismPairWorkbook_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Select Workbook
+
+            OpenFileDialog openFileDialog =
+                new()
+                {
+                    Title =
+                        "Select Track Geometry Workbook",
+
+                    Filter =
+                        "Excel workbooks (*.xlsx;*.xlsm)|*.xlsx;*.xlsm|" +
+                        "Excel workbook (*.xlsx)|*.xlsx|" +
+                        "Excel macro-enabled workbook (*.xlsm)|*.xlsm|" +
+                        "All files (*.*)|*.*",
+
+                    DefaultExt =
+                        ".xlsx",
+
+                    CheckFileExists =
+                        true,
+
+                    Multiselect =
+                        false
+                };
+
+            bool? fileSelected =
+                openFileDialog.ShowDialog(
+                    owner: this);
+
+            if (fileSelected != true)
+            {
+                txtPrismPairImportStatus.Text =
+                    "Workbook selection cancelled.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Validate Active Project
+
+            if (!_activeProjectId.HasValue)
+            {
+                txtPrismPairImportStatus.Text =
+                    "Workbook selected, but no active project is available.";
+
+                MessageBox.Show(
+                    owner: this,
+                    messageBoxText:
+                        "No active project is currently available.\n\n" +
+                        "Select an active project using Manage Projects, " +
+                        "then select the workbook again.",
+                    caption: "Active Project Required",
+                    button: MessageBoxButton.OK,
+                    icon: MessageBoxImage.Warning);
+
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(
+                value: _activeProjectName))
+            {
+                txtPrismPairImportStatus.Text =
+                    "Workbook selected, but the active project name is unavailable.";
+
+                MessageBox.Show(
+                    owner: this,
+                    messageBoxText:
+                        "The active project does not contain a valid project name.\n\n" +
+                        "Select the project again using Manage Projects.",
+                    caption: "Invalid Active Project",
+                    button: MessageBoxButton.OK,
+                    icon: MessageBoxImage.Warning);
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Capture Prism Pair Import Project Context
+
+            int importProjectId =
+                _activeProjectId.Value;
+
+            string importProjectName =
+                _activeProjectName;
+
+            _prismPairImportProjectId =
+                importProjectId;
+
+            _prismPairImportProjectName =
+                importProjectName;
+
+            #endregion
+
+
+            #region Store Selected Workbook
+
+            _selectedPrismPairWorkbookPath =
+                openFileDialog.FileName;
+
+            txtPrismPairWorkbookPath.Text =
+                _selectedPrismPairWorkbookPath;
+
+            #endregion
+
+
+            #region Reset Previous Workbook State
+
+            _prismPairImportConfiguration =
+                null;
+
+            _selectedPrismPairWorksheetProfile =
+                null;
+
+            _prismPairImportItems.Clear();
+
+            cmbPrismPairWorksheet.Items.Clear();
+
+            dgPrismPairImport.ItemsSource =
+                null;
+
+            btnPreviewPrismPairs.IsEnabled =
+                false;
+
+            btnCommitPrismPairImport.IsEnabled =
+                false;
+
+            txtPrismPairImportStatus.Text =
+                $"Reading supported worksheets from " +
+                $"'{Path.GetFileName(_selectedPrismPairWorkbookPath)}'...";
+
+            #endregion
+
+
+            #region Load Supported Worksheets
+
+            try
+            {
+                LoadPrismPairWorksheetNames(
+                    workbookPath:
+                        _selectedPrismPairWorkbookPath);
+            }
+            catch (Exception ex)
+            {
+                #region Reset Failed Workbook Load
+
+                _prismPairImportConfiguration =
+                    null;
+
+                _selectedPrismPairWorksheetProfile =
+                    null;
+
+                _prismPairImportItems.Clear();
+
+                cmbPrismPairWorksheet.Items.Clear();
+
+                dgPrismPairImport.ItemsSource =
+                    null;
+
+                btnPreviewPrismPairs.IsEnabled =
+                    false;
+
+                btnCommitPrismPairImport.IsEnabled =
+                    false;
+
+                #endregion
+
+
+                #region Report Workbook Failure
+
+                txtPrismPairImportStatus.Text =
+                    $"Unable to read workbook configuration: {ex.Message}";
+
+                MessageBox.Show(
+                    owner: this,
+                    messageBoxText:
+                        $"The selected workbook could not be processed.\n\n" +
+                        $"{ex.Message}",
+                    caption: "Workbook Import Error",
+                    button: MessageBoxButton.OK,
+                    icon: MessageBoxImage.Error);
+
+                #endregion
+            }
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Clear Prism Pair Import
+
+        private void btnClearPrismPairImport_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Reset Prism Pair Import
+
+            ResetPrismPairImportState(
+                statusMessage: "No workbook selected.");
+
+            #endregion
+        }
+
+
+        private void ResetPrismPairImportState(
+            string statusMessage)
+        {
+            #region Clear Prism Pair Import Project Context
+
+            _prismPairImportProjectId =
+                null;
+
+            _prismPairImportProjectName =
+                string.Empty;
+
+            #endregion
+
+
+            #region Clear Prism Pair Import Source State
+
+            _selectedPrismPairWorkbookPath =
+                string.Empty;
+
+            _prismPairImportConfiguration =
+                null;
+
+            _selectedPrismPairWorksheetProfile =
+                null;
+
+            _prismPairImportItems.Clear();
+
+            #endregion
+
+
+            #region Clear Prism Pair User Interface
+
+            txtPrismPairWorkbookPath.Text =
+                string.Empty;
+
+            cmbPrismPairWorksheet.Items.Clear();
+
+            dgPrismPairImport.ItemsSource =
+                null;
+
+            btnPreviewPrismPairs.IsEnabled =
+                false;
+
+            btnCommitPrismPairImport.IsEnabled =
+                false;
+
+            txtPrismPairImportStatus.Text =
+                statusMessage;
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Load Prism Pair Worksheet Names
+
+        private void LoadPrismPairWorksheetNames(
+            string workbookPath)
+        {
+            #region Validate Workbook
+
+            if (string.IsNullOrWhiteSpace(workbookPath))
+            {
+                throw new ArgumentException(
+                    message: "Workbook path cannot be blank.",
+                    paramName: nameof(workbookPath));
+            }
+
+            if (!File.Exists(
+                path: workbookPath))
+            {
+                throw new FileNotFoundException(
+                    message: "The selected Track Geometry workbook does not exist.",
+                    fileName: workbookPath);
+            }
+
+            #endregion
+
+
+            #region Load Import Configuration
+
+            _prismPairImportConfiguration =
+                LoadPrismPairImportConfiguration();
+
+            _selectedPrismPairWorksheetProfile =
+                null;
+
+            #endregion
+
+
+            #region Read Workbook Worksheet Names
+
+            HashSet<string> workbookWorksheetNames =
+                new(
+                    comparer: StringComparer.OrdinalIgnoreCase);
+
+            FileInfo workbookFile =
+                new(
+                    fileName: workbookPath);
+
+            using (ExcelPackage excelPackage =
+                new(
+                    newFile: workbookFile))
+            {
+                foreach (ExcelWorksheet worksheet
+                    in excelPackage.Workbook.Worksheets)
+                {
+                    string worksheetName =
+                        worksheet.Name.Trim();
+
+                    if (!string.IsNullOrWhiteSpace(worksheetName))
+                    {
+                        workbookWorksheetNames.Add(
+                            item: worksheetName);
+                    }
+                }
+            }
+
+            // IMPORTANT:
+            //
+            // The ExcelPackage has now been disposed and the workbook released
+            // before cmbPrismPairWorksheet.SelectedIndex is changed.
+            //
+            // Changing SelectedIndex raises cmbPrismPairWorksheet_SelectionChanged(),
+            // which subsequently opens the workbook again to generate the preview.
+
+            #endregion
+
+
+            #region Populate Supported Worksheet List
+
+            cmbPrismPairWorksheet.Items.Clear();
+
+            foreach (TrackGeometryWorksheetProfile profile
+                in _prismPairImportConfiguration.WorksheetProfiles)
+            {
+                string configuredWorksheetName =
+                    profile.WorksheetName.Trim();
+
+                if (workbookWorksheetNames.Contains(
+                    item: configuredWorksheetName))
+                {
+                    cmbPrismPairWorksheet.Items.Add(
+                        newItem: configuredWorksheetName);
+                }
+            }
+
+            #endregion
+
+
+            #region Validate Supported Worksheet List
+
+            if (cmbPrismPairWorksheet.Items.Count == 0)
+            {
+                string workbookNames =
+                    workbookWorksheetNames.Count > 0
+                        ? string.Join(
+                            separator: ", ",
+                            values: workbookWorksheetNames)
+                        : "<none>";
+
+                string configuredNames =
+                    string.Join(
+                        separator: ", ",
+                        values:
+                            _prismPairImportConfiguration
+                                .WorksheetProfiles
+                                .ConvertAll(
+                                    converter:
+                                        profile =>
+                                            profile.WorksheetName));
+
+                txtPrismPairImportStatus.Text =
+                    $"No supported worksheets found. " +
+                    $"Workbook worksheets: [{workbookNames}] " +
+                    $"Configured worksheets: [{configuredNames}]";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Select First Supported Worksheet
+
+            // The workbook has already been released above.
+            //
+            // This selection raises cmbPrismPairWorksheet_SelectionChanged(),
+            // which may safely reopen the workbook for Prism Pair extraction.
+
+            cmbPrismPairWorksheet.SelectedIndex =
+                0;
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Prism Pair Worksheet Selection
+
+        private void cmbPrismPairWorksheet_SelectionChanged(
+            object sender,
+            SelectionChangedEventArgs e)
+        {
+            #region Validate Selection State
+
+            if (string.IsNullOrWhiteSpace(_selectedPrismPairWorkbookPath))
+            {
+                return;
+            }
+
+            if (_prismPairImportConfiguration is null)
+            {
+                return;
+            }
+
+            if (cmbPrismPairWorksheet.SelectedItem
+                is not string worksheetName ||
+                string.IsNullOrWhiteSpace(worksheetName))
+            {
+                return;
+            }
+
+            #endregion
+
+
+            #region Validate Active Project
+
+            if (!_activeProjectId.HasValue)
+            {
+                _prismPairImportProjectId =
+                    null;
+
+                _prismPairImportProjectName =
+                    string.Empty;
+
+                dgPrismPairImport.ItemsSource =
+                    null;
+
+                btnPreviewPrismPairs.IsEnabled =
+                    false;
+
+                btnCommitPrismPairImport.IsEnabled =
+                    false;
+
+                txtPrismPairImportStatus.Text =
+                    "Select an active project before importing prism pairs.";
+
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_activeProjectName))
+            {
+                _prismPairImportProjectId =
+                    null;
+
+                _prismPairImportProjectName =
+                    string.Empty;
+
+                dgPrismPairImport.ItemsSource =
+                    null;
+
+                btnPreviewPrismPairs.IsEnabled =
+                    false;
+
+                btnCommitPrismPairImport.IsEnabled =
+                    false;
+
+                txtPrismPairImportStatus.Text =
+                    "The active project does not contain a valid project name.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Locate Worksheet Profile
+
+            TrackGeometryWorksheetProfile? selectedProfile =
+                FindPrismPairWorksheetProfile(
+                    configuration: _prismPairImportConfiguration,
+                    worksheetName: worksheetName);
+
+            if (selectedProfile is null)
+            {
+                _selectedPrismPairWorksheetProfile =
+                    null;
+
+                dgPrismPairImport.ItemsSource =
+                    null;
+
+                btnPreviewPrismPairs.IsEnabled =
+                    false;
+
+                btnCommitPrismPairImport.IsEnabled =
+                    false;
+
+                txtPrismPairImportStatus.Text =
+                    $"No import profile exists for worksheet '{worksheetName}'.";
+
+                return;
+            }
+
+            _selectedPrismPairWorksheetProfile =
+                selectedProfile;
+
+            #endregion
+
+
+            #region Capture Prism Pair Import Project Context
+
+            // Capture the process-local active project at the point at which
+            // the worksheet preview is defined.
+            //
+            // Registry values are not used as operational import state.
+
+            _prismPairImportProjectId =
+                _activeProjectId.Value;
+
+            _prismPairImportProjectName =
+                _activeProjectName;
+
+            #endregion
+
+
+            #region Reset Previous Preview
+
+            dgPrismPairImport.ItemsSource =
+                null;
+
+            btnCommitPrismPairImport.IsEnabled =
+                false;
+
+            #endregion
+
+
+            #region Apply Default Column Roles
+
+            SetDefaultPrismPairColumnRoles();
+
+            #endregion
+
+
+            #region Enable Preview
+
+            btnPreviewPrismPairs.IsEnabled =
+                true;
+
+            txtPrismPairImportStatus.Text =
+                $"Worksheet '{worksheetName}' selected. " +
+                $"Source columns: " +
+                $"{selectedProfile.PrimaryRailColumn}, " +
+                $"{selectedProfile.SecondaryRailColumn}, " +
+                $"{selectedProfile.TrackLabelColumn}.";
+
+            #endregion
+
+
+            #region Populate Preview
+
+            PopulatePrismPairPreview();
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Prism Pair Column Role Selection
+
+        private void SetDefaultPrismPairColumnRoles()
+        {
+            #region Apply Profile Default Roles
+
+            _isUpdatingPrismPairColumnRoles =
+                true;
+
+            try
+            {
+                cmbPrismPairColumn1Role.SelectedIndex =
+                    0;
+
+                cmbPrismPairColumn2Role.SelectedIndex =
+                    1;
+
+                cmbPrismPairColumn3Role.SelectedIndex =
+                    2;
+            }
+            finally
+            {
+                _isUpdatingPrismPairColumnRoles =
+                    false;
+            }
+
+            #endregion
+        }
+
+
+        private void PrismPairColumnRole_SelectionChanged(
+            object sender,
+            SelectionChangedEventArgs e)
+        {
+            #region Ignore Internal Role Updates
+
+            if (_isUpdatingPrismPairColumnRoles)
+            {
+                return;
+            }
+
+            if (!IsInitialized)
+            {
+                return;
+            }
+
+            #endregion
+
+
+            #region Validate Column Role Allocation
+
+            if (!TryGetPrismPairColumnRoleMapping(
+                rightRailSourceIndex: out _,
+                leftRailSourceIndex: out _,
+                railTagSourceIndex: out _))
+            {
+                dgPrismPairImport.ItemsSource =
+                    null;
+
+                btnPreviewPrismPairs.IsEnabled =
+                    false;
+
+                btnCommitPrismPairImport.IsEnabled =
+                    false;
+
+                txtPrismPairImportStatus.Text =
+                    "Right Rail, Left Rail and Rail Tag must each be assigned exactly once.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Refresh Preview
+
+            btnPreviewPrismPairs.IsEnabled =
+                true;
+
+            btnCommitPrismPairImport.IsEnabled =
+                false;
+
+            if (!string.IsNullOrWhiteSpace(_selectedPrismPairWorkbookPath) &&
+                _prismPairImportConfiguration is not null &&
+                _selectedPrismPairWorksheetProfile is not null)
+            {
+                PopulatePrismPairPreview();
+            }
+
+            #endregion
+        }
+
+
+        private bool TryGetPrismPairColumnRoleMapping(
+            out int rightRailSourceIndex,
+            out int leftRailSourceIndex,
+            out int railTagSourceIndex)
+        {
+            #region Initialise Role Mapping
+
+            rightRailSourceIndex =
+                0;
+
+            leftRailSourceIndex =
+                0;
+
+            railTagSourceIndex =
+                0;
+
+            #endregion
+
+
+            #region Read Selected Roles
+
+            string role1 =
+                GetSelectedPrismPairColumnRole(
+                    comboBox: cmbPrismPairColumn1Role);
+
+            string role2 =
+                GetSelectedPrismPairColumnRole(
+                    comboBox: cmbPrismPairColumn2Role);
+
+            string role3 =
+                GetSelectedPrismPairColumnRole(
+                    comboBox: cmbPrismPairColumn3Role);
+
+            if (string.IsNullOrWhiteSpace(role1) ||
+                string.IsNullOrWhiteSpace(role2) ||
+                string.IsNullOrWhiteSpace(role3))
+            {
+                return false;
+            }
+
+            #endregion
+
+
+            #region Reject Duplicate Roles
+
+            HashSet<string> selectedRoles =
+                new(
+                    comparer: StringComparer.OrdinalIgnoreCase)
+                {
+            role1,
+            role2,
+            role3
+                };
+
+            if (selectedRoles.Count != 3)
+            {
+                return false;
+            }
+
+            #endregion
+
+
+            #region Resolve Source Index For Each Role
+
+            string[] roles =
+            {
+        role1,
+        role2,
+        role3
+    };
+
+            for (int roleIndex = 0;
+                 roleIndex < roles.Length;
+                 roleIndex++)
+            {
+                int sourceIndex =
+                    roleIndex + 1;
+
+                if (string.Equals(
+                    a: roles[roleIndex],
+                    b: PrismPairRoleRightRail,
+                    comparisonType: StringComparison.OrdinalIgnoreCase))
+                {
+                    rightRailSourceIndex =
+                        sourceIndex;
+                }
+                else if (string.Equals(
+                    a: roles[roleIndex],
+                    b: PrismPairRoleLeftRail,
+                    comparisonType: StringComparison.OrdinalIgnoreCase))
+                {
+                    leftRailSourceIndex =
+                        sourceIndex;
+                }
+                else if (string.Equals(
+                    a: roles[roleIndex],
+                    b: PrismPairRoleRailTag,
+                    comparisonType: StringComparison.OrdinalIgnoreCase))
+                {
+                    railTagSourceIndex =
+                        sourceIndex;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+
+            #endregion
+
+
+            #region Validate Complete Mapping
+
+            return
+                rightRailSourceIndex > 0 &&
+                leftRailSourceIndex > 0 &&
+                railTagSourceIndex > 0;
+
+            #endregion
+        }
+
+
+        private static string GetSelectedPrismPairColumnRole(
+            ComboBox comboBox)
+        {
+            #region Read ComboBox Role
+
+            if (comboBox.SelectedItem
+                is not ComboBoxItem selectedItem)
+            {
+                return string.Empty;
+            }
+
+            return selectedItem.Content?.ToString()?.Trim()
+                ?? string.Empty;
+
+            #endregion
+        }
+
+        #endregion
+
+
+
+
+
+
+        #endregion
+
+
+        #region CSV File Selection
+
+        private async void btnSelectReferenceCsv_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Select CSV File
+
+            OpenFileDialog openFileDialog =
+                new()
+                {
+                    Title = "Select Point / Reference Coordinate CSV",
+
+                    Filter =
+                        "CSV files (*.csv)|*.csv|" +
+                        "All files (*.*)|*.*",
+
+                    DefaultExt =
+                        ".csv",
+
+                    CheckFileExists =
+                        true,
+
+                    Multiselect =
+                        false
+                };
+
+            bool? fileSelected =
+                openFileDialog.ShowDialog(
+                    owner: this);
+
+            if (fileSelected != true)
+            {
+                txtReferenceImportStatus.Text =
+                    "CSV selection cancelled.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Validate Active Project
+
+            if (!_activeProjectId.HasValue)
+            {
+                txtReferenceImportStatus.Text =
+                    "Import cannot continue because no active project is available.";
+
+                MessageBox.Show(
+                    owner: this,
+                    messageBoxText:
+                        "No active project is currently available.\n\n" +
+                        "Select an active project using Manage Projects, " +
+                        "then select the CSV again.",
+                    caption: "Active Project Required",
+                    button: MessageBoxButton.OK,
+                    icon: MessageBoxImage.Warning);
+
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(
+                value: _activeProjectName))
+            {
+                txtReferenceImportStatus.Text =
+                    "Import cannot continue because the active project name is unavailable.";
+
+                MessageBox.Show(
+                    owner: this,
+                    messageBoxText:
+                        "The active project does not contain a valid project name.\n\n" +
+                        "Select the project again using Manage Projects.",
+                    caption: "Invalid Active Project",
+                    button: MessageBoxButton.OK,
+                    icon: MessageBoxImage.Warning);
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Capture Import Project Context
+
+            int importProjectId =
+                _activeProjectId.Value;
+
+            string importProjectName =
+                _activeProjectName;
+
+            _referenceImportProjectId =
+                importProjectId;
+
+            _referenceImportProjectName =
+                importProjectName;
+
+            #endregion
+
+
+            #region Store Selected CSV
+
+            _selectedReferenceCsvPath =
+                openFileDialog.FileName;
+
+            txtReferenceCsvPath.Text =
+                _selectedReferenceCsvPath;
+
+            #endregion
+
+
+            #region Parse And Validate CSV
+
+            await ParseAndValidateSelectedReferenceCsvAsync();
+
+            #endregion
+        }
+
+
+        private async void cmbReferenceCsvColumnOrder_SelectionChanged(
+            object sender,
+            SelectionChangedEventArgs e)
+        {
+            #region Handle Initial XAML Loading
+
+            if (string.IsNullOrWhiteSpace(
+                value: _selectedReferenceCsvPath) ||
+                !_referenceImportProjectId.HasValue)
+            {
+                return;
+            }
+
+            #endregion
+
+
+            #region Reparse Selected CSV
+
+            await ParseAndValidateSelectedReferenceCsvAsync();
+
+            #endregion
+        }
+
+
+        private void btnClearReferenceImport_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Clear Import State
+
+            ResetReferenceImportState(
+                statusMessage: "No CSV selected.");
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Import State Reset
+
+        private void ResetReferenceImportState(
+            string statusMessage)
+        {
+            #region Clear Captured Import Context
+
+            _referenceImportProjectId =
+                null;
+
+            _referenceImportProjectName =
+                string.Empty;
+
+            _selectedReferenceCsvPath =
+                string.Empty;
+
+            #endregion
+
+
+            #region Clear User Interface
+
+            txtReferenceCsvPath.Text =
+                string.Empty;
+
+            _referenceImportItems.Clear();
+
+            dgReferenceCoordinateImport.SelectedItem =
+                null;
+
+            btnCommitReferenceImport.IsEnabled =
+                false;
+
+            cmbReferenceCsvColumnOrder.IsEnabled =
+                true;
+
+            txtReferenceImportStatus.Text =
+                statusMessage;
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Import Preview Selection
+
+        private void dgReferenceCoordinateImport_SelectionChanged(
+            object sender,
+            SelectionChangedEventArgs e)
+        {
+            #region Display Selected Row Validation
+
+            if (dgReferenceCoordinateImport.SelectedItem
+                is not ReferenceCoordinateImportItem selectedItem)
+            {
+                return;
+            }
+
+            txtReferenceImportStatus.Text =
+                selectedItem.ValidationStatus;
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Parse And Validate Selected CSV
+
+        private async Task ParseAndValidateSelectedReferenceCsvAsync()
+        {
+            #region Validate Import Context
+
+            if (!_referenceImportProjectId.HasValue)
+            {
+                throw new InvalidOperationException(
+                    "The reference-coordinate import does not have a target Project_ID.");
+            }
+
+            if (string.IsNullOrWhiteSpace(_referenceImportProjectName))
+            {
+                throw new InvalidOperationException(
+                    "The reference-coordinate import does not have a target project name.");
+            }
+
+            if (string.IsNullOrWhiteSpace(_selectedReferenceCsvPath))
+            {
+                throw new InvalidOperationException(
+                    "No reference-coordinate CSV has been selected.");
+            }
+
+            if (!File.Exists(
+                path: _selectedReferenceCsvPath))
+            {
+                throw new FileNotFoundException(
+                    message: "The selected reference-coordinate CSV no longer exists.",
+                    fileName: _selectedReferenceCsvPath);
+            }
+
+            #endregion
+
+
+            #region Prepare User Interface
+
+            btnSelectReferenceCsv.IsEnabled =
+                false;
+
+            btnClearReferenceImport.IsEnabled =
+                false;
+
+            cmbReferenceCsvColumnOrder.IsEnabled =
+                false;
+
+            btnCommitReferenceImport.IsEnabled =
+                false;
+
+            txtReferenceImportStatus.Text =
+                $"Validating CSV for project '{_referenceImportProjectName}'...";
+
+            #endregion
+
+
+            try
+            {
+                #region Determine CSV Column Order
+
+                ReferenceCoordinateCsvOrder csvOrder =
+                    GetSelectedReferenceCsvOrder();
+
+                #endregion
+
+
+                #region Parse Source CSV
+
+                List<ReferenceCoordinateImportItem> importItems =
+                    ParseReferenceCoordinateCsv(
+                        csvPath: _selectedReferenceCsvPath,
+                        csvOrder: csvOrder);
+
+                #endregion
+
+
+                #region Load Existing Project Points
+
+                List<ExistingReferencePoint> existingPoints =
+                    await LoadExistingReferencePointsAsync(
+                        projectId: _referenceImportProjectId.Value);
+
+                #endregion
+
+
+                #region Validate Import
+
+                ValidateReferenceCoordinateImport(
+                    importItems: importItems,
+                    existingPoints: existingPoints);
+
+                #endregion
+
+
+                #region Populate Preview DataGrid
+
+                _referenceImportItems.Clear();
+
+                foreach (ReferenceCoordinateImportItem importItem in importItems)
+                {
+                    _referenceImportItems.Add(
+                        item: importItem);
+                }
+
+                #endregion
+
+
+                #region Determine Validation Result
+
+                int invalidRowCount =
+                    0;
+
+                foreach (ReferenceCoordinateImportItem importItem in importItems)
+                {
+                    if (!importItem.IsValid)
+                    {
+                        invalidRowCount++;
+                    }
+                }
+
+                if (importItems.Count == 0)
+                {
+                    btnCommitReferenceImport.IsEnabled =
+                        false;
+
+                    txtReferenceImportStatus.Text =
+                        $"Project '{_referenceImportProjectName}': " +
+                        "the selected CSV contains no records.";
+
+                    return;
+                }
+
+                if (invalidRowCount > 0)
+                {
+                    btnCommitReferenceImport.IsEnabled =
+                        false;
+
+                    txtReferenceImportStatus.Text =
+                        $"Project '{_referenceImportProjectName}': " +
+                        $"{invalidRowCount} of {importItems.Count} row(s) contain errors. " +
+                        "Import blocked. Correct the CSV and import the corrected file.";
+
+                    return;
+                }
+
+                #endregion
+
+
+                #region Report Successful Validation
+
+                // Block 3 will attach the actual database commit operation.
+                //
+                // The button may now be enabled because the preview contains a
+                // completely valid import dataset.
+
+                btnCommitReferenceImport.IsEnabled =
+                    true;
+
+                txtReferenceImportStatus.Text =
+                    $"Project '{_referenceImportProjectName}': " +
+                    $"{importItems.Count} row(s) validated successfully. " +
+                    "No errors found.";
+
+                #endregion
+            }
+            catch (Exception ex)
+            {
+                #region Handle Validation Failure
+
+                _referenceImportItems.Clear();
+
+                btnCommitReferenceImport.IsEnabled =
+                    false;
+
+                txtReferenceImportStatus.Text =
+                    $"Unable to validate CSV: {ex.Message}";
+
+                #endregion
+            }
+            finally
+            {
+                #region Restore User Interface
+
+                btnSelectReferenceCsv.IsEnabled =
+                    true;
+
+                btnClearReferenceImport.IsEnabled =
+                    true;
+
+                cmbReferenceCsvColumnOrder.IsEnabled =
+                    true;
+
+                #endregion
+            }
+        }
+
+        #endregion
+
+
+        #region CSV Column Order
+
+        private ReferenceCoordinateCsvOrder GetSelectedReferenceCsvOrder()
+        {
+            #region Read Selected Format
+
+            return cmbReferenceCsvColumnOrder.SelectedIndex switch
+            {
+                0 => ReferenceCoordinateCsvOrder.PointName_E_N_Ht,
+
+                1 => ReferenceCoordinateCsvOrder.PointName_N_E_Ht,
+
+                _ => throw new InvalidOperationException(
+                    "Select a valid CSV column order.")
+            };
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region CSV Parsing
+
+        private static List<ReferenceCoordinateImportItem>
+            ParseReferenceCoordinateCsv(
+                string csvPath,
+                ReferenceCoordinateCsvOrder csvOrder)
+        {
+            #region Validate CSV Path
+
+            if (string.IsNullOrWhiteSpace(csvPath))
+            {
+                throw new ArgumentException(
+                    message: "CSV path cannot be empty.",
+                    paramName: nameof(csvPath));
+            }
+
+            #endregion
+
+
+            #region Read CSV Lines
+
+            string[] sourceLines =
+                File.ReadAllLines(
+                    path: csvPath);
+
+            List<ReferenceCoordinateImportItem> importItems =
+                new();
+
+            #endregion
+
+
+            #region Parse CSV Rows
+
+            for (int lineIndex = 0;
+                 lineIndex < sourceLines.Length;
+                 lineIndex++)
+            {
+                int sourceRow =
+                    lineIndex + 1;
+
+                string rawLine =
+                    sourceLines[lineIndex];
+
+                ReferenceCoordinateImportItem importItem =
+                    new()
+                    {
+                        SourceRow = sourceRow,
+                        RawLine = rawLine,
+                        IsValid = true,
+                        ValidationStatus = "Valid"
+                    };
+
+
+                #region Parse CSV Fields
+
+                if (!TryParseCsvLine(
+                    line: rawLine,
+                    fields: out List<string> fields,
+                    errorMessage: out string csvError))
+                {
+                    AppendValidationError(
+                        importItem: importItem,
+                        errorMessage: csvError);
+
+                    importItems.Add(
+                        item: importItem);
+
+                    continue;
+                }
+
+                #endregion
+
+
+                #region Validate Column Count
+
+                if (fields.Count != 4 &&
+                    fields.Count != 5)
+                {
+                    AppendValidationError(
+                        importItem: importItem,
+                        errorMessage:
+                            $"Expected 4 or 5 columns; found {fields.Count}.");
+
+                    importItems.Add(
+                        item: importItem);
+
+                    continue;
+                }
+
+                #endregion
+
+
+                #region Extract Point Names
+
+                importItem.PointName =
+                    fields[0].Trim();
+
+                string replacementName =
+                    fields.Count == 5
+                        ? fields[4].Trim()
+                        : string.Empty;
+
+                importItem.ReplacementName =
+                    string.IsNullOrWhiteSpace(replacementName)
+                        ? importItem.PointName
+                        : replacementName;
+
+                #endregion
+
+
+                #region Extract Coordinate Text
+
+                switch (csvOrder)
+                {
+                    case ReferenceCoordinateCsvOrder.PointName_E_N_Ht:
+
+                        importItem.EastingText =
+                            fields[1].Trim();
+
+                        importItem.NorthingText =
+                            fields[2].Trim();
+
+                        break;
+
+
+                    case ReferenceCoordinateCsvOrder.PointName_N_E_Ht:
+
+                        importItem.NorthingText =
+                            fields[1].Trim();
+
+                        importItem.EastingText =
+                            fields[2].Trim();
+
+                        break;
+
+
+                    default:
+
+                        throw new InvalidOperationException(
+                            "Unsupported reference-coordinate CSV column order.");
+                }
+
+                importItem.HeightText =
+                    fields[3].Trim();
+
+                #endregion
+
+
+                #region Validate Point Name
+
+                if (string.IsNullOrWhiteSpace(importItem.PointName))
+                {
+                    AppendValidationError(
+                        importItem: importItem,
+                        errorMessage: "Point Name is blank.");
+                }
+                else if (importItem.PointName.Length > 50)
+                {
+                    AppendValidationError(
+                        importItem: importItem,
+                        errorMessage:
+                            "Point Name exceeds the database limit of 50 characters.");
+                }
+
+                #endregion
+
+
+                #region Validate Replacement Name
+
+                if (string.IsNullOrWhiteSpace(importItem.ReplacementName))
+                {
+                    AppendValidationError(
+                        importItem: importItem,
+                        errorMessage: "Replacement Name is blank.");
+                }
+                else if (importItem.ReplacementName.Length > 50)
+                {
+                    AppendValidationError(
+                        importItem: importItem,
+                        errorMessage:
+                            "Replacement Name exceeds the database limit of 50 characters.");
+                }
+
+                #endregion
+
+
+                #region Parse Easting
+
+                if (decimal.TryParse(
+                    s: importItem.EastingText,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture,
+                    result: out decimal easting))
+                {
+                    importItem.Easting =
+                        easting;
+                }
+                else
+                {
+                    AppendValidationError(
+                        importItem: importItem,
+                        errorMessage:
+                            $"Invalid Easting '{importItem.EastingText}'.");
+                }
+
+                #endregion
+
+
+                #region Parse Northing
+
+                if (decimal.TryParse(
+                    s: importItem.NorthingText,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture,
+                    result: out decimal northing))
+                {
+                    importItem.Northing =
+                        northing;
+                }
+                else
+                {
+                    AppendValidationError(
+                        importItem: importItem,
+                        errorMessage:
+                            $"Invalid Northing '{importItem.NorthingText}'.");
+                }
+
+                #endregion
+
+
+                #region Parse Height
+
+                if (decimal.TryParse(
+                    s: importItem.HeightText,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture,
+                    result: out decimal height))
+                {
+                    importItem.Height =
+                        height;
+                }
+                else
+                {
+                    AppendValidationError(
+                        importItem: importItem,
+                        errorMessage:
+                            $"Invalid Height '{importItem.HeightText}'.");
+                }
+
+                #endregion
+
+
+                #region Add Parsed Row
+
+                importItems.Add(
+                    item: importItem);
+
+                #endregion
+            }
+
+            #endregion
+
+
+            #region Return Parsed CSV
+
+            return importItems;
+
+            #endregion
+        }
+
+
+        private static bool TryParseCsvLine(
+            string line,
+            out List<string> fields,
+            out string errorMessage)
+        {
+            #region Initialise Parser
+
+            fields =
+                new List<string>();
+
+            errorMessage =
+                string.Empty;
+
+            StringBuilder currentField =
+                new();
+
+            bool insideQuotes =
+                false;
+
+            #endregion
+
+
+            #region Parse Characters
+
+            for (int characterIndex = 0;
+                 characterIndex < line.Length;
+                 characterIndex++)
+            {
+                char currentCharacter =
+                    line[characterIndex];
+
+                if (currentCharacter == '"')
+                {
+                    if (insideQuotes &&
+                        characterIndex + 1 < line.Length &&
+                        line[characterIndex + 1] == '"')
+                    {
+                        currentField.Append(
+                            value: '"');
+
+                        characterIndex++;
+
+                        continue;
+                    }
+
+                    insideQuotes =
+                        !insideQuotes;
+
+                    continue;
+                }
+
+                if (currentCharacter == ',' &&
+                    !insideQuotes)
+                {
+                    fields.Add(
+                        item: currentField.ToString());
+
+                    currentField.Clear();
+
+                    continue;
+                }
+
+                currentField.Append(
+                    value: currentCharacter);
+            }
+
+            #endregion
+
+
+            #region Validate Quotation
+
+            if (insideQuotes)
+            {
+                errorMessage =
+                    "Malformed CSV row: unmatched quotation mark.";
+
+                return false;
+            }
+
+            #endregion
+
+
+            #region Add Final Field
+
+            fields.Add(
+                item: currentField.ToString());
+
+            return true;
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Load Existing Project Reference Points
+
+        private async Task<List<ExistingReferencePoint>>
+            LoadExistingReferencePointsAsync(
+                int projectId)
+        {
+            #region Validate Project ID
+
+            if (projectId <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    paramName: nameof(projectId),
+                    message: "Project_ID must be greater than zero.");
+            }
+
+            #endregion
+
+
+            #region Read Database Connection String
+
+            string connectionString =
+                txtDbConnectionString.Text?.Trim()
+                ?? throw new InvalidOperationException(
+                    "Database connection string control returned null.");
+
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                throw new InvalidOperationException(
+                    "Database connection string has not been configured.");
+            }
+
+            #endregion
+
+
+            #region Build Database Connection String
+
+            SqlConnectionStringBuilder databaseConnectionBuilder =
+                new(
+                    connectionString: connectionString)
+                {
+                    InitialCatalog = TrackGeometryDatabaseName
+                };
+
+            #endregion
+
+
+            #region Define Existing Point Query
+
+            // Deliberately include soft-deleted PointName records.
+            //
+            // They still exist within the project namespace and their PointName
+            // remains subject to the database uniqueness constraint.
+
+            const string existingPointsSql = """
+        SELECT
+            PN.[PointName_ID],
+            PN.[Project_ID],
+            PN.[PointName],
+            PN.[ReplacementName],
+            CR.[Eref],
+            CR.[Nref],
+            CR.[Href]
+        FROM [dbo].[PointName] AS PN
+        INNER JOIN [dbo].[CoordinatesReference] AS CR
+            ON CR.[PointName_ID] = PN.[PointName_ID]
+        WHERE
+            PN.[Project_ID] = @Project_ID;
+        """;
+
+            #endregion
+
+
+            #region Load Existing Points
+
+            List<ExistingReferencePoint> existingPoints =
+                new();
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        databaseConnectionBuilder.ConnectionString);
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand existingPointsCommand =
+                new(
+                    cmdText: existingPointsSql,
+                    connection: databaseConnection);
+
+            existingPointsCommand.Parameters.AddWithValue(
+                parameterName: "@Project_ID",
+                value: projectId);
+
+            await using SqlDataReader reader =
+                await existingPointsCommand.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                ExistingReferencePoint existingPoint =
+                    new()
+                    {
+                        PointName_ID =
+                            reader.GetInt32(
+                                i: 0),
+
+                        Project_ID =
+                            reader.GetInt32(
+                                i: 1),
+
+                        PointName =
+                            reader.GetString(
+                                i: 2),
+
+                        ReplacementName =
+                            reader.GetString(
+                                i: 3),
+
+                        Easting =
+                            reader.GetDecimal(
+                                i: 4),
+
+                        Northing =
+                            reader.GetDecimal(
+                                i: 5),
+
+                        Height =
+                            reader.GetDecimal(
+                                i: 6)
+                    };
+
+                existingPoints.Add(
+                    item: existingPoint);
+            }
+
+            #endregion
+
+
+            #region Return Existing Points
+
+            return existingPoints;
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Complete Import Validation
+
+        private static void ValidateReferenceCoordinateImport(
+            List<ReferenceCoordinateImportItem> importItems,
+            List<ExistingReferencePoint> existingPoints)
+        {
+            #region Validate Arguments
+
+            ArgumentNullException.ThrowIfNull(
+                argument: importItems);
+
+            ArgumentNullException.ThrowIfNull(
+                argument: existingPoints);
+
+            #endregion
+
+
+            #region Validate Combined Names Within CSV
+
+            Dictionary<string,
+                (ReferenceCoordinateImportItem Item, string NameType)>
+                incomingNames =
+                    new(
+                        comparer: StringComparer.OrdinalIgnoreCase);
+
+            foreach (ReferenceCoordinateImportItem importItem in importItems)
+            {
+                RegisterIncomingName(
+                    name: importItem.PointName,
+                    nameType: "Point Name",
+                    importItem: importItem,
+                    incomingNames: incomingNames);
+
+                // PointName == ReplacementName on the SAME record is permitted.
+                // This is the normal condition when no ReplacementName was supplied.
+
+                if (!string.Equals(
+                    a: importItem.PointName,
+                    b: importItem.ReplacementName,
+                    comparisonType: StringComparison.OrdinalIgnoreCase))
+                {
+                    RegisterIncomingName(
+                        name: importItem.ReplacementName,
+                        nameType: "Replacement Name",
+                        importItem: importItem,
+                        incomingNames: incomingNames);
+                }
+            }
+
+            #endregion
+
+
+            #region Build Existing Combined Name Namespace
+
+            Dictionary<string,
+                (ExistingReferencePoint Point, string NameType)>
+                existingNames =
+                    new(
+                        comparer: StringComparer.OrdinalIgnoreCase);
+
+            foreach (ExistingReferencePoint existingPoint in existingPoints)
+            {
+                RegisterExistingName(
+                    name: existingPoint.PointName,
+                    nameType: "Point Name",
+                    existingPoint: existingPoint,
+                    existingNames: existingNames);
+
+                if (!string.Equals(
+                    a: existingPoint.PointName,
+                    b: existingPoint.ReplacementName,
+                    comparisonType: StringComparison.OrdinalIgnoreCase))
+                {
+                    RegisterExistingName(
+                        name: existingPoint.ReplacementName,
+                        nameType: "Replacement Name",
+                        existingPoint: existingPoint,
+                        existingNames: existingNames);
+                }
+            }
+
+            #endregion
+
+
+            #region Validate Incoming Names Against Database
+
+            foreach (ReferenceCoordinateImportItem importItem in importItems)
+            {
+                ValidateNameAgainstExistingDatabase(
+                    name: importItem.PointName,
+                    nameType: "Point Name",
+                    importItem: importItem,
+                    existingNames: existingNames);
+
+                if (!string.Equals(
+                    a: importItem.PointName,
+                    b: importItem.ReplacementName,
+                    comparisonType: StringComparison.OrdinalIgnoreCase))
+                {
+                    ValidateNameAgainstExistingDatabase(
+                        name: importItem.ReplacementName,
+                        nameType: "Replacement Name",
+                        importItem: importItem,
+                        existingNames: existingNames);
+                }
+            }
+
+            #endregion
+
+
+            #region Validate Horizontal Coordinate Duplicates
+
+            ValidateHorizontalCoordinateDuplicates(
+                importItems: importItems,
+                existingPoints: existingPoints);
+
+            #endregion
+
+
+            #region Finalise Validation Status
+
+            foreach (ReferenceCoordinateImportItem importItem in importItems)
+            {
+                if (importItem.IsValid)
+                {
+                    importItem.ValidationStatus =
+                        "Valid";
+                }
+            }
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Name Validation Helpers
+
+        private static void RegisterIncomingName(
+            string name,
+            string nameType,
+            ReferenceCoordinateImportItem importItem,
+            Dictionary<string,
+                (ReferenceCoordinateImportItem Item, string NameType)> incomingNames)
+        {
+            #region Ignore Invalid Blank Names
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return;
+            }
+
+            #endregion
+
+
+            #region Check Existing Incoming Name
+
+            if (incomingNames.TryGetValue(
+                key: name,
+                value: out
+                    (ReferenceCoordinateImportItem Item, string NameType)
+                    existingName))
+            {
+                AppendValidationError(
+                    importItem: importItem,
+                    errorMessage:
+                        $"{nameType} '{name}' duplicates " +
+                        $"{existingName.NameType} on CSV row " +
+                        $"{existingName.Item.SourceRow}.");
+
+                AppendValidationError(
+                    importItem: existingName.Item,
+                    errorMessage:
+                        $"{existingName.NameType} '{name}' duplicates " +
+                        $"{nameType} on CSV row {importItem.SourceRow}.");
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Register Name
+
+            incomingNames.Add(
+                key: name,
+                value: (importItem, nameType));
+
+            #endregion
+        }
+
+
+        private static void RegisterExistingName(
+            string name,
+            string nameType,
+            ExistingReferencePoint existingPoint,
+            Dictionary<string,
+                (ExistingReferencePoint Point, string NameType)> existingNames)
+        {
+            #region Ignore Blank Existing Names
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return;
+            }
+
+            #endregion
+
+
+            #region Register Existing Name
+
+            // If inconsistent historic database data already contains a combined
+            // namespace collision, retaining the first record is sufficient for
+            // import validation. Any incoming use of the same name is blocked.
+
+            if (!existingNames.ContainsKey(
+                key: name))
+            {
+                existingNames.Add(
+                    key: name,
+                    value: (existingPoint, nameType));
+            }
+
+            #endregion
+        }
+
+
+        private static void ValidateNameAgainstExistingDatabase(
+            string name,
+            string nameType,
+            ReferenceCoordinateImportItem importItem,
+            Dictionary<string,
+                (ExistingReferencePoint Point, string NameType)> existingNames)
+        {
+            #region Ignore Invalid Blank Names
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return;
+            }
+
+            #endregion
+
+
+            #region Check Existing Database Namespace
+
+            if (existingNames.TryGetValue(
+                key: name,
+                value: out
+                    (ExistingReferencePoint Point, string NameType)
+                    existingName))
+            {
+                AppendValidationError(
+                    importItem: importItem,
+                    errorMessage:
+                        $"{nameType} '{name}' duplicates existing " +
+                        $"{existingName.NameType} on database point " +
+                        $"'{existingName.Point.PointName}'.");
+            }
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Horizontal Coordinate Duplicate Validation
+
+        private static void ValidateHorizontalCoordinateDuplicates(
+            List<ReferenceCoordinateImportItem> importItems,
+            List<ExistingReferencePoint> existingPoints)
+        {
+            #region Build Existing Coordinate Buckets
+
+            Dictionary<(long EastingBucket, long NorthingBucket),
+                List<ExistingReferencePoint>>
+                existingCoordinateBuckets =
+                    new();
+
+            foreach (ExistingReferencePoint existingPoint in existingPoints)
+            {
+                (long EastingBucket, long NorthingBucket) bucket =
+                    GetReferenceCoordinateBucket(
+                        easting: existingPoint.Easting,
+                        northing: existingPoint.Northing);
+
+                if (!existingCoordinateBuckets.TryGetValue(
+                    key: bucket,
+                    value: out List<ExistingReferencePoint>? bucketPoints))
+                {
+                    bucketPoints =
+                        new List<ExistingReferencePoint>();
+
+                    existingCoordinateBuckets.Add(
+                        key: bucket,
+                        value: bucketPoints);
+                }
+
+                bucketPoints.Add(
+                    item: existingPoint);
+            }
+
+            #endregion
+
+
+            #region Prepare Incoming Coordinate Buckets
+
+            Dictionary<(long EastingBucket, long NorthingBucket),
+                List<ReferenceCoordinateImportItem>>
+                incomingCoordinateBuckets =
+                    new();
+
+            #endregion
+
+
+            #region Validate Each Incoming Coordinate
+
+            foreach (ReferenceCoordinateImportItem importItem in importItems)
+            {
+                if (!importItem.Easting.HasValue ||
+                    !importItem.Northing.HasValue)
+                {
+                    continue;
+                }
+
+                decimal easting =
+                    importItem.Easting.Value;
+
+                decimal northing =
+                    importItem.Northing.Value;
+
+                (long EastingBucket, long NorthingBucket) sourceBucket =
+                    GetReferenceCoordinateBucket(
+                        easting: easting,
+                        northing: northing);
+
+
+                #region Check Against Existing Database Points
+
+                for (long eastOffset = -1;
+                     eastOffset <= 1;
+                     eastOffset++)
+                {
+                    for (long northOffset = -1;
+                         northOffset <= 1;
+                         northOffset++)
+                    {
+                        (long EastingBucket, long NorthingBucket) neighbourBucket =
+                            (
+                                sourceBucket.EastingBucket + eastOffset,
+                                sourceBucket.NorthingBucket + northOffset
+                            );
+
+                        if (!existingCoordinateBuckets.TryGetValue(
+                            key: neighbourBucket,
+                            value: out
+                                List<ExistingReferencePoint>? existingBucketPoints))
+                        {
+                            continue;
+                        }
+
+                        foreach (ExistingReferencePoint existingPoint
+                            in existingBucketPoints)
+                        {
+                            decimal distanceSquared =
+                                GetHorizontalDistanceSquared(
+                                    easting1: easting,
+                                    northing1: northing,
+                                    easting2: existingPoint.Easting,
+                                    northing2: existingPoint.Northing);
+
+                            if (distanceSquared <
+                                ReferenceDuplicateCoordinateToleranceSquared)
+                            {
+                                double distance =
+                                    Math.Sqrt(
+                                        d: (double)distanceSquared);
+
+                                AppendValidationError(
+                                    importItem: importItem,
+                                    errorMessage:
+                                        $"Coordinates are {distance.ToString(
+                                            format: "0.000",
+                                            provider: CultureInfo.InvariantCulture)} m " +
+                                        $"from existing database point " +
+                                        $"'{existingPoint.PointName}'.");
+                            }
+                        }
+                    }
+                }
+
+                #endregion
+
+
+                #region Check Against Earlier CSV Points
+
+                for (long eastOffset = -1;
+                     eastOffset <= 1;
+                     eastOffset++)
+                {
+                    for (long northOffset = -1;
+                         northOffset <= 1;
+                         northOffset++)
+                    {
+                        (long EastingBucket, long NorthingBucket) neighbourBucket =
+                            (
+                                sourceBucket.EastingBucket + eastOffset,
+                                sourceBucket.NorthingBucket + northOffset
+                            );
+
+                        if (!incomingCoordinateBuckets.TryGetValue(
+                            key: neighbourBucket,
+                            value: out
+                                List<ReferenceCoordinateImportItem>?
+                                incomingBucketPoints))
+                        {
+                            continue;
+                        }
+
+                        foreach (ReferenceCoordinateImportItem previousItem
+                            in incomingBucketPoints)
+                        {
+                            if (!previousItem.Easting.HasValue ||
+                                !previousItem.Northing.HasValue)
+                            {
+                                continue;
+                            }
+
+                            decimal distanceSquared =
+                                GetHorizontalDistanceSquared(
+                                    easting1: easting,
+                                    northing1: northing,
+                                    easting2: previousItem.Easting.Value,
+                                    northing2: previousItem.Northing.Value);
+
+                            if (distanceSquared <
+                                ReferenceDuplicateCoordinateToleranceSquared)
+                            {
+                                double distance =
+                                    Math.Sqrt(
+                                        d: (double)distanceSquared);
+
+                                string formattedDistance =
+                                    distance.ToString(
+                                        format: "0.000",
+                                        provider: CultureInfo.InvariantCulture);
+
+                                AppendValidationError(
+                                    importItem: importItem,
+                                    errorMessage:
+                                        $"Coordinates are {formattedDistance} m " +
+                                        $"from CSV row {previousItem.SourceRow} " +
+                                        $"('{previousItem.PointName}').");
+
+                                AppendValidationError(
+                                    importItem: previousItem,
+                                    errorMessage:
+                                        $"Coordinates are {formattedDistance} m " +
+                                        $"from CSV row {importItem.SourceRow} " +
+                                        $"('{importItem.PointName}').");
+                            }
+                        }
+                    }
+                }
+
+                #endregion
+
+
+                #region Add Incoming Point To Spatial Bucket
+
+                if (!incomingCoordinateBuckets.TryGetValue(
+                    key: sourceBucket,
+                    value: out
+                        List<ReferenceCoordinateImportItem>? sourceBucketPoints))
+                {
+                    sourceBucketPoints =
+                        new List<ReferenceCoordinateImportItem>();
+
+                    incomingCoordinateBuckets.Add(
+                        key: sourceBucket,
+                        value: sourceBucketPoints);
+                }
+
+                sourceBucketPoints.Add(
+                    item: importItem);
+
+                #endregion
+            }
+
+            #endregion
+        }
+
+
+        private static (
+            long EastingBucket,
+            long NorthingBucket)
+            GetReferenceCoordinateBucket(
+                decimal easting,
+                decimal northing)
+        {
+            #region Calculate Spatial Bucket
+
+            long eastingBucket =
+                (long)decimal.Floor(
+                    d: easting /
+                       ReferenceDuplicateCoordinateTolerance);
+
+            long northingBucket =
+                (long)decimal.Floor(
+                    d: northing /
+                       ReferenceDuplicateCoordinateTolerance);
+
+            return
+                (
+                    EastingBucket: eastingBucket,
+                    NorthingBucket: northingBucket
+                );
+
+            #endregion
+        }
+
+
+        private static decimal GetHorizontalDistanceSquared(
+            decimal easting1,
+            decimal northing1,
+            decimal easting2,
+            decimal northing2)
+        {
+            #region Calculate Horizontal Distance Squared
+
+            decimal deltaEasting =
+                easting2 - easting1;
+
+            decimal deltaNorthing =
+                northing2 - northing1;
+
+            return
+                (deltaEasting * deltaEasting) +
+                (deltaNorthing * deltaNorthing);
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Validation Status Helper
+
+        private static void AppendValidationError(
+            ReferenceCoordinateImportItem importItem,
+            string errorMessage)
+        {
+            #region Validate Parameters
+
+            ArgumentNullException.ThrowIfNull(
+                argument: importItem);
+
+            if (string.IsNullOrWhiteSpace(errorMessage))
+            {
+                return;
+            }
+
+            #endregion
+
+
+            #region Append Error
+
+            importItem.IsValid =
+                false;
+
+            if (string.IsNullOrWhiteSpace(importItem.ValidationStatus) ||
+                string.Equals(
+                    a: importItem.ValidationStatus,
+                    b: "Valid",
+                    comparisonType: StringComparison.Ordinal))
+            {
+                importItem.ValidationStatus =
+                    errorMessage;
+            }
+            else
+            {
+                importItem.ValidationStatus =
+                    $"{importItem.ValidationStatus}; {errorMessage}";
+            }
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Commit Reference Coordinate Import
+
+        private async void btnCommitReferenceImport_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Validate Commit Context
+
+            if (!_referenceImportProjectId.HasValue)
+            {
+                btnCommitReferenceImport.IsEnabled =
+                    false;
+
+                txtReferenceImportStatus.Text =
+                    "Import blocked: no target project is associated with the preview.";
+
+                return;
+            }
+
+            if (!_activeProjectId.HasValue ||
+                _activeProjectId.Value != _referenceImportProjectId.Value)
+            {
+                btnCommitReferenceImport.IsEnabled =
+                    false;
+
+                txtReferenceImportStatus.Text =
+                    "Import blocked: the active project has changed. Select the CSV again.";
+
+                return;
+            }
+
+            if (_referenceImportItems.Count == 0)
+            {
+                btnCommitReferenceImport.IsEnabled =
+                    false;
+
+                txtReferenceImportStatus.Text =
+                    "Import blocked: there are no reference points to import.";
+
+                return;
+            }
+
+            foreach (ReferenceCoordinateImportItem importItem
+                in _referenceImportItems)
+            {
+                if (!importItem.IsValid)
+                {
+                    btnCommitReferenceImport.IsEnabled =
+                        false;
+
+                    txtReferenceImportStatus.Text =
+                        "Import blocked: the preview contains validation errors.";
+
+                    return;
+                }
+            }
+
+            #endregion
+
+
+            #region Confirm Import
+
+            txtReferenceImportStatus.Text =
+                $"Ready to import {_referenceImportItems.Count} point(s) " +
+                $"into project '{_referenceImportProjectName}'.";
+
+            string confirmationMessage =
+                $"Project: {_referenceImportProjectName}\n\n" +
+                $"Points to import: {_referenceImportItems.Count}\n" +
+                "Validation errors: 0\n\n" +
+                "Commit this import?";
+
+            MessageBoxResult confirmationResult =
+                MessageBox.Show(
+                    owner: this,
+                    messageBoxText: confirmationMessage,
+                    caption: "Confirm Reference Coordinate Import",
+                    button: MessageBoxButton.YesNo,
+                    icon: MessageBoxImage.Question);
+
+            if (confirmationResult != MessageBoxResult.Yes)
+            {
+                txtReferenceImportStatus.Text =
+                    "Import cancelled. No data was written to the database.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Prepare Commit
+
+            btnCommitReferenceImport.IsEnabled =
+                false;
+
+            btnSelectReferenceCsv.IsEnabled =
+                false;
+
+            btnClearReferenceImport.IsEnabled =
+                false;
+
+            cmbReferenceCsvColumnOrder.IsEnabled =
+                false;
+
+            txtReferenceImportStatus.Text =
+                $"Revalidating and importing {_referenceImportItems.Count} point(s) " +
+                $"into project '{_referenceImportProjectName}'...";
+
+            #endregion
+
+
+            try
+            {
+                #region Execute Atomic Import
+
+                int importedPointCount =
+                    await CommitReferenceCoordinateImportAsync(
+                        projectId: _referenceImportProjectId.Value,
+                        projectName: _referenceImportProjectName);
+
+                #endregion
+
+
+                #region Report Successful Import
+
+                btnCommitReferenceImport.IsEnabled =
+                    false;
+
+                cmbReferenceCsvColumnOrder.IsEnabled =
+                    false;
+
+                txtReferenceImportStatus.Text =
+                    $"{importedPointCount} point(s) imported successfully " +
+                    $"into project '{_referenceImportProjectName}'.";
+
+                #endregion
+            }
+            catch (Exception ex)
+            {
+                #region Report Failed Import
+
+                bool previewStillValid =
+                    true;
+
+                foreach (ReferenceCoordinateImportItem importItem
+                    in _referenceImportItems)
+                {
+                    if (!importItem.IsValid)
+                    {
+                        previewStillValid =
+                            false;
+
+                        break;
+                    }
+                }
+
+                btnCommitReferenceImport.IsEnabled =
+                    previewStillValid;
+
+                dgReferenceCoordinateImport.Items.Refresh();
+
+                txtReferenceImportStatus.Text =
+                    $"Import failed. No data committed. {ex.Message}";
+
+                #endregion
+            }
+            finally
+            {
+                #region Restore Import Controls
+
+                btnSelectReferenceCsv.IsEnabled =
+                    true;
+
+                btnClearReferenceImport.IsEnabled =
+                    true;
+
+                #endregion
+            }
+        }
+
+        #endregion
+
+
+        #region Atomic Reference Coordinate Database Import
+
+        private async Task<int> CommitReferenceCoordinateImportAsync(
+            int projectId,
+            string projectName)
+        {
+            #region Validate Parameters
+
+            if (projectId <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    paramName: nameof(projectId),
+                    message: "Project_ID must be greater than zero.");
+            }
+
+            if (string.IsNullOrWhiteSpace(projectName))
+            {
+                throw new ArgumentException(
+                    message: "Project name cannot be blank.",
+                    paramName: nameof(projectName));
+            }
+
+            #endregion
+
+
+            #region Capture Preview Dataset
+
+            List<ReferenceCoordinateImportItem> importItems =
+                new(
+                    collection: _referenceImportItems);
+
+            if (importItems.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "The reference-coordinate preview contains no records.");
+            }
+
+            #endregion
+
+
+            #region Read Database Connection String
+
+            string connectionString =
+                txtDbConnectionString.Text?.Trim()
+                ?? throw new InvalidOperationException(
+                    "Database connection string control returned null.");
+
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                throw new InvalidOperationException(
+                    "Database connection string has not been configured.");
+            }
+
+            SqlConnectionStringBuilder databaseConnectionBuilder =
+                new(
+                    connectionString: connectionString)
+                {
+                    InitialCatalog = TrackGeometryDatabaseName
+                };
+
+            #endregion
+
+
+            #region Open Database Connection
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        databaseConnectionBuilder.ConnectionString);
+
+            await databaseConnection.OpenAsync();
+
+            #endregion
+
+
+            #region Begin Serializable Transaction
+
+            using SqlTransaction transaction =
+                databaseConnection.BeginTransaction(
+                    iso:
+                        System.Data.IsolationLevel.Serializable);
+
+            bool transactionCommitted =
+                false;
+
+            #endregion
+
+
+            try
+            {
+                #region Acquire Import Transaction Lock
+
+                await AcquireReferenceImportTransactionLockAsync(
+                    projectId: projectId,
+                    databaseConnection: databaseConnection,
+                    transaction: transaction);
+
+                #endregion
+
+
+                #region Revalidate Target Project
+
+                await ValidateReferenceImportTargetProjectAsync(
+                    projectId: projectId,
+                    expectedProjectName: projectName,
+                    databaseConnection: databaseConnection,
+                    transaction: transaction);
+
+                #endregion
+
+
+                #region Reset Preview Validation Status
+
+                foreach (ReferenceCoordinateImportItem importItem
+                    in importItems)
+                {
+                    importItem.IsValid =
+                        true;
+
+                    importItem.ValidationStatus =
+                        "Valid";
+                }
+
+                #endregion
+
+
+                #region Reload Current Database Reference Points
+
+                List<ExistingReferencePoint> existingPoints =
+                    await LoadExistingReferencePointsForCommitAsync(
+                        projectId: projectId,
+                        databaseConnection: databaseConnection,
+                        transaction: transaction);
+
+                #endregion
+
+
+                #region Revalidate Import Against Current Database
+
+                ValidateReferenceCoordinateImport(
+                    importItems: importItems,
+                    existingPoints: existingPoints);
+
+                int invalidRowCount =
+                    0;
+
+                foreach (ReferenceCoordinateImportItem importItem
+                    in importItems)
+                {
+                    if (!importItem.IsValid)
+                    {
+                        invalidRowCount++;
+                    }
+                }
+
+                dgReferenceCoordinateImport.Items.Refresh();
+
+                if (invalidRowCount > 0)
+                {
+                    throw new InvalidOperationException(
+                        $"{invalidRowCount} row(s) failed final validation. " +
+                        "The database may have changed since the preview was created.");
+                }
+
+                #endregion
+
+
+                #region Insert Reference Points
+
+                foreach (ReferenceCoordinateImportItem importItem
+                    in importItems)
+                {
+                    int pointNameId =
+                        await ResolveOrInsertPointNameAsync(
+                            projectId: projectId,
+                            importItem: importItem,
+                            databaseConnection: databaseConnection,
+                            transaction: transaction);
+
+                    await InsertReferenceCoordinatesAsync(
+                        pointNameId: pointNameId,
+                        importItem: importItem,
+                        databaseConnection: databaseConnection,
+                        transaction: transaction);
+                }
+
+                #endregion
+
+
+                #region Commit Transaction
+
+                transaction.Commit();
+
+                transactionCommitted =
+                    true;
+
+                return importItems.Count;
+
+                #endregion
+            }
+            catch
+            {
+                #region Roll Back Transaction
+
+                if (!transactionCommitted)
+                {
+                    try
+                    {
+                        transaction.Rollback();
+                    }
+                    catch
+                    {
+                        // Preserve the original exception.
+                    }
+                }
+
+                throw;
+
+                #endregion
+            }
+        }
+
+        #endregion
+
+
+        #region Reference Import Transaction Lock
+
+        private static async Task AcquireReferenceImportTransactionLockAsync(
+            int projectId,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Define Import Lock
+
+            string lockResource =
+                $"GNA_DLRreport:ReferenceImport:{projectId}";
+
+            const string lockSql = """
+        DECLARE @LockResult int;
+
+        EXEC @LockResult = sys.sp_getapplock
+            @Resource = @Resource,
+            @LockMode = 'Exclusive',
+            @LockOwner = 'Transaction',
+            @LockTimeout = 0;
+
+        SELECT @LockResult;
+        """;
+
+            #endregion
+
+
+            #region Acquire Import Lock
+
+            await using SqlCommand lockCommand =
+                new(
+                    cmdText: lockSql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            lockCommand.Parameters.Add(
+                parameterName: "@Resource",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 255)
+                .Value =
+                    lockResource;
+
+            object? lockResultValue =
+                await lockCommand.ExecuteScalarAsync();
+
+            if (lockResultValue is null ||
+                lockResultValue == DBNull.Value)
+            {
+                throw new InvalidOperationException(
+                    "SQL Server did not return an import-lock result.");
+            }
+
+            int lockResult =
+                Convert.ToInt32(
+                    value: lockResultValue,
+                    provider: CultureInfo.InvariantCulture);
+
+            if (lockResult < 0)
+            {
+                throw new InvalidOperationException(
+                    "Another reference-coordinate import is currently active " +
+                    "for this project.");
+            }
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Reference Import Project Revalidation
+
+        private static async Task ValidateReferenceImportTargetProjectAsync(
+            int projectId,
+            string expectedProjectName,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Define Project Validation Query
+
+            const string projectSql = """
+        SELECT
+            [ProjectName]
+        FROM [dbo].[Project] WITH (UPDLOCK, HOLDLOCK)
+        WHERE
+            [Project_ID] = @Project_ID
+            AND [IsDeleted] = 0;
+        """;
+
+            #endregion
+
+
+            #region Read Current Project
+
+            await using SqlCommand projectCommand =
+                new(
+                    cmdText: projectSql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            projectCommand.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    projectId;
+
+            object? projectNameValue =
+                await projectCommand.ExecuteScalarAsync();
+
+            if (projectNameValue is null ||
+                projectNameValue == DBNull.Value)
+            {
+                throw new InvalidOperationException(
+                    "The target project no longer exists or has been deleted.");
+            }
+
+            string databaseProjectName =
+                Convert.ToString(
+                    value: projectNameValue,
+                    provider: CultureInfo.InvariantCulture)
+                ?? throw new InvalidOperationException(
+                    "The target project name could not be read from SQL Server.");
+
+            #endregion
+
+
+            #region Verify Captured Project Name
+
+            if (!string.Equals(
+                a: databaseProjectName,
+                b: expectedProjectName,
+                comparisonType: StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"The target project name has changed from " +
+                    $"'{expectedProjectName}' to '{databaseProjectName}'. " +
+                    "Select the CSV again before importing.");
+            }
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Load Existing Reference Points For Commit
+
+        private static async Task<List<ExistingReferencePoint>>
+            LoadExistingReferencePointsForCommitAsync(
+                int projectId,
+                SqlConnection databaseConnection,
+                SqlTransaction transaction)
+        {
+            #region Define Locked Existing Point Query
+
+            const string existingPointsSql = """
+        SELECT
+            PN.[PointName_ID],
+            PN.[Project_ID],
+            PN.[PointName],
+            PN.[ReplacementName],
+            CR.[Eref],
+            CR.[Nref],
+            CR.[Href]
+        FROM [dbo].[PointName] AS PN WITH (UPDLOCK, HOLDLOCK)
+        INNER JOIN [dbo].[CoordinatesReference] AS CR WITH (UPDLOCK, HOLDLOCK)
+            ON CR.[PointName_ID] = PN.[PointName_ID]
+        WHERE
+            PN.[Project_ID] = @Project_ID;
+        """;
+
+            #endregion
+
+
+            #region Load Existing Points
+
+            List<ExistingReferencePoint> existingPoints =
+                new();
+
+            await using SqlCommand existingPointsCommand =
+                new(
+                    cmdText: existingPointsSql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            existingPointsCommand.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    projectId;
+
+            await using SqlDataReader reader =
+                await existingPointsCommand.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                ExistingReferencePoint existingPoint =
+                    new()
+                    {
+                        PointName_ID =
+                            reader.GetInt32(
+                                i: 0),
+
+                        Project_ID =
+                            reader.GetInt32(
+                                i: 1),
+
+                        PointName =
+                            reader.GetString(
+                                i: 2),
+
+                        ReplacementName =
+                            reader.GetString(
+                                i: 3),
+
+                        Easting =
+                            reader.GetDecimal(
+                                i: 4),
+
+                        Northing =
+                            reader.GetDecimal(
+                                i: 5),
+
+                        Height =
+                            reader.GetDecimal(
+                                i: 6)
+                    };
+
+                existingPoints.Add(
+                    item: existingPoint);
+            }
+
+            #endregion
+
+
+            #region Return Existing Points
+
+            return existingPoints;
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Resolve Or Insert Point Name
+
+        private static async Task<int> ResolveOrInsertPointNameAsync(
+            int projectId,
+            ReferenceCoordinateImportItem importItem,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Validate Import Item
+
+            if (string.IsNullOrWhiteSpace(importItem.PointName))
+            {
+                throw new InvalidOperationException(
+                    $"Row {importItem.SourceRow}: PointName blank.");
+            }
+
+            if (string.IsNullOrWhiteSpace(importItem.ReplacementName))
+            {
+                throw new InvalidOperationException(
+                    $"Row {importItem.SourceRow}: ReplacementName blank.");
+            }
+
+            #endregion
+
+
+            #region Search Existing Point Namespace
+
+            const string findPointSql = """
+        SELECT
+            PN.[PointName_ID],
+            PN.[PointName],
+            PN.[ReplacementName],
+            PN.[IsDeleted],
+            CASE
+                WHEN CR.[PointName_ID] IS NULL THEN 0
+                ELSE 1
+            END AS [HasReference]
+        FROM [dbo].[PointName] AS PN WITH (UPDLOCK, HOLDLOCK)
+        LEFT JOIN [dbo].[CoordinatesReference] AS CR WITH (HOLDLOCK)
+            ON CR.[PointName_ID] = PN.[PointName_ID]
+        WHERE
+            PN.[Project_ID] = @Project_ID
+            AND
+            (
+                UPPER(PN.[PointName]) = UPPER(@PointName)
+                OR UPPER(PN.[ReplacementName]) = UPPER(@PointName)
+                OR UPPER(PN.[PointName]) = UPPER(@ReplacementName)
+                OR UPPER(PN.[ReplacementName]) = UPPER(@ReplacementName)
+            );
+        """;
+
+            await using SqlCommand findPointCommand =
+                new(
+                    cmdText: findPointSql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            findPointCommand.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    projectId;
+
+            findPointCommand.Parameters.Add(
+                parameterName: "@PointName",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 50)
+                .Value =
+                    importItem.PointName;
+
+            findPointCommand.Parameters.Add(
+                parameterName: "@ReplacementName",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 50)
+                .Value =
+                    importItem.ReplacementName;
+
+            #endregion
+
+
+            #region Read Existing Point Match
+
+            int? existingPointId =
+                null;
+
+            string existingPointName =
+                string.Empty;
+
+            string existingReplacementName =
+                string.Empty;
+
+            bool existingPointIsDeleted =
+                false;
+
+            bool existingPointHasReference =
+                false;
+
+            int matchCount =
+                0;
+
+            await using (SqlDataReader reader =
+                await findPointCommand.ExecuteReaderAsync())
+            {
+                while (await reader.ReadAsync())
+                {
+                    matchCount++;
+
+                    existingPointId =
+                        reader.GetInt32(
+                            i: 0);
+
+                    existingPointName =
+                        reader.GetString(
+                            i: 1);
+
+                    existingReplacementName =
+                        reader.GetString(
+                            i: 2);
+
+                    existingPointIsDeleted =
+                        reader.GetBoolean(
+                            i: 3);
+
+                    existingPointHasReference =
+                        reader.GetInt32(
+                            i: 4) == 1;
+                }
+            }
+
+            #endregion
+
+
+            #region Handle Multiple Namespace Matches
+
+            if (matchCount > 1)
+            {
+                throw new InvalidOperationException(
+                    $"'{importItem.PointName}': Name collision.");
+            }
+
+            #endregion
+
+
+            #region Reuse Existing Point
+
+            if (matchCount == 1 &&
+                existingPointId.HasValue)
+            {
+                if (existingPointIsDeleted)
+                {
+                    throw new InvalidOperationException(
+                        $"'{importItem.PointName}': Point is deleted.");
+                }
+
+                bool pointNameMatches =
+                    string.Equals(
+                        a: existingPointName,
+                        b: importItem.PointName,
+                        comparisonType: StringComparison.OrdinalIgnoreCase);
+
+                bool replacementNameMatches =
+                    string.Equals(
+                        a: existingReplacementName,
+                        b: importItem.ReplacementName,
+                        comparisonType: StringComparison.OrdinalIgnoreCase);
+
+                if (!pointNameMatches ||
+                    !replacementNameMatches)
+                {
+                    throw new InvalidOperationException(
+                        $"'{importItem.PointName}': Name mapping differs.");
+                }
+
+                if (existingPointHasReference)
+                {
+                    throw new InvalidOperationException(
+                        $"'{importItem.PointName}': Reference coordinates already exist.");
+                }
+
+                return existingPointId.Value;
+            }
+
+            #endregion
+
+
+            #region Insert New Point
+
+            return await InsertPointNameAsync(
+                projectId: projectId,
+                importItem: importItem,
+                databaseConnection: databaseConnection,
+                transaction: transaction);
+
+            #endregion
+        }
+
+
+        private static async Task<int> InsertPointNameAsync(
+            int projectId,
+            ReferenceCoordinateImportItem importItem,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Define Point Name Insert
+
+            const string insertPointNameSql = """
+        INSERT INTO [dbo].[PointName]
+        (
+            [PointName],
+            [ReplacementName],
+            [Project_ID],
+            [IsDeleted]
+        )
+        VALUES
+        (
+            @PointName,
+            @ReplacementName,
+            @Project_ID,
+            0
+        );
+
+        SELECT CAST(SCOPE_IDENTITY() AS int);
+        """;
+
+            #endregion
+
+
+            #region Insert Point Name
+
+            await using SqlCommand insertPointNameCommand =
+                new(
+                    cmdText: insertPointNameSql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            insertPointNameCommand.Parameters.Add(
+                parameterName: "@PointName",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 50)
+                .Value =
+                    importItem.PointName;
+
+            insertPointNameCommand.Parameters.Add(
+                parameterName: "@ReplacementName",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 50)
+                .Value =
+                    importItem.ReplacementName;
+
+            insertPointNameCommand.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    projectId;
+
+            object? pointNameIdValue =
+                await insertPointNameCommand.ExecuteScalarAsync();
+
+            if (pointNameIdValue is null ||
+                pointNameIdValue == DBNull.Value)
+            {
+                throw new InvalidOperationException(
+                    $"'{importItem.PointName}': Point insert failed.");
+            }
+
+            return Convert.ToInt32(
+                value: pointNameIdValue,
+                provider: CultureInfo.InvariantCulture);
+
+            #endregion
+        }
+
+        #endregion
+
+
+
+        #region Insert Reference Coordinates
+
+        private static async Task InsertReferenceCoordinatesAsync(
+            int pointNameId,
+            ReferenceCoordinateImportItem importItem,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Validate Coordinates
+
+            if (!importItem.Easting.HasValue ||
+                !importItem.Northing.HasValue ||
+                !importItem.Height.HasValue)
+            {
+                throw new InvalidOperationException(
+                    $"CSV row {importItem.SourceRow} does not contain " +
+                    "complete valid reference coordinates.");
+            }
+
+            #endregion
+
+
+            #region Define Coordinate Insert
+
+            const string insertCoordinateSql = """
+        INSERT INTO [dbo].[CoordinatesReference]
+        (
+            [PointName_ID],
+            [Eref],
+            [Nref],
+            [Href]
+        )
+        VALUES
+        (
+            @PointName_ID,
+            @Eref,
+            @Nref,
+            @Href
+        );
+        """;
+
+            #endregion
+
+
+            #region Insert Coordinates
+
+            await using SqlCommand insertCoordinateCommand =
+                new(
+                    cmdText: insertCoordinateSql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            insertCoordinateCommand.Parameters.Add(
+                parameterName: "@PointName_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    pointNameId;
+
+
+            SqlParameter eastingParameter =
+                insertCoordinateCommand.Parameters.Add(
+                    parameterName: "@Eref",
+                    sqlDbType: System.Data.SqlDbType.Decimal);
+
+            eastingParameter.Precision =
+                18;
+
+            eastingParameter.Scale =
+                4;
+
+            eastingParameter.Value =
+                importItem.Easting.Value;
+
+
+            SqlParameter northingParameter =
+                insertCoordinateCommand.Parameters.Add(
+                    parameterName: "@Nref",
+                    sqlDbType: System.Data.SqlDbType.Decimal);
+
+            northingParameter.Precision =
+                18;
+
+            northingParameter.Scale =
+                4;
+
+            northingParameter.Value =
+                importItem.Northing.Value;
+
+
+            SqlParameter heightParameter =
+                insertCoordinateCommand.Parameters.Add(
+                    parameterName: "@Href",
+                    sqlDbType: System.Data.SqlDbType.Decimal);
+
+            heightParameter.Precision =
+                18;
+
+            heightParameter.Scale =
+                4;
+
+            heightParameter.Value =
+                importItem.Height.Value;
+
+
+            int rowsInserted =
+                await insertCoordinateCommand.ExecuteNonQueryAsync();
+
+            if (rowsInserted != 1)
+            {
+                throw new InvalidOperationException(
+                    $"Reference coordinates for '{importItem.PointName}' " +
+                    "were not inserted correctly.");
+            }
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #endregion
+
+
         #region Constructor
 
         public MainWindow()
@@ -115,10 +5949,25 @@ namespace GNA_DLRreport
             #endregion
 
 
+            #region EPPlus License
+
+            gnaT.epplusLicense();
+
+            #endregion
+
+
             #region Initialise Project DataGrid
 
             dgProjects.ItemsSource =
                 _projectItems;
+
+            #endregion
+
+
+            #region Initialise Reference Coordinate Import DataGrid
+
+            dgReferenceCoordinateImport.ItemsSource =
+                _referenceImportItems;
 
             #endregion
 
@@ -509,6 +6358,284 @@ namespace GNA_DLRreport
         }
 
         #endregion
+
+
+        #region Clear Selected Database Table
+
+        private async void btnClearTables_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Validate Table Selection
+
+            if (cmbClearTables.SelectedItem
+                is not ComboBoxItem selectedItem)
+            {
+                txtDbConnectionStatus.Text =
+                    "Select a table.";
+
+                return;
+            }
+
+            string selectedTable =
+                selectedItem.Content?.ToString()?.Trim()
+                ?? string.Empty;
+
+            if (cmbClearTables.SelectedIndex == 0 ||
+                string.IsNullOrWhiteSpace(selectedTable))
+            {
+                txtDbConnectionStatus.Text =
+                    "Select a table.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Confirm Clear Operation
+
+            string confirmationMessage =
+                $"Clear table '{selectedTable}'?\n\nThis cannot be undone.";
+
+            MessageBoxResult confirmation =
+                MessageBox.Show(
+                    owner: this,
+                    messageBoxText: confirmationMessage,
+                    caption: "Confirm Clear Table",
+                    button: MessageBoxButton.YesNo,
+                    icon: MessageBoxImage.Warning,
+                    defaultResult: MessageBoxResult.No);
+
+            if (confirmation != MessageBoxResult.Yes)
+            {
+                txtDbConnectionStatus.Text =
+                    "Clear cancelled.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Prepare User Interface
+
+            btnClearTables.IsEnabled =
+                false;
+
+            cmbClearTables.IsEnabled =
+                false;
+
+            txtDbConnectionStatus.Text =
+                $"Clearing '{selectedTable}'...";
+
+            #endregion
+
+
+            try
+            {
+                #region Clear Selected Table
+
+                await ClearDatabaseTableAsync(
+                    tableName: selectedTable);
+
+                #endregion
+
+
+                #region Reset Application State
+
+                if (selectedTable == "Project")
+                {
+                    ReleaseActiveProjectLockConnection();
+
+                    _activeProjectId =
+                        null;
+
+                    _activeProjectName =
+                        string.Empty;
+
+                    txtActiveProject.Text =
+                        "No active project";
+
+                    ClearActiveProjectFromRegistry();
+
+                    _projectItems.Clear();
+
+                    ResetReferenceImportState(
+                        statusMessage: "No CSV selected.");
+
+                    ResetPrismPairImportState(
+                        statusMessage: "No workbook selected.");
+                }
+                else if (selectedTable == "PointName" ||
+                         selectedTable == "CoordinatesReference")
+                {
+                    ResetReferenceImportState(
+                        statusMessage: "No CSV selected.");
+
+                    ResetPrismPairImportState(
+                        statusMessage: "No workbook selected.");
+                }
+                else if (selectedTable == "Track" ||
+                         selectedTable == "PrismPairs")
+                {
+                    ResetPrismPairImportState(
+                        statusMessage: "No workbook selected.");
+                }
+
+                #endregion
+
+
+                #region Report Success
+
+
+                txtDbConnectionStatus.Text =
+    $"'{selectedTable}' cleared.";
+
+                cmbClearTables.SelectedIndex =
+                    0;
+
+                #endregion
+            }
+            catch (SqlException ex)
+                when (ex.Number == 547)
+            {
+                #region Report Foreign Key Failure
+
+                txtDbConnectionStatus.Text =
+                    $"'{selectedTable}': Related records exist.";
+
+                #endregion
+            }
+            catch (SqlException ex)
+            {
+                #region Report SQL Failure
+
+                txtDbConnectionStatus.Text =
+                    $"Clear failed: {ex.Message}";
+
+                #endregion
+            }
+            catch (Exception ex)
+            {
+                #region Report Clear Failure
+
+                txtDbConnectionStatus.Text =
+                    $"Clear failed: {ex.Message}";
+
+                #endregion
+            }
+            finally
+            {
+                #region Restore User Interface
+
+                btnClearTables.IsEnabled =
+                    true;
+
+                cmbClearTables.IsEnabled =
+                    true;
+
+                #endregion
+            }
+        }
+
+
+        private async Task ClearDatabaseTableAsync(
+            string tableName)
+        {
+
+
+            #region Validate Table Name
+
+            string clearSql =
+                tableName switch
+                {
+                    "CoordinatesReference" =>
+                        "DELETE FROM [dbo].[CoordinatesReference];",
+
+                    "PrismPairs" =>
+                        """
+    SET XACT_ABORT ON;
+
+    BEGIN TRY
+
+        BEGIN TRANSACTION;
+
+        DELETE FROM [dbo].[PrismPairs];
+        DELETE FROM [dbo].[Track];
+
+        COMMIT TRANSACTION;
+
+    END TRY
+
+    BEGIN CATCH
+
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+
+        THROW;
+
+    END CATCH;
+    """,
+
+                    _ =>
+                        throw new InvalidOperationException(
+                            "Invalid table selection.")
+                };
+
+            #endregion
+
+
+            #region Read Database Connection String
+
+            string connectionString =
+                txtDbConnectionString.Text?.Trim()
+                ?? throw new InvalidOperationException(
+                    "Database connection string unavailable.");
+
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                throw new InvalidOperationException(
+                    "Database connection string not configured.");
+            }
+
+            #endregion
+
+
+            #region Build Database Connection
+
+            SqlConnectionStringBuilder databaseConnectionBuilder =
+                new(
+                    connectionString: connectionString)
+                {
+                    InitialCatalog =
+                        TrackGeometryDatabaseName
+                };
+
+            #endregion
+
+
+            #region Execute Clear Operation
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        databaseConnectionBuilder.ConnectionString);
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand clearCommand =
+                new(
+                    cmdText: clearSql,
+                    connection: databaseConnection);
+
+            await clearCommand.ExecuteNonQueryAsync();
+
+            #endregion
+        }
+
+        #endregion
+
 
 
         #region Database Creation
@@ -1490,7 +7617,8 @@ namespace GNA_DLRreport
 
             await using (SqlConnection databaseConnection =
                 new(
-                    connectionString: databaseConnectionBuilder.ConnectionString))
+                    connectionString:
+                        databaseConnectionBuilder.ConnectionString))
             {
                 await databaseConnection.OpenAsync();
 
@@ -1502,10 +7630,463 @@ namespace GNA_DLRreport
                 await createTablesCommand.ExecuteNonQueryAsync();
             }
 
+
+            await EnsureTrackAndPrismPairSchemaAsync(
+                connectionString:
+                    databaseConnectionBuilder.ConnectionString);
+
             #endregion
+
+
+
+        }
+
+
+        #region Track And Prism Pair Schema Upgrade
+
+        private static async Task EnsureTrackAndPrismPairSchemaAsync(
+            string connectionString)
+        {
+            #region Validate Connection String
+
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                throw new ArgumentException(
+                    message: "Database connection string cannot be empty.",
+                    paramName: nameof(connectionString));
+            }
+
+            #endregion
+
+
+            #region Define Schema Upgrade Phase One
+
+            // IMPORTANT:
+            //
+            // Track_ID and PairOrder must be ADDED in a separate SQL batch from
+            // any SQL statements that subsequently reference those columns.
+            //
+            // SQL Server compiles an entire batch before executing it. Therefore
+            // adding a column and then referencing that new column later in the
+            // same batch can produce:
+            //
+            //     Invalid column name 'PairOrder'
+            //
+            // even though the ALTER TABLE ADD statement appears earlier.
+
+            const string phaseOneSql = """
+        /* =============================================================
+           TRACK
+           Each Track belongs to one Project.
+           TrackName is unique within that Project.
+           ============================================================= */
+
+        IF OBJECT_ID(N'dbo.Track', N'U') IS NULL
+        BEGIN
+
+            CREATE TABLE [dbo].[Track]
+            (
+                [Track_ID] int IDENTITY(1,1) NOT NULL,
+                [Project_ID] int NOT NULL,
+                [TrackName] nvarchar(200) NOT NULL,
+                [IsDeleted] bit NOT NULL
+                    CONSTRAINT [DF_Track_IsDeleted]
+                    DEFAULT (0),
+
+                CONSTRAINT [PK_Track]
+                    PRIMARY KEY CLUSTERED ([Track_ID]),
+
+                CONSTRAINT [UQ_Track_Project_TrackName]
+                    UNIQUE ([Project_ID], [TrackName]),
+
+                CONSTRAINT [FK_Track_Project]
+                    FOREIGN KEY ([Project_ID])
+                    REFERENCES [dbo].[Project] ([Project_ID])
+                    ON DELETE NO ACTION
+                    ON UPDATE NO ACTION
+            );
+
+        END;
+
+
+        /* =============================================================
+           PRISM PAIRS
+           Validate existing table before migration.
+           ============================================================= */
+
+        IF OBJECT_ID(N'dbo.PrismPairs', N'U') IS NULL
+        BEGIN
+
+            THROW 50001,
+                'PrismPairs table does not exist.',
+                1;
+
+        END;
+
+
+        /* -------------------------------------------------------------
+           Reject migration of populated legacy PrismPairs.
+
+           Track_ID and PairOrder cannot safely be inferred from the
+           old PrismPairs records.
+           ------------------------------------------------------------- */
+
+        IF
+        (
+            COL_LENGTH(
+                'dbo.PrismPairs',
+                'Track_ID') IS NULL
+
+            OR
+
+            COL_LENGTH(
+                'dbo.PrismPairs',
+                'PairOrder') IS NULL
+        )
+        AND EXISTS
+        (
+            SELECT 1
+            FROM [dbo].[PrismPairs]
+        )
+        BEGIN
+
+            THROW 50002,
+                'Legacy PrismPairs contains existing data. Automatic Track migration is blocked.',
+                1;
+
+        END;
+
+
+        /* -------------------------------------------------------------
+           Add Track_ID.
+           ------------------------------------------------------------- */
+
+        IF COL_LENGTH(
+            'dbo.PrismPairs',
+            'Track_ID') IS NULL
+        BEGIN
+
+            ALTER TABLE [dbo].[PrismPairs]
+            ADD [Track_ID] int NULL;
+
+        END;
+
+
+        /* -------------------------------------------------------------
+           Add PairOrder.
+           ------------------------------------------------------------- */
+
+        IF COL_LENGTH(
+            'dbo.PrismPairs',
+            'PairOrder') IS NULL
+        BEGIN
+
+            ALTER TABLE [dbo].[PrismPairs]
+            ADD [PairOrder] int NULL;
+
+        END;
+        """;
+
+            #endregion
+
+
+            #region Define Schema Upgrade Phase Two
+
+            // This is deliberately a SECOND SQL batch.
+            //
+            // When SQL Server compiles this batch, Track_ID and PairOrder already
+            // exist because Phase One has completed on the same SQL connection
+            // and within the same transaction.
+
+            const string phaseTwoSql = """
+        /* =============================================================
+           VERIFY NEW PRISM PAIR COLUMNS
+           ============================================================= */
+
+        IF COL_LENGTH(
+            'dbo.PrismPairs',
+            'Track_ID') IS NULL
+        BEGIN
+
+            THROW 50003,
+                'Track_ID was not created in PrismPairs.',
+                1;
+
+        END;
+
+
+        IF COL_LENGTH(
+            'dbo.PrismPairs',
+            'PairOrder') IS NULL
+        BEGIN
+
+            THROW 50004,
+                'PairOrder was not created in PrismPairs.',
+                1;
+
+        END;
+
+
+        /* =============================================================
+           VERIFY MIGRATION DATA STATE
+           ============================================================= */
+
+        IF EXISTS
+        (
+            SELECT 1
+            FROM [dbo].[PrismPairs]
+            WHERE
+                [Track_ID] IS NULL
+                OR
+                [PairOrder] IS NULL
+        )
+        BEGIN
+
+            THROW 50005,
+                'PrismPairs contains records without Track_ID or PairOrder.',
+                1;
+
+        END;
+
+
+        /* =============================================================
+           MAKE NEW COLUMNS MANDATORY
+           ============================================================= */
+
+        IF EXISTS
+        (
+            SELECT 1
+            FROM sys.columns
+            WHERE
+                [object_id] =
+                    OBJECT_ID(N'dbo.PrismPairs')
+                AND [name] =
+                    N'Track_ID'
+                AND [is_nullable] =
+                    1
+        )
+        BEGIN
+
+            ALTER TABLE [dbo].[PrismPairs]
+            ALTER COLUMN [Track_ID] int NOT NULL;
+
+        END;
+
+
+        IF EXISTS
+        (
+            SELECT 1
+            FROM sys.columns
+            WHERE
+                [object_id] =
+                    OBJECT_ID(N'dbo.PrismPairs')
+                AND [name] =
+                    N'PairOrder'
+                AND [is_nullable] =
+                    1
+        )
+        BEGIN
+
+            ALTER TABLE [dbo].[PrismPairs]
+            ALTER COLUMN [PairOrder] int NOT NULL;
+
+        END;
+
+
+        /* =============================================================
+           TRACK FOREIGN KEY
+           ============================================================= */
+
+        IF NOT EXISTS
+        (
+            SELECT 1
+            FROM sys.foreign_keys
+            WHERE
+                [name] =
+                    N'FK_PrismPairs_Track'
+                AND [parent_object_id] =
+                    OBJECT_ID(N'dbo.PrismPairs')
+        )
+        BEGIN
+
+            ALTER TABLE [dbo].[PrismPairs]
+            ADD CONSTRAINT [FK_PrismPairs_Track]
+                FOREIGN KEY ([Track_ID])
+                REFERENCES [dbo].[Track] ([Track_ID])
+                ON DELETE NO ACTION
+                ON UPDATE NO ACTION;
+
+        END;
+
+
+        /* =============================================================
+           PAIR ORDER CHECK
+           ============================================================= */
+
+        IF NOT EXISTS
+        (
+            SELECT 1
+            FROM sys.check_constraints
+            WHERE
+                [name] =
+                    N'CK_PrismPairs_PairOrder'
+                AND [parent_object_id] =
+                    OBJECT_ID(N'dbo.PrismPairs')
+        )
+        BEGIN
+
+            ALTER TABLE [dbo].[PrismPairs]
+            ADD CONSTRAINT [CK_PrismPairs_PairOrder]
+                CHECK ([PairOrder] > 0);
+
+        END;
+
+
+        /* =============================================================
+           PAIR ORDER UNIQUE WITHIN TRACK
+           ============================================================= */
+
+        IF NOT EXISTS
+        (
+            SELECT 1
+            FROM sys.key_constraints
+            WHERE
+                [name] =
+                    N'UQ_PrismPairs_Track_PairOrder'
+                AND [parent_object_id] =
+                    OBJECT_ID(N'dbo.PrismPairs')
+        )
+        BEGIN
+
+            ALTER TABLE [dbo].[PrismPairs]
+            ADD CONSTRAINT [UQ_PrismPairs_Track_PairOrder]
+                UNIQUE ([Track_ID], [PairOrder]);
+
+        END;
+
+
+        /* =============================================================
+           TRACK LOOKUP INDEX
+           ============================================================= */
+
+        IF NOT EXISTS
+        (
+            SELECT 1
+            FROM sys.indexes
+            WHERE
+                [object_id] =
+                    OBJECT_ID(N'dbo.PrismPairs')
+                AND [name] =
+                    N'IX_PrismPairs_Track_ID'
+        )
+        BEGIN
+
+            CREATE INDEX [IX_PrismPairs_Track_ID]
+                ON [dbo].[PrismPairs] ([Track_ID]);
+
+        END;
+        """;
+
+            #endregion
+
+
+            #region Open Schema Upgrade Database Connection
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString: connectionString);
+
+            await databaseConnection.OpenAsync();
+
+            #endregion
+
+
+            #region Begin Schema Upgrade Transaction
+
+            using SqlTransaction transaction =
+                databaseConnection.BeginTransaction(
+                    iso:
+                        System.Data.IsolationLevel.Serializable);
+
+            bool transactionCommitted =
+                false;
+
+            #endregion
+
+
+            try
+            {
+                #region Apply Schema Upgrade Phase One
+
+                await using (SqlCommand phaseOneCommand =
+                    new(
+                        cmdText: phaseOneSql,
+                        connection: databaseConnection,
+                        transaction: transaction))
+                {
+                    await phaseOneCommand.ExecuteNonQueryAsync();
+                }
+
+                #endregion
+
+
+                #region Apply Schema Upgrade Phase Two
+
+                await using (SqlCommand phaseTwoCommand =
+                    new(
+                        cmdText: phaseTwoSql,
+                        connection: databaseConnection,
+                        transaction: transaction))
+                {
+                    await phaseTwoCommand.ExecuteNonQueryAsync();
+                }
+
+                #endregion
+
+
+                #region Commit Schema Upgrade
+
+                transaction.Commit();
+
+                transactionCommitted =
+                    true;
+
+                #endregion
+            }
+            catch
+            {
+                #region Roll Back Schema Upgrade
+
+                if (!transactionCommitted)
+                {
+                    try
+                    {
+                        transaction.Rollback();
+                    }
+                    catch
+                    {
+                        // Preserve the original schema-upgrade exception.
+                    }
+                }
+
+                throw;
+
+                #endregion
+            }
         }
 
         #endregion
+
+
+
+
+        #endregion
+
+
+
+
+
+
 
 
         #region Project Configuration
@@ -2545,6 +9126,12 @@ namespace GNA_DLRreport
             #endregion
 
 
+
+
+
+
+
+
             try
             {
                 #region Acquire New Project Shared Lock
@@ -2678,13 +9265,29 @@ namespace GNA_DLRreport
 
                 #endregion
 
-
                 #region Report Successful Project Change
 
+                // Any loaded import source belongs to the project that was active
+                // when that import was started.
+                //
+                // Changing the active project invalidates all existing import state.
+
+                ResetReferenceImportState(
+                    statusMessage:
+                        $"Active project changed to '{_activeProjectName}'. " +
+                        "Select a CSV for this project.");
+
+                ResetPrismPairImportState(
+                    statusMessage:
+                        $"Active project changed to '{_activeProjectName}'. " +
+                        "Select a Track Geometry workbook for this project.");
+
                 txtProjectManagementStatus.Text =
-                    $"Active project set to '{databaseProjectName}'.";
+                    $"Active project set to '{_activeProjectName}'.";
 
                 #endregion
+
+
             }
             catch (Exception ex)
             {

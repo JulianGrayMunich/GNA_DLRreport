@@ -200,54 +200,29 @@
                                 <!-- #region CLEAR TABLES -->
 
                                 <TextBlock Grid.Row="2"
-                                           Grid.Column="0"
-                                           VerticalAlignment="Center"
-                                           Text="Clear table:"/>
+           Grid.Column="0"
+           VerticalAlignment="Center"
+           Text="Clear table:"/>
 
                                 <ComboBox x:Name="cmbClearTables"
-                                          Grid.Row="2"
-                                          Grid.Column="1"
-                                          Height="28"
-                                          SelectedIndex="0"
-                                          VerticalContentAlignment="Center">
+          Grid.Row="2"
+          Grid.Column="1"
+          Height="28"
+          SelectedIndex="0"
+          VerticalContentAlignment="Center">
 
                                     <ComboBoxItem Content="Select table..."/>
-
-                                    <ComboBoxItem Content="Project"/>
-                                    <ComboBoxItem Content="PointName"/>
-                                    <ComboBoxItem Content="PrismPairs"/>
-
                                     <ComboBoxItem Content="CoordinatesReference"/>
-                                    <ComboBoxItem Content="CoordinatesCurrent"/>
-                                    <ComboBoxItem Content="CoordinatesDaily"/>
-
-                                    <ComboBoxItem Content="DhEpochs"/>
-                                    <ComboBoxItem Content="DhDaily"/>
-
-                                    <ComboBoxItem Content="SlewEpochs"/>
-                                    <ComboBoxItem Content="SlewDaily"/>
-
-                                    <ComboBoxItem Content="TopEpochs"/>
-                                    <ComboBoxItem Content="TopDaily"/>
-
-                                    <ComboBoxItem Content="CantEpochs"/>
-                                    <ComboBoxItem Content="CantDaily"/>
-
-                                    <ComboBoxItem Content="ShortTwistEpochs"/>
-                                    <ComboBoxItem Content="ShortTwistDaily"/>
-
-                                    <ComboBoxItem Content="LongTwistEpochs"/>
-                                    <ComboBoxItem Content="LongTwistDaily"/>
-
-                                    <ComboBoxItem Content="All Tables"/>
+                                    <ComboBoxItem Content="PrismPairs"/>
 
                                 </ComboBox>
 
                                 <Button x:Name="btnClearTables"
-                                        Grid.Row="2"
-                                        Grid.Column="3"
-                                        Height="30"
-                                        Content="Clear Tables"/>
+        Grid.Row="2"
+        Grid.Column="3"
+        Height="30"
+        Content="Clear Table"
+        Click="btnClearTables_Click"/>
 
                                 <!-- #endregion -->
 
@@ -325,8 +300,7 @@
 
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="20"/>
-                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="12"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
 
@@ -336,16 +310,10 @@
                         <!-- #region PROJECT CONFIGURATION SUMMARY -->
 
                         <GroupBox Grid.Row="0"
-                                  Header="Project Configuration"
-                                  Padding="15">
+                  Header="Project Selection"
+                  Padding="15">
 
                             <Grid>
-
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="15"/>
-                                    <RowDefinition Height="Auto"/>
-                                </Grid.RowDefinitions>
 
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="140"/>
@@ -358,18 +326,16 @@
 
                                 <!-- #region ACTIVE PROJECT DISPLAY -->
 
-                                <TextBlock Grid.Row="0"
-                                           Grid.Column="0"
-                                           VerticalAlignment="Center"
-                                           Text="Active project:"/>
+                                <TextBlock Grid.Column="0"
+                           VerticalAlignment="Center"
+                           Text="Active project:"/>
 
                                 <TextBox x:Name="txtActiveProject"
-                                         Grid.Row="0"
-                                         Grid.Column="1"
-                                         Height="28"
-                                         IsReadOnly="True"
-                                         VerticalContentAlignment="Center"
-                                         Text="No active project"/>
+                         Grid.Column="1"
+                         Height="28"
+                         IsReadOnly="True"
+                         VerticalContentAlignment="Center"
+                         Text="No active project"/>
 
                                 <!-- #endregion -->
 
@@ -377,12 +343,11 @@
                                 <!-- #region MANAGE PROJECTS BUTTON -->
 
                                 <Button x:Name="btnManageProjects"
-                                        Grid.Row="0"
-                                        Grid.Column="3"
-                                        Width="150"
-                                        Height="30"
-                                        Content="Manage Projects"
-                                        Click="btnManageProjects_Click"/>
+                        Grid.Column="3"
+                        Width="150"
+                        Height="30"
+                        Content="Manage Projects"
+                        Click="btnManageProjects_Click"/>
 
                                 <!-- #endregion -->
 
@@ -393,19 +358,479 @@
                         <!-- #endregion -->
 
 
+                        <!-- #region COORDINATE IMPORT WORKFLOWS -->
+
+                        <TabControl Grid.Row="2">
+
+                            <!-- #region REFERENCE COORDINATES TAB -->
+
+                            <TabItem Header="Reference Coordinates">
+
+                                <GroupBox Header="Point Names / Reference Coordinates Import"
+                  Margin="8"
+                  Padding="15">
+
+                                    <Grid>
+
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="10"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="10"/>
+                                            <RowDefinition Height="*"/>
+                                            <RowDefinition Height="10"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+
+
+                                        <!-- #region CSV FILE SELECTION -->
+
+                                        <Grid Grid.Row="0">
+
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="95"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="15"/>
+                                                <ColumnDefinition Width="110"/>
+                                                <ColumnDefinition Width="10"/>
+                                                <ColumnDefinition Width="90"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <TextBlock Grid.Column="0"
+               VerticalAlignment="Center"
+               Text="Source CSV:"/>
+
+                                            <TextBox x:Name="txtReferenceCsvPath"
+             Grid.Column="1"
+             Height="28"
+             IsReadOnly="True"
+             VerticalContentAlignment="Center"/>
+
+                                            <Button x:Name="btnSelectReferenceCsv"
+            Grid.Column="3"
+            Height="30"
+            IsEnabled="True"
+            Content="Select CSV"
+            Click="btnSelectReferenceCsv_Click"/>
+
+                                            <Button x:Name="btnClearReferenceImport"
+            Grid.Column="5"
+            Height="30"
+            IsEnabled="True"
+            Content="Clear"
+            Click="btnClearReferenceImport_Click"/>
+
+                                        </Grid>
+
+                                        <!-- #endregion -->
+
+
+                                        <!-- #region CSV COLUMN ORDER -->
+
+                                        <Grid Grid.Row="2">
+
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="95"/>
+                                                <ColumnDefinition Width="360"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <TextBlock Grid.Column="0"
+                               VerticalAlignment="Center"
+                               Text="Column order:"/>
+
+                                            <ComboBox x:Name="cmbReferenceCsvColumnOrder"
+                              Grid.Column="1"
+                              Height="28"
+                              SelectedIndex="0"
+                              VerticalContentAlignment="Center"
+                              SelectionChanged="cmbReferenceCsvColumnOrder_SelectionChanged">
+
+                                                <ComboBoxItem Content="PointName, E, N, Ht [, ReplacementName]"/>
+
+                                                <ComboBoxItem Content="PointName, N, E, Ht [, ReplacementName]"/>
+
+                                            </ComboBox>
+
+                                        </Grid>
+
+                                        <!-- #endregion -->
+
+
+                                        <!-- #region IMPORT PREVIEW DATAGRID -->
+
+                                        <DataGrid x:Name="dgReferenceCoordinateImport"
+                          Grid.Row="4"
+                          AutoGenerateColumns="False"
+                          CanUserAddRows="False"
+                          CanUserDeleteRows="False"
+                          CanUserReorderColumns="False"
+                          CanUserResizeRows="False"
+                          IsReadOnly="True"
+                          SelectionMode="Single"
+                          SelectionUnit="FullRow"
+                          HeadersVisibility="Column"
+                          GridLinesVisibility="Horizontal"
+                          SelectionChanged="dgReferenceCoordinateImport_SelectionChanged">
+
+                                            <DataGrid.Columns>
+
+                                                <DataGridTextColumn Header="Row"
+                                            Width="55"
+                                            Binding="{Binding SourceRow}"/>
+
+                                                <DataGridTextColumn Header="Point Name"
+                                            Width="130"
+                                            Binding="{Binding PointName}"/>
+
+                                                <DataGridTextColumn Header="Replacement Name"
+                                            Width="140"
+                                            Binding="{Binding ReplacementName}"/>
+
+                                                <DataGridTextColumn Header="E"
+                                            Width="95"
+                                            Binding="{Binding EastingText}"/>
+
+                                                <DataGridTextColumn Header="N"
+                                            Width="95"
+                                            Binding="{Binding NorthingText}"/>
+
+                                                <DataGridTextColumn Header="Ht"
+                                            Width="85"
+                                            Binding="{Binding HeightText}"/>
+
+                                                <DataGridTextColumn Header="Validation"
+                                            Width="*"
+                                            Binding="{Binding ValidationStatus}"/>
+
+                                            </DataGrid.Columns>
+
+                                        </DataGrid>
+
+                                        <!-- #endregion -->
+
+
+                                        <!-- #region IMPORT STATUS AND COMMIT -->
+
+                                        <Grid Grid.Row="6">
+
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="20"/>
+                                                <ColumnDefinition Width="130"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <TextBox x:Name="txtReferenceImportStatus"
+             Grid.Column="0"
+             Height="42"
+             IsReadOnly="True"
+             TextWrapping="NoWrap"
+             HorizontalScrollBarVisibility="Auto"
+             VerticalScrollBarVisibility="Disabled"
+             VerticalContentAlignment="Center"
+             Text="No CSV selected."/>
+
+                                            <Button x:Name="btnCommitReferenceImport"
+            Grid.Column="2"
+            Height="30"
+            Content="Commit Import"
+            IsEnabled="False"
+            Click="btnCommitReferenceImport_Click"/>
+
+                                        </Grid>
+
+                                        <!-- #endregion -->
+
+                                    </Grid>
+
+                                </GroupBox>
+
+                            </TabItem>
+
+                            <!-- #endregion -->
+
+
+                            <!-- #region PRISM PAIRS TAB -->
+
+                            <TabItem Header="Prism Pairs">
+
+                                <GroupBox Header="Prism Pair Import"
+                  Margin="8"
+                  Padding="15">
+
+                                    <Grid>
+
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="10"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="10"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="10"/>
+                                            <RowDefinition Height="*"/>
+                                            <RowDefinition Height="10"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+
+
+                                        <!-- #region TRACK GEOMETRY WORKBOOK SELECTION -->
+
+                                        <Grid Grid.Row="0">
+
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="105"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="15"/>
+                                                <ColumnDefinition Width="125"/>
+                                                <ColumnDefinition Width="10"/>
+                                                <ColumnDefinition Width="90"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <TextBlock Grid.Column="0"
+               VerticalAlignment="Center"
+               Text="Workbook:"/>
+
+                                            <TextBox x:Name="txtPrismPairWorkbookPath"
+             Grid.Column="1"
+             Height="28"
+             IsReadOnly="True"
+             VerticalContentAlignment="Center"/>
+
+                                            <Button x:Name="btnSelectPrismPairWorkbook"
+            Grid.Column="3"
+            Height="30"
+            IsEnabled="True"
+            Content="Select Workbook"
+            Click="btnSelectPrismPairWorkbook_Click"/>
+
+                                            <Button x:Name="btnClearPrismPairImport"
+            Grid.Column="5"
+            Height="30"
+            IsEnabled="True"
+            Content="Clear"
+            Click="btnClearPrismPairImport_Click"/>
+
+                                        </Grid>
+
+                                        <!-- #endregion -->
+
+                                        <!-- #region WORKSHEET SELECTION -->
+
+                                        <Grid Grid.Row="2">
+
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="105"/>
+                                                <ColumnDefinition Width="360"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <TextBlock Grid.Column="0"
+                               VerticalAlignment="Center"
+                               Text="Worksheet:"/>
+
+                                            <ComboBox x:Name="cmbPrismPairWorksheet"
+                              Grid.Column="1"
+                              Height="28"
+                              VerticalContentAlignment="Center"
+                              SelectionChanged="cmbPrismPairWorksheet_SelectionChanged"/>
+
+                                        </Grid>
+
+                                        <!-- #endregion -->
+
+                                        <!-- #region PRISM PAIR PREVIEW DATAGRID -->
+
+                                        <DataGrid x:Name="dgPrismPairImport"
+          Grid.Row="6"
+          AutoGenerateColumns="False"
+          CanUserAddRows="False"
+          CanUserDeleteRows="False"
+          CanUserReorderColumns="False"
+          CanUserResizeRows="False"
+          CanUserSortColumns="False"
+          IsReadOnly="True"
+          SelectionMode="Single"
+          SelectionUnit="FullRow"
+          HeadersVisibility="Column"
+          GridLinesVisibility="Horizontal"
+          SelectionChanged="dgPrismPairImport_SelectionChanged">
+
+                                            <DataGrid.Columns>
+
+                                                <!-- #region PAIR ORDER -->
+
+                                                <DataGridTextColumn Header="Pair Order"
+                            Width="85"
+                            Binding="{Binding PairOrder}"/>
+
+                                                <!-- #endregion -->
+
+
+                                                <!-- #region SOURCE COLUMN 1 -->
+
+                                                <DataGridTextColumn Width="170"
+                            Binding="{Binding SourceColumn1Value}">
+
+                                                    <DataGridTextColumn.Header>
+
+                                                        <ComboBox x:Name="cmbPrismPairColumn1Role"
+                          Width="130"
+                          SelectedIndex="0"
+                          SelectionChanged="PrismPairColumnRole_SelectionChanged">
+
+                                                            <ComboBoxItem Content="Right (Primary) Rail"/>
+                                                            <ComboBoxItem Content="Left Rail"/>
+                                                            <ComboBoxItem Content="Rail Tag"/>
+
+                                                        </ComboBox>
+
+                                                    </DataGridTextColumn.Header>
+
+                                                </DataGridTextColumn>
+
+                                                <!-- #endregion -->
+
+
+                                                <!-- #region SOURCE COLUMN 2 -->
+
+                                                <DataGridTextColumn Width="170"
+                            Binding="{Binding SourceColumn2Value}">
+
+                                                    <DataGridTextColumn.Header>
+
+                                                        <ComboBox x:Name="cmbPrismPairColumn2Role"
+                          Width="130"
+                          SelectedIndex="1"
+                          SelectionChanged="PrismPairColumnRole_SelectionChanged">
+
+                                                            <ComboBoxItem Content="Right (Primary) Rail"/>
+                                                            <ComboBoxItem Content="Left Rail"/>
+                                                            <ComboBoxItem Content="Rail Tag"/>
+
+                                                        </ComboBox>
+
+                                                    </DataGridTextColumn.Header>
+
+                                                </DataGridTextColumn>
+
+                                                <!-- #endregion -->
+
+
+                                                <!-- #region SOURCE COLUMN 3 -->
+
+                                                <DataGridTextColumn Width="150"
+                            Binding="{Binding SourceColumn3Value}">
+
+                                                    <DataGridTextColumn.Header>
+
+                                                        <ComboBox x:Name="cmbPrismPairColumn3Role"
+                          Width="120"
+                          SelectedIndex="2"
+                          SelectionChanged="PrismPairColumnRole_SelectionChanged">
+
+                                                            <ComboBoxItem Content="Right (Primary) Rail"/>
+                                                            <ComboBoxItem Content="Left Rail"/>
+                                                            <ComboBoxItem Content="Rail Tag"/>
+
+                                                        </ComboBox>
+
+                                                    </DataGridTextColumn.Header>
+
+                                                </DataGridTextColumn>
+
+                                                <!-- #endregion -->
+
+
+                                                <!-- #region TRACK TAG -->
+
+                                                <DataGridTextColumn Header="Track Name"
+                            Width="110"
+                            Binding="{Binding TrackName}"/>
+
+                                                <!-- #endregion -->
+
+
+                                                <!-- #region VALIDATION -->
+
+                                                <DataGridTextColumn Header="Validation"
+                            Width="*"
+                            Binding="{Binding ValidationStatus}"/>
+
+                                                <!-- #endregion -->
+
+                                            </DataGrid.Columns>
+
+                                        </DataGrid>
+
+                                        <!-- #endregion -->
+
+                                        <!-- #region PRISM PAIR STATUS AND COMMIT -->
+
+                                        <Grid Grid.Row="8">
+
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="15"/>
+                                                <ColumnDefinition Width="120"/>
+                                                <ColumnDefinition Width="10"/>
+                                                <ColumnDefinition Width="120"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <TextBox x:Name="txtPrismPairImportStatus"
+             Grid.Column="0"
+             Height="42"
+             IsReadOnly="True"
+             TextWrapping="NoWrap"
+             HorizontalScrollBarVisibility="Auto"
+             VerticalScrollBarVisibility="Disabled"
+             VerticalContentAlignment="Center"
+             Text="No workbook selected."/>
+
+                                            <Button x:Name="btnPreviewPrismPairs"
+            Grid.Column="2"
+            Height="30"
+            Content="Preview Pairs"
+            IsEnabled="False"
+            Click="btnPreviewPrismPairs_Click"/>
+
+                                            <Button x:Name="btnCommitPrismPairImport"
+            Grid.Column="4"
+            Height="30"
+            Content="Commit Import"
+            IsEnabled="False"
+            Click="btnCommitPrismPairImport_Click"/>
+
+                                        </Grid>
+
+                                        <!-- #endregion -->
+
+
+                                    </Grid>
+
+                                </GroupBox>
+
+                            </TabItem>
+
+                            <!-- #endregion -->
+
+                        </TabControl>
+
+                        <!-- #endregion -->
+
+
                         <!-- #region PROJECT MANAGEMENT OVERLAY -->
 
                         <Border x:Name="brdProjectManagement"
-                                Grid.Row="0"
-                                Grid.RowSpan="4"
-                                Margin="35"
-                                Padding="20"
-                                Background="WhiteSmoke"
-                                BorderBrush="DarkGray"
-                                BorderThickness="1"
-                                CornerRadius="4"
-                                Visibility="Collapsed"
-                                Panel.ZIndex="100">
+                Grid.Row="0"
+                Grid.RowSpan="3"
+                Margin="35"
+                Padding="20"
+                Background="WhiteSmoke"
+                BorderBrush="DarkGray"
+                BorderThickness="1"
+                CornerRadius="4"
+                Visibility="Collapsed"
+                Panel.ZIndex="100">
 
                             <Grid>
 
@@ -434,21 +859,17 @@
                                     </Grid.ColumnDefinitions>
 
                                     <TextBlock Grid.Column="0"
-                                               VerticalAlignment="Center"
-                                               FontSize="16"
-                                               FontWeight="Bold"
-                                               Text="Project Management"/>
-
-                                    <!-- #region CLOSE PROJECT MANAGEMENT -->
+                               VerticalAlignment="Center"
+                               FontSize="16"
+                               FontWeight="Bold"
+                               Text="Project Management"/>
 
                                     <Button x:Name="btnCloseProjectManagement"
-                                            Grid.Column="1"
-                                            Width="80"
-                                            Height="28"
-                                            Content="Close"
-                                            Click="btnCloseProjectManagement_Click"/>
-
-                                    <!-- #endregion -->
+                            Grid.Column="1"
+                            Width="80"
+                            Height="28"
+                            Content="Close"
+                            Click="btnCloseProjectManagement_Click"/>
 
                                 </Grid>
 
@@ -468,24 +889,20 @@
                                     </Grid.ColumnDefinitions>
 
                                     <TextBlock Grid.Column="0"
-                                               VerticalAlignment="Center"
-                                               Text="New project:"/>
+                               VerticalAlignment="Center"
+                               Text="New project:"/>
 
                                     <TextBox x:Name="txtNewProjectName"
-                                             Grid.Column="1"
-                                             Height="28"
-                                             MaxLength="200"
-                                             VerticalContentAlignment="Center"/>
-
-                                    <!-- #region ADD PROJECT BUTTON -->
+                             Grid.Column="1"
+                             Height="28"
+                             MaxLength="200"
+                             VerticalContentAlignment="Center"/>
 
                                     <Button x:Name="btnAddProject"
-                                            Grid.Column="3"
-                                            Height="30"
-                                            Content="Add Project"
-                                            Click="btnAddProject_Click"/>
-
-                                    <!-- #endregion -->
+                            Grid.Column="3"
+                            Height="30"
+                            Content="Add Project"
+                            Click="btnAddProject_Click"/>
 
                                 </Grid>
 
@@ -495,25 +912,25 @@
                                 <!-- #region PROJECT DATAGRID -->
 
                                 <DataGrid x:Name="dgProjects"
-                                          Grid.Row="4"
-                                          AutoGenerateColumns="False"
-                                          CanUserAddRows="False"
-                                          CanUserDeleteRows="False"
-                                          CanUserReorderColumns="False"
-                                          CanUserResizeRows="False"
-                                          SelectionMode="Single"
-                                          SelectionUnit="FullRow"
-                                          HeadersVisibility="Column"
-                                          GridLinesVisibility="Horizontal">
+                          Grid.Row="4"
+                          AutoGenerateColumns="False"
+                          CanUserAddRows="False"
+                          CanUserDeleteRows="False"
+                          CanUserReorderColumns="False"
+                          CanUserResizeRows="False"
+                          SelectionMode="Single"
+                          SelectionUnit="FullRow"
+                          HeadersVisibility="Column"
+                          GridLinesVisibility="Horizontal">
 
                                     <DataGrid.Columns>
 
                                         <!-- #region HIDDEN PROJECT ID -->
 
                                         <DataGridTextColumn Header="Project ID"
-                                                            Binding="{Binding Project_ID}"
-                                                            Visibility="Collapsed"
-                                                            IsReadOnly="True"/>
+                                            Binding="{Binding Project_ID}"
+                                            Visibility="Collapsed"
+                                            IsReadOnly="True"/>
 
                                         <!-- #endregion -->
 
@@ -521,39 +938,34 @@
                                         <!-- #region ACTIVE PROJECT -->
 
                                         <DataGridTemplateColumn Header="Active"
-                                                                Width="80"
-                                                                IsReadOnly="False">
+                                                Width="80">
 
                                             <DataGridTemplateColumn.CellTemplate>
 
                                                 <DataTemplate>
 
-                                                    <!-- #region ACTIVE PROJECT RADIO BUTTON -->
-
                                                     <RadioButton HorizontalAlignment="Center"
-                                                                 VerticalAlignment="Center"
-                                                                 GroupName="ActiveProject"
-                                                                 IsChecked="{Binding IsActive,
-                                                                                     Mode=TwoWay,
-                                                                                     UpdateSourceTrigger=PropertyChanged}"
-                                                                 Click="ActiveProjectRadioButton_Click">
-
-                                                        <!-- #region DISABLE ACTIVE SELECTION FOR DELETED PROJECTS -->
+                                                 VerticalAlignment="Center"
+                                                 GroupName="ActiveProject"
+                                                 IsChecked="{Binding IsActive,
+                                                                     Mode=TwoWay,
+                                                                     UpdateSourceTrigger=PropertyChanged}"
+                                                 Click="ActiveProjectRadioButton_Click">
 
                                                         <RadioButton.Style>
 
                                                             <Style TargetType="RadioButton">
 
                                                                 <Setter Property="IsEnabled"
-                                                                        Value="True"/>
+                                                        Value="True"/>
 
                                                                 <Style.Triggers>
 
                                                                     <DataTrigger Binding="{Binding IsDeleted}"
-                                                                                 Value="True">
+                                                                 Value="True">
 
                                                                         <Setter Property="IsEnabled"
-                                                                                Value="False"/>
+                                                                Value="False"/>
 
                                                                     </DataTrigger>
 
@@ -563,11 +975,7 @@
 
                                                         </RadioButton.Style>
 
-                                                        <!-- #endregion -->
-
                                                     </RadioButton>
-
-                                                    <!-- #endregion -->
 
                                                 </DataTemplate>
 
@@ -581,30 +989,21 @@
                                         <!-- #region PROJECT NAME -->
 
                                         <DataGridTextColumn Header="Project Name"
-                                                            Width="*"
-                                                            Binding="{Binding ProjectName,
-                                                                              Mode=TwoWay,
-                                                                              UpdateSourceTrigger=LostFocus}">
-
-                                            <!-- #region PROJECT NAME EDIT HANDLER -->
+                                            Width="*"
+                                            Binding="{Binding ProjectName,
+                                                              Mode=TwoWay,
+                                                              UpdateSourceTrigger=LostFocus}">
 
                                             <DataGridTextColumn.EditingElementStyle>
 
                                                 <Style TargetType="TextBox">
 
-                                                    <!--
-                                                        The binding updates ProjectName when focus leaves the cell.
-                                                        The LostFocus handler then validates and persists the change.
-                                                    -->
-
                                                     <EventSetter Event="LostFocus"
-                                                                 Handler="ProjectNameTextBox_LostFocus"/>
+                                                 Handler="ProjectNameTextBox_LostFocus"/>
 
                                                 </Style>
 
                                             </DataGridTextColumn.EditingElementStyle>
-
-                                            <!-- #endregion -->
 
                                         </DataGridTextColumn>
 
@@ -614,43 +1013,33 @@
                                         <!-- #region DELETED PROJECT -->
 
                                         <DataGridTemplateColumn Header="Deleted"
-                                                                Width="90"
-                                                                IsReadOnly="False">
+                                                Width="90">
 
                                             <DataGridTemplateColumn.CellTemplate>
 
                                                 <DataTemplate>
 
-                                                    <!-- #region DELETED PROJECT CHECKBOX -->
-
                                                     <CheckBox HorizontalAlignment="Center"
-                                                              VerticalAlignment="Center"
-                                                              IsChecked="{Binding IsDeleted,
-                                                                                  Mode=TwoWay,
-                                                                                  UpdateSourceTrigger=PropertyChanged}"
-                                                              Click="DeletedProjectCheckBox_Click">
-
-                                                        <!-- #region PREVENT ACTIVE PROJECT DELETION -->
+                                              VerticalAlignment="Center"
+                                              IsChecked="{Binding IsDeleted,
+                                                                  Mode=TwoWay,
+                                                                  UpdateSourceTrigger=PropertyChanged}"
+                                              Click="DeletedProjectCheckBox_Click">
 
                                                         <CheckBox.Style>
 
                                                             <Style TargetType="CheckBox">
 
                                                                 <Setter Property="IsEnabled"
-                                                                        Value="True"/>
+                                                        Value="True"/>
 
                                                                 <Style.Triggers>
 
-                                                                    <!--
-                                                                        An active project cannot be deleted.
-                                                                        Restoration remains available for deleted projects.
-                                                                    -->
-
                                                                     <DataTrigger Binding="{Binding IsActive}"
-                                                                                 Value="True">
+                                                                 Value="True">
 
                                                                         <Setter Property="IsEnabled"
-                                                                                Value="False"/>
+                                                                Value="False"/>
 
                                                                     </DataTrigger>
 
@@ -660,11 +1049,7 @@
 
                                                         </CheckBox.Style>
 
-                                                        <!-- #endregion -->
-
                                                     </CheckBox>
-
-                                                    <!-- #endregion -->
 
                                                 </DataTemplate>
 
@@ -691,14 +1076,13 @@
                                     </Grid.ColumnDefinitions>
 
                                     <TextBlock x:Name="txtProjectManagementStatus"
-                                               Grid.Column="0"
-                                               VerticalAlignment="Center"
-                                               Text=""/>
+                               Grid.Column="0"
+                               VerticalAlignment="Center"/>
 
                                     <TextBlock Grid.Column="1"
-                                               VerticalAlignment="Center"
-                                               Foreground="DimGray"
-                                               Text="Changes are saved after validation."/>
+                               VerticalAlignment="Center"
+                               Foreground="DimGray"
+                               Text="Changes are saved after validation."/>
 
                                 </Grid>
 
