@@ -1,64 +1,30 @@
-﻿#region System Preparation
+#region System Preparation
 
 using System;
-using System.Collections.ObjectModel;
-using System.Threading.Tasks;
-using System.Windows;
-
-
-#region Import Processing Namespaces
-
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
-using OfficeOpenXml;
-
-#endregion
-
-#region GNA classes
-using GNAgeneraltools;
-
-#endregion
-
-
-#region WPF Control Namespaces
-
+using System.Threading.Tasks;
+using System.Windows;
 using System.Windows.Controls;
-
-#endregion
-
-
+using GNAgeneraltools;
 using Microsoft.Data.SqlClient;
 using Microsoft.Win32;
-
-using GNAspreadsheettools;
-
-#region Disable warnings
-
-#pragma warning disable IDE0028
-#pragma warning disable IDE0031
-#pragma warning disable IDE0042
-#pragma warning disable IDE0059
-#pragma warning disable IDE0079
-#pragma warning disable IDE0300
-
-#pragma warning disable IDE1006
-#pragma warning disable IDE0306
-
-#endregion
+using OfficeOpenXml;
 
 #endregion
 
 namespace GNA_DLRreport
 {
     /// <summary>
-    /// Interaction logic for MainWindow.xaml
+    /// Interaction logic for MainWindow.xaml.
     /// </summary>
     public partial class MainWindow : Window
     {
-
 
         #region Setting State
         private readonly gnaTools gnaT =
@@ -88,6 +54,11 @@ namespace GNA_DLRreport
 
         private const string TrackGeometryDatabaseName =
             "DBTrackGeometry";
+
+        // Operational database connection. This is updated only after a
+        // successful connection test or from the persisted startup default.
+        private string _validatedDatabaseConnectionString =
+            string.Empty;
 
         #endregion
 
@@ -131,7 +102,7 @@ namespace GNA_DLRreport
         //
         // Multiple running instances may therefore use the same active project.
         //
-        // Project deletion will later require an Exclusive lock on the same
+        // Project deletion requires an Exclusive lock on the same
         // resource. The Exclusive lock cannot be obtained while any running
         // instance holds a Shared lock.
         //
@@ -141,8 +112,6 @@ namespace GNA_DLRreport
         // ---------------------------------------------------------------------
 
         private SqlConnection? _activeProjectLockConnection;
-
-        private int? _activeProjectLockProjectId;
 
         private const string ProjectLockResourcePrefix =
             "GNA_DLRreport:Project:";
@@ -192,7 +161,25 @@ namespace GNA_DLRreport
             0.05m;
 
         private const decimal ReferenceDuplicateCoordinateToleranceSquared =
-            0.0025m;
+            ReferenceDuplicateCoordinateTolerance *
+            ReferenceDuplicateCoordinateTolerance;
+
+        #endregion
+
+
+        #region Geotechnical Sensor Import State
+
+        private readonly ObservableCollection<GeotechSensorImportItem>
+            _geotechImportItems =
+                new();
+
+        private string _selectedGeotechCsvPath =
+            string.Empty;
+
+        private int? _geotechImportProjectId;
+
+        private string _geotechImportProjectName =
+            string.Empty;
 
         #endregion
 
@@ -245,7 +232,12361 @@ namespace GNA_DLRreport
 
         #endregion
 
+
+        #region Prism Array Configuration State
+
+        private const byte PrismArrayTypeStructural =
+            1;
+
+        private const byte PrismArrayTypeTunnelConvergence =
+            2;
+
+        private const string PrismArrayDefinitionLockResourcePrefix =
+            "GNA_DLRreport:PrismArrayDefinition:";
+
+        private static readonly char[] PrismArrayPointRoles =
+        {
+            'A',
+            'B',
+            'C',
+            'D',
+            'E'
+        };
+
+        private static readonly (char StartRole, char EndRole, string ChordName)[]
+            TunnelConvergenceChordDefinitions =
+        {
+            ('A', 'B', "AB"),
+            ('A', 'C', "AC"),
+            ('A', 'D', "AD"),
+            ('A', 'E', "AE"),
+            ('B', 'C', "BC"),
+            ('B', 'D', "BD"),
+            ('B', 'E', "BE"),
+            ('C', 'D', "CD"),
+            ('C', 'E', "CE"),
+            ('D', 'E', "DE")
+        };
+
+        private readonly ObservableCollection<PrismArrayAvailablePoint>
+            _availablePrismArrayPoints =
+                new();
+
+        private readonly ObservableCollection<PrismArraySummaryItem>
+            _committedPrismArrays =
+                new();
+
+        private readonly Dictionary<char, PrismArrayAvailablePoint>
+            _prismArrayAssignments =
+                new();
+
+        private int? _prismArrayProjectId;
+
+        private string _prismArrayProjectName =
+            string.Empty;
+
+        private byte? _selectedPrismArrayType;
+
+        private string _pendingPrismArrayName =
+            string.Empty;
+
+        #endregion
+
+
+
+        #region Prism Array Configuration
+
+        #region Array State Models
+
+        private sealed class PrismArrayAvailablePoint
+        {
+            public int PointName_ID { get; init; }
+
+            public string PointName { get; init; } =
+                string.Empty;
+
+            public string ReplacementName { get; init; } =
+                string.Empty;
+        }
+
+
+        private sealed class PrismArraySummaryItem
+        {
+            public int Array_ID { get; init; }
+
+            public byte ArrayType { get; init; }
+
+            public string ArrayTypeName =>
+                GetPrismArrayTypeName(
+                    arrayType: ArrayType);
+
+            public string ArrayName { get; init; } =
+                string.Empty;
+
+            public bool IsDeleted { get; init; }
+        }
+
+
+        private sealed class PrismArrayDetailsItem
+        {
+            public int Array_ID { get; init; }
+
+            public int Project_ID { get; init; }
+
+            public byte ArrayType { get; init; }
+
+            public string ArrayTypeName =>
+                GetPrismArrayTypeName(
+                    arrayType: ArrayType);
+
+            public string ArrayName { get; init; } =
+                string.Empty;
+
+            public bool IsDeleted { get; init; }
+
+            public Dictionary<char, PrismArrayAvailablePoint> Points { get; } =
+                new();
+        }
+
+        #endregion
+
+
+        #region UTC Timestamp Standard
+
+        private static DateTime RoundUtcToNearestSecond(
+            DateTime utcTime)
+        {
+            #region Validate UTC Timestamp
+
+            if (utcTime.Kind != DateTimeKind.Utc)
+            {
+                throw new ArgumentException(
+                    message: "UTC timestamp required.",
+                    paramName: nameof(utcTime));
+            }
+
+            #endregion
+
+
+            #region Round To Nearest Whole Second
+
+            long ticksPerSecond =
+                TimeSpan.TicksPerSecond;
+
+            long remainder =
+                utcTime.Ticks % ticksPerSecond;
+
+            long roundedTicks =
+                utcTime.Ticks - remainder;
+
+            if (remainder >= ticksPerSecond / 2)
+            {
+                roundedTicks +=
+                    ticksPerSecond;
+            }
+
+            if (roundedTicks > DateTime.MaxValue.Ticks)
+            {
+                roundedTicks =
+                    DateTime.MaxValue.Ticks -
+                    (DateTime.MaxValue.Ticks % ticksPerSecond);
+            }
+
+            return new DateTime(
+                ticks: roundedTicks,
+                kind: DateTimeKind.Utc);
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Array Type And Role Helpers
+
+        private static string GetPrismArrayTypeName(
+            byte arrayType)
+        {
+            #region Resolve Array Type Name
+
+            return arrayType switch
+            {
+                PrismArrayTypeStructural =>
+                    "Structural Array",
+
+                PrismArrayTypeTunnelConvergence =>
+                    "Tunnel Convergence",
+
+                _ =>
+                    "Unknown"
+            };
+
+            #endregion
+        }
+
+
+        private static void ValidatePrismArrayType(
+            byte arrayType)
+        {
+            #region Validate Array Type
+
+            if (arrayType != PrismArrayTypeStructural &&
+                arrayType != PrismArrayTypeTunnelConvergence)
+            {
+                throw new ArgumentOutOfRangeException(
+                    paramName: nameof(arrayType),
+                    message: "Invalid array type.");
+            }
+
+            #endregion
+        }
+
+
+        private static char ValidatePrismArrayPointRole(
+            char pointRole)
+        {
+            #region Validate Point Role
+
+            char validatedPointRole =
+                char.ToUpperInvariant(
+                    c: pointRole);
+
+            foreach (char allowedRole
+                in PrismArrayPointRoles)
+            {
+                if (validatedPointRole == allowedRole)
+                {
+                    return validatedPointRole;
+                }
+            }
+
+            throw new ArgumentOutOfRangeException(
+                paramName: nameof(pointRole),
+                message: "Array role must be A, B, C, D or E.");
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Array Runtime State
+
+        private void ResetPrismArrayConfigurationState()
+        {
+            #region Clear Array Project Context
+
+            _prismArrayProjectId =
+                null;
+
+            _prismArrayProjectName =
+                string.Empty;
+
+            #endregion
+
+
+            #region Clear Pending Array Definition
+
+            _selectedPrismArrayType =
+                null;
+
+            _pendingPrismArrayName =
+                string.Empty;
+
+            _prismArrayAssignments.Clear();
+
+            #endregion
+
+
+            #region Clear Array Lists
+
+            _availablePrismArrayPoints.Clear();
+
+            _committedPrismArrays.Clear();
+
+            #endregion
+
+
+            #region Clear Array User Interface
+
+            if (IsInitialized)
+            {
+                ClearPrismArrayDefinitionControls();
+
+                dgCommittedPrismArrays.SelectedItem =
+                    null;
+
+                bool arraysTabActive =
+                    tabPrismArrays.IsSelected;
+
+                btnViewPrismArray.Visibility =
+                    arraysTabActive
+                        ? Visibility.Visible
+                        : Visibility.Collapsed;
+
+                btnViewPrismArray.IsEnabled =
+                    arraysTabActive;
+            }
+
+            #endregion
+        }
+
+
+        private void ResetPendingPrismArrayDefinition()
+        {
+            #region Preserve Pending Points For Return
+
+            List<PrismArrayAvailablePoint> pointsToReturn =
+                new();
+
+            foreach (PrismArrayAvailablePoint assignedPoint
+                in _prismArrayAssignments.Values)
+            {
+                pointsToReturn.Add(
+                    item: assignedPoint);
+            }
+
+            #endregion
+
+
+            #region Clear Pending Definition
+
+            _selectedPrismArrayType =
+                null;
+
+            _pendingPrismArrayName =
+                string.Empty;
+
+            _prismArrayAssignments.Clear();
+
+            #endregion
+
+
+            #region Return Points To Available List
+
+            foreach (PrismArrayAvailablePoint point
+                in pointsToReturn)
+            {
+                InsertAvailablePrismArrayPointSorted(
+                    point: point);
+            }
+
+            #endregion
+        }
+
+
+        private void SetPendingPrismArrayDefinition(
+            byte arrayType,
+            string arrayName)
+        {
+            #region Validate Definition Header
+
+            ValidatePrismArrayType(
+                arrayType: arrayType);
+
+            string validatedArrayName =
+                arrayName?.Trim()
+                ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(validatedArrayName))
+            {
+                throw new ArgumentException(
+                    message: "Array name required.",
+                    paramName: nameof(arrayName));
+            }
+
+            if (validatedArrayName.Length > 200)
+            {
+                throw new ArgumentException(
+                    message: "Array name exceeds 200 characters.",
+                    paramName: nameof(arrayName));
+            }
+
+            #endregion
+
+
+            #region Store Definition Header
+
+            _selectedPrismArrayType =
+                arrayType;
+
+            _pendingPrismArrayName =
+                validatedArrayName;
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Available Array Points
+
+        private async Task InitialisePrismArrayConfigurationForActiveProjectAsync()
+        {
+            #region Validate Active Project
+
+            if (!_activeProjectId.HasValue ||
+                string.IsNullOrWhiteSpace(_activeProjectName))
+            {
+                ResetPrismArrayConfigurationState();
+
+                throw new InvalidOperationException(
+                    "Select an active project.");
+            }
+
+            #endregion
+
+
+            #region Establish Array Project Context
+
+            ResetPrismArrayConfigurationState();
+
+            _prismArrayProjectId =
+                _activeProjectId.Value;
+
+            _prismArrayProjectName =
+                _activeProjectName;
+
+            #endregion
+
+
+            #region Load Array Lists
+
+            await ReloadPrismArrayConfigurationListsAsync();
+
+            #endregion
+        }
+
+
+        private async Task ReloadPrismArrayConfigurationListsAsync()
+        {
+            #region Validate Array Project Context
+
+            if (!_prismArrayProjectId.HasValue ||
+                string.IsNullOrWhiteSpace(_prismArrayProjectName))
+            {
+                throw new InvalidOperationException(
+                    "Array project unavailable.");
+            }
+
+            if (!_activeProjectId.HasValue ||
+                _activeProjectId.Value != _prismArrayProjectId.Value)
+            {
+                throw new InvalidOperationException(
+                    "Active project changed.");
+            }
+
+            int projectId =
+                _prismArrayProjectId.Value;
+
+            #endregion
+
+
+            #region Open Database Connection
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            #endregion
+
+
+            #region Load Available Points
+
+            List<PrismArrayAvailablePoint> availablePoints =
+                await LoadAvailablePrismArrayPointsAsync(
+                    projectId: projectId,
+                    databaseConnection: databaseConnection,
+                    transaction: null);
+
+            HashSet<int> assignedPointIds =
+                new();
+
+            foreach (PrismArrayAvailablePoint assignedPoint
+                in _prismArrayAssignments.Values)
+            {
+                assignedPointIds.Add(
+                    item: assignedPoint.PointName_ID);
+            }
+
+            _availablePrismArrayPoints.Clear();
+
+            foreach (PrismArrayAvailablePoint availablePoint
+                in availablePoints)
+            {
+                if (!assignedPointIds.Contains(
+                    item: availablePoint.PointName_ID))
+                {
+                    _availablePrismArrayPoints.Add(
+                        item: availablePoint);
+                }
+            }
+
+            #endregion
+
+
+            #region Load Committed Arrays
+
+            List<PrismArraySummaryItem> committedArrays =
+                await LoadCommittedPrismArraysAsync(
+                    projectId: projectId,
+                    databaseConnection: databaseConnection,
+                    transaction: null);
+
+            _committedPrismArrays.Clear();
+
+            foreach (PrismArraySummaryItem committedArray
+                in committedArrays)
+            {
+                _committedPrismArrays.Add(
+                    item: committedArray);
+            }
+
+            #endregion
+        }
+
+
+        private static async Task<List<PrismArrayAvailablePoint>>
+            LoadAvailablePrismArrayPointsAsync(
+                int projectId,
+                SqlConnection databaseConnection,
+                SqlTransaction? transaction)
+        {
+            #region Define Available Point Query
+
+            const string availablePointSql = """
+                SELECT
+                    PN.[PointName_ID],
+                    PN.[PointName],
+                    PN.[ReplacementName]
+                FROM [dbo].[PointName] AS PN
+                INNER JOIN [dbo].[CoordinatesReference] AS CR
+                    ON CR.[PointName_ID] = PN.[PointName_ID]
+                    AND CR.[IsDeleted] = 0
+                WHERE
+                    PN.[Project_ID] = @Project_ID
+                    AND PN.[IsDeleted] = 0
+                    AND NOT EXISTS
+                    (
+                        SELECT 1
+                        FROM [dbo].[PrismArrayPoint] AS PAP
+                        WHERE
+                            PAP.[PointName_ID] = PN.[PointName_ID]
+                            AND PAP.[IsDeleted] = 0
+                    )
+                ORDER BY
+                    PN.[ReplacementName],
+                    PN.[PointName];
+                """;
+
+            #endregion
+
+
+            #region Execute Available Point Query
+
+            List<PrismArrayAvailablePoint> availablePoints =
+                new();
+
+            await using SqlCommand availablePointCommand =
+                transaction is null
+                    ? new SqlCommand(
+                        cmdText: availablePointSql,
+                        connection: databaseConnection)
+                    : new SqlCommand(
+                        cmdText: availablePointSql,
+                        connection: databaseConnection,
+                        transaction: transaction);
+
+            availablePointCommand.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    projectId;
+
+            await using SqlDataReader reader =
+                await availablePointCommand.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                availablePoints.Add(
+                    item:
+                        new PrismArrayAvailablePoint
+                        {
+                            PointName_ID =
+                                reader.GetInt32(
+                                    i: 0),
+
+                            PointName =
+                                reader.GetString(
+                                    i: 1),
+
+                            ReplacementName =
+                                reader.GetString(
+                                    i: 2)
+                        });
+            }
+
+            return availablePoints;
+
+            #endregion
+        }
+
+
+        private void InsertAvailablePrismArrayPointSorted(
+            PrismArrayAvailablePoint point)
+        {
+            #region Avoid Duplicate Available Point
+
+            foreach (PrismArrayAvailablePoint availablePoint
+                in _availablePrismArrayPoints)
+            {
+                if (availablePoint.PointName_ID == point.PointName_ID)
+                {
+                    return;
+                }
+            }
+
+            #endregion
+
+
+            #region Find Sorted Insert Position
+
+            int insertIndex =
+                _availablePrismArrayPoints.Count;
+
+            for (int index = 0;
+                 index < _availablePrismArrayPoints.Count;
+                 index++)
+            {
+                PrismArrayAvailablePoint existingPoint =
+                    _availablePrismArrayPoints[index];
+
+                int replacementComparison =
+                    string.Compare(
+                        strA: point.ReplacementName,
+                        strB: existingPoint.ReplacementName,
+                        comparisonType: StringComparison.OrdinalIgnoreCase);
+
+                if (replacementComparison < 0)
+                {
+                    insertIndex =
+                        index;
+
+                    break;
+                }
+
+                if (replacementComparison == 0 &&
+                    string.Compare(
+                        strA: point.PointName,
+                        strB: existingPoint.PointName,
+                        comparisonType: StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    insertIndex =
+                        index;
+
+                    break;
+                }
+            }
+
+            #endregion
+
+
+            #region Insert Available Point
+
+            _availablePrismArrayPoints.Insert(
+                index: insertIndex,
+                item: point);
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region A-E Point Assignment
+
+        private void AssignPrismArrayPoint(
+            char pointRole,
+            int pointNameId)
+        {
+            #region Validate Role And Point
+
+            char validatedPointRole =
+                ValidatePrismArrayPointRole(
+                    pointRole: pointRole);
+
+            PrismArrayAvailablePoint? selectedPoint =
+                null;
+
+            foreach (PrismArrayAvailablePoint availablePoint
+                in _availablePrismArrayPoints)
+            {
+                if (availablePoint.PointName_ID == pointNameId)
+                {
+                    selectedPoint =
+                        availablePoint;
+
+                    break;
+                }
+            }
+
+            if (selectedPoint is null)
+            {
+                throw new InvalidOperationException(
+                    "Point unavailable.");
+            }
+
+            #endregion
+
+
+            #region Replace Existing Role Assignment
+
+            if (_prismArrayAssignments.TryGetValue(
+                key: validatedPointRole,
+                value: out PrismArrayAvailablePoint? existingAssignment))
+            {
+                _prismArrayAssignments.Remove(
+                    key: validatedPointRole);
+
+                InsertAvailablePrismArrayPointSorted(
+                    point: existingAssignment);
+            }
+
+            #endregion
+
+
+            #region Assign Selected Point
+
+            _availablePrismArrayPoints.Remove(
+                item: selectedPoint);
+
+            _prismArrayAssignments.Add(
+                key: validatedPointRole,
+                value: selectedPoint);
+
+            #endregion
+        }
+
+
+        private void ClearPrismArrayPointAssignment(
+            char pointRole)
+        {
+            #region Validate Point Role
+
+            char validatedPointRole =
+                ValidatePrismArrayPointRole(
+                    pointRole: pointRole);
+
+            #endregion
+
+
+            #region Clear Assignment
+
+            if (!_prismArrayAssignments.TryGetValue(
+                key: validatedPointRole,
+                value: out PrismArrayAvailablePoint? assignedPoint))
+            {
+                return;
+            }
+
+            _prismArrayAssignments.Remove(
+                key: validatedPointRole);
+
+            InsertAvailablePrismArrayPointSorted(
+                point: assignedPoint);
+
+            #endregion
+        }
+
+
+        private PrismArrayAvailablePoint? GetPrismArrayPointAssignment(
+            char pointRole)
+        {
+            #region Get Assignment
+
+            char validatedPointRole =
+                ValidatePrismArrayPointRole(
+                    pointRole: pointRole);
+
+            return _prismArrayAssignments.TryGetValue(
+                key: validatedPointRole,
+                value: out PrismArrayAvailablePoint? assignedPoint)
+                    ? assignedPoint
+                    : null;
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Prism Array Commit
+
+        private async Task<int> CommitCurrentPrismArrayDefinitionAsync()
+        {
+            #region Validate Runtime Context
+
+            if (!_prismArrayProjectId.HasValue ||
+                string.IsNullOrWhiteSpace(_prismArrayProjectName))
+            {
+                throw new InvalidOperationException(
+                    "Array project unavailable.");
+            }
+
+            if (!_activeProjectId.HasValue ||
+                _activeProjectId.Value != _prismArrayProjectId.Value)
+            {
+                throw new InvalidOperationException(
+                    "Active project changed.");
+            }
+
+            if (!_selectedPrismArrayType.HasValue)
+            {
+                throw new InvalidOperationException(
+                    "Select an array type.");
+            }
+
+            byte arrayType =
+                _selectedPrismArrayType.Value;
+
+            ValidatePrismArrayType(
+                arrayType: arrayType);
+
+            string arrayName =
+                _pendingPrismArrayName.Trim();
+
+            if (string.IsNullOrWhiteSpace(arrayName))
+            {
+                throw new InvalidOperationException(
+                    "Array name required.");
+            }
+
+            if (arrayName.Length > 200)
+            {
+                throw new InvalidOperationException(
+                    "Array name exceeds 200 characters.");
+            }
+
+            Dictionary<char, int> pointAssignments =
+                CapturePrismArrayPointAssignments();
+
+            int projectId =
+                _prismArrayProjectId.Value;
+
+            string projectName =
+                _prismArrayProjectName;
+
+            #endregion
+
+
+            #region Open Database Connection
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            #endregion
+
+
+            #region Begin Array Definition Transaction
+
+            using SqlTransaction transaction =
+                databaseConnection.BeginTransaction(
+                    iso:
+                        System.Data.IsolationLevel.Serializable);
+
+            bool transactionCommitted =
+                false;
+
+            #endregion
+
+
+            try
+            {
+                #region Acquire Array Definition Lock
+
+                await AcquirePrismArrayDefinitionTransactionLockAsync(
+                    projectId: projectId,
+                    databaseConnection: databaseConnection,
+                    transaction: transaction);
+
+                #endregion
+
+
+                #region Revalidate Target Project
+
+                await ValidateImportTargetProjectAsync(
+                    projectId: projectId,
+                    expectedProjectName: projectName,
+                    databaseConnection: databaseConnection,
+                    transaction: transaction);
+
+                #endregion
+
+
+                #region Final Array Definition Validation
+
+                await ValidatePrismArrayDefinitionForCommitAsync(
+                    projectId: projectId,
+                    arrayName: arrayName,
+                    pointAssignments: pointAssignments,
+                    databaseConnection: databaseConnection,
+                    transaction: transaction);
+
+                #endregion
+
+
+                #region Insert Array Definition
+
+                int arrayId =
+                    await InsertPrismArrayAsync(
+                        projectId: projectId,
+                        arrayName: arrayName,
+                        arrayType: arrayType,
+                        databaseConnection: databaseConnection,
+                        transaction: transaction);
+
+                #endregion
+
+
+                #region Insert A-E Membership
+
+                foreach (char pointRole
+                    in PrismArrayPointRoles)
+                {
+                    await InsertPrismArrayPointAsync(
+                        arrayId: arrayId,
+                        pointRole: pointRole,
+                        pointNameId: pointAssignments[pointRole],
+                        databaseConnection: databaseConnection,
+                        transaction: transaction);
+                }
+
+                #endregion
+
+
+                #region Commit Array Definition
+
+                transaction.Commit();
+
+                transactionCommitted =
+                    true;
+
+                #endregion
+
+
+                #region Refresh Runtime State
+
+                ResetPendingPrismArrayDefinition();
+
+                await ReloadPrismArrayConfigurationListsAsync();
+
+                return arrayId;
+
+                #endregion
+            }
+            catch
+            {
+                #region Roll Back Array Definition
+
+                if (!transactionCommitted)
+                {
+                    try
+                    {
+                        transaction.Rollback();
+                    }
+                    catch
+                    {
+                        // Preserve the original exception.
+                    }
+                }
+
+                throw;
+
+                #endregion
+            }
+        }
+
+
+        private Dictionary<char, int> CapturePrismArrayPointAssignments()
+        {
+            #region Validate Complete A-E Assignment
+
+            Dictionary<char, int> pointAssignments =
+                new();
+
+            HashSet<int> pointIds =
+                new();
+
+            foreach (char pointRole
+                in PrismArrayPointRoles)
+            {
+                if (!_prismArrayAssignments.TryGetValue(
+                    key: pointRole,
+                    value: out PrismArrayAvailablePoint? assignedPoint))
+                {
+                    throw new InvalidOperationException(
+                        $"Point {pointRole} not assigned.");
+                }
+
+                if (!pointIds.Add(
+                    item: assignedPoint.PointName_ID))
+                {
+                    throw new InvalidOperationException(
+                        "Array points must be unique.");
+                }
+
+                pointAssignments.Add(
+                    key: pointRole,
+                    value: assignedPoint.PointName_ID);
+            }
+
+            return pointAssignments;
+
+            #endregion
+        }
+
+
+        private static async Task AcquirePrismArrayDefinitionTransactionLockAsync(
+            int projectId,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Define Array Definition Lock
+
+            string lockResource =
+                $"{PrismArrayDefinitionLockResourcePrefix}{projectId}";
+
+            const string lockSql = """
+                DECLARE @LockResult int;
+
+                EXEC @LockResult = sys.sp_getapplock
+                    @Resource = @Resource,
+                    @LockMode = 'Exclusive',
+                    @LockOwner = 'Transaction',
+                    @LockTimeout = 0;
+
+                SELECT @LockResult;
+                """;
+
+            #endregion
+
+
+            #region Acquire Array Definition Lock
+
+            await using SqlCommand lockCommand =
+                new(
+                    cmdText: lockSql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            lockCommand.Parameters.Add(
+                parameterName: "@Resource",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 255)
+                .Value =
+                    lockResource;
+
+            object? lockResultValue =
+                await lockCommand.ExecuteScalarAsync();
+
+            if (lockResultValue is null ||
+                lockResultValue == DBNull.Value)
+            {
+                throw new InvalidOperationException(
+                    "Array lock unavailable.");
+            }
+
+            int lockResult =
+                Convert.ToInt32(
+                    value: lockResultValue,
+                    provider: CultureInfo.InvariantCulture);
+
+            if (lockResult < 0)
+            {
+                throw new InvalidOperationException(
+                    "Another array definition is active.");
+            }
+
+            #endregion
+        }
+
+
+        private static async Task ValidatePrismArrayDefinitionForCommitAsync(
+            int projectId,
+            string arrayName,
+            Dictionary<char, int> pointAssignments,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Validate Array Name Uniqueness
+
+            const string arrayNameSql = """
+                SELECT COUNT(1)
+                FROM [dbo].[PrismArray] WITH (UPDLOCK, HOLDLOCK)
+                WHERE
+                    [Project_ID] = @Project_ID
+                    AND [ArrayName] = @ArrayName
+                    AND [IsDeleted] = 0;
+                """;
+
+            await using (SqlCommand arrayNameCommand =
+                new(
+                    cmdText: arrayNameSql,
+                    connection: databaseConnection,
+                    transaction: transaction))
+            {
+                arrayNameCommand.Parameters.Add(
+                    parameterName: "@Project_ID",
+                    sqlDbType: System.Data.SqlDbType.Int)
+                    .Value =
+                        projectId;
+
+                arrayNameCommand.Parameters.Add(
+                    parameterName: "@ArrayName",
+                    sqlDbType: System.Data.SqlDbType.NVarChar,
+                    size: 200)
+                    .Value =
+                        arrayName;
+
+                int existingArrayCount =
+                    Convert.ToInt32(
+                        value:
+                            await arrayNameCommand.ExecuteScalarAsync(),
+                        provider: CultureInfo.InvariantCulture);
+
+                if (existingArrayCount > 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Array '{arrayName}' already exists.");
+                }
+            }
+
+            #endregion
+
+
+            #region Define Point Validation Query
+
+            const string pointSql = """
+                SELECT
+                    PN.[PointName_ID],
+                    PN.[Project_ID],
+                    PN.[IsDeleted],
+                    CASE
+                        WHEN CR.[PointName_ID] IS NULL THEN 0
+                        ELSE 1
+                    END AS [HasReference],
+                    CASE
+                        WHEN PAP.[PointName_ID] IS NULL THEN 0
+                        ELSE 1
+                    END AS [AlreadyAllocated]
+                FROM [dbo].[PointName] AS PN WITH (UPDLOCK, HOLDLOCK)
+                LEFT JOIN [dbo].[CoordinatesReference] AS CR WITH (HOLDLOCK)
+                    ON CR.[PointName_ID] = PN.[PointName_ID]
+                    AND CR.[IsDeleted] = 0
+                LEFT JOIN [dbo].[PrismArrayPoint] AS PAP WITH (UPDLOCK, HOLDLOCK)
+                    ON PAP.[PointName_ID] = PN.[PointName_ID]
+                    AND PAP.[IsDeleted] = 0
+                WHERE PN.[PointName_ID] IN
+                (
+                    @A_ID,
+                    @B_ID,
+                    @C_ID,
+                    @D_ID,
+                    @E_ID
+                );
+                """;
+
+            #endregion
+
+
+            #region Execute Point Validation Query
+
+            Dictionary<int, (int ProjectId, bool IsDeleted, bool HasReference, bool AlreadyAllocated)>
+                pointStates =
+                    new();
+
+            await using SqlCommand pointCommand =
+                new(
+                    cmdText: pointSql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            foreach (char pointRole
+                in PrismArrayPointRoles)
+            {
+                pointCommand.Parameters.Add(
+                    parameterName: $"@{pointRole}_ID",
+                    sqlDbType: System.Data.SqlDbType.Int)
+                    .Value =
+                        pointAssignments[pointRole];
+            }
+
+            await using SqlDataReader reader =
+                await pointCommand.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                int pointNameId =
+                    reader.GetInt32(
+                        i: 0);
+
+                pointStates[pointNameId] =
+                    (
+                        ProjectId:
+                            reader.GetInt32(
+                                i: 1),
+
+                        IsDeleted:
+                            reader.GetBoolean(
+                                i: 2),
+
+                        HasReference:
+                            reader.GetInt32(
+                                i: 3) == 1,
+
+                        AlreadyAllocated:
+                            reader.GetInt32(
+                                i: 4) == 1
+                    );
+            }
+
+            #endregion
+
+
+            #region Validate Each A-E Point
+
+            foreach (char pointRole
+                in PrismArrayPointRoles)
+            {
+                int pointNameId =
+                    pointAssignments[pointRole];
+
+                if (!pointStates.TryGetValue(
+                    key: pointNameId,
+                    value: out
+                        (int ProjectId, bool IsDeleted, bool HasReference, bool AlreadyAllocated)
+                        pointState))
+                {
+                    throw new InvalidOperationException(
+                        $"Point {pointRole} unavailable.");
+                }
+
+                if (pointState.ProjectId != projectId)
+                {
+                    throw new InvalidOperationException(
+                        $"Point {pointRole} belongs to another project.");
+                }
+
+                if (pointState.IsDeleted)
+                {
+                    throw new InvalidOperationException(
+                        $"Point {pointRole} is deleted.");
+                }
+
+                if (!pointState.HasReference)
+                {
+                    throw new InvalidOperationException(
+                        $"Point {pointRole} has no reference coordinates.");
+                }
+
+                if (pointState.AlreadyAllocated)
+                {
+                    throw new InvalidOperationException(
+                        $"Point {pointRole} is already allocated.");
+                }
+            }
+
+            #endregion
+        }
+
+
+        private static async Task<int> InsertPrismArrayAsync(
+            int projectId,
+            string arrayName,
+            byte arrayType,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Define Array Insert
+
+            const string arraySql = """
+                INSERT INTO [dbo].[PrismArray]
+                (
+                    [Project_ID],
+                    [ArrayName],
+                    [ArrayType],
+                    [IsDeleted]
+                )
+                VALUES
+                (
+                    @Project_ID,
+                    @ArrayName,
+                    @ArrayType,
+                    0
+                );
+
+                SELECT CAST(SCOPE_IDENTITY() AS int);
+                """;
+
+            #endregion
+
+
+            #region Insert Array
+
+            await using SqlCommand arrayCommand =
+                new(
+                    cmdText: arraySql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            arrayCommand.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    projectId;
+
+            arrayCommand.Parameters.Add(
+                parameterName: "@ArrayName",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 200)
+                .Value =
+                    arrayName;
+
+            arrayCommand.Parameters.Add(
+                parameterName: "@ArrayType",
+                sqlDbType: System.Data.SqlDbType.TinyInt)
+                .Value =
+                    arrayType;
+
+            object? arrayIdValue =
+                await arrayCommand.ExecuteScalarAsync();
+
+            if (arrayIdValue is null ||
+                arrayIdValue == DBNull.Value)
+            {
+                throw new InvalidOperationException(
+                    "Array insert failed.");
+            }
+
+            return Convert.ToInt32(
+                value: arrayIdValue,
+                provider: CultureInfo.InvariantCulture);
+
+            #endregion
+        }
+
+
+        private static async Task InsertPrismArrayPointAsync(
+            int arrayId,
+            char pointRole,
+            int pointNameId,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Define Array Point Insert
+
+            const string pointSql = """
+                INSERT INTO [dbo].[PrismArrayPoint]
+                (
+                    [Array_ID],
+                    [PointRole],
+                    [PointName_ID],
+                    [IsDeleted]
+                )
+                VALUES
+                (
+                    @Array_ID,
+                    @PointRole,
+                    @PointName_ID,
+                    0
+                );
+                """;
+
+            #endregion
+
+
+            #region Insert Array Point
+
+            await using SqlCommand pointCommand =
+                new(
+                    cmdText: pointSql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            pointCommand.Parameters.Add(
+                parameterName: "@Array_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    arrayId;
+
+            pointCommand.Parameters.Add(
+                parameterName: "@PointRole",
+                sqlDbType: System.Data.SqlDbType.Char,
+                size: 1)
+                .Value =
+                    pointRole.ToString();
+
+            pointCommand.Parameters.Add(
+                parameterName: "@PointName_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    pointNameId;
+
+            int rowsInserted =
+                await pointCommand.ExecuteNonQueryAsync();
+
+            if (rowsInserted != 1)
+            {
+                throw new InvalidOperationException(
+                    $"Point {pointRole} insert failed.");
+            }
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Committed Array Listing
+
+        private static async Task<List<PrismArraySummaryItem>>
+            LoadCommittedPrismArraysAsync(
+                int projectId,
+                SqlConnection databaseConnection,
+                SqlTransaction? transaction)
+        {
+            #region Define Committed Array Query
+
+            const string arraySql = """
+                SELECT
+                    [Array_ID],
+                    [ArrayType],
+                    [ArrayName],
+                    [IsDeleted]
+                FROM [dbo].[PrismArray]
+                WHERE
+                    [Project_ID] = @Project_ID
+                    AND [IsDeleted] = 0
+                ORDER BY
+                    [ArrayType],
+                    [ArrayName],
+                    [Array_ID];
+                """;
+
+            #endregion
+
+
+            #region Execute Committed Array Query
+
+            List<PrismArraySummaryItem> arrays =
+                new();
+
+            await using SqlCommand arrayCommand =
+                transaction is null
+                    ? new SqlCommand(
+                        cmdText: arraySql,
+                        connection: databaseConnection)
+                    : new SqlCommand(
+                        cmdText: arraySql,
+                        connection: databaseConnection,
+                        transaction: transaction);
+
+            arrayCommand.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    projectId;
+
+            await using SqlDataReader reader =
+                await arrayCommand.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                arrays.Add(
+                    item:
+                        new PrismArraySummaryItem
+                        {
+                            Array_ID =
+                                reader.GetInt32(
+                                    i: 0),
+
+                            ArrayType =
+                                reader.GetByte(
+                                    i: 1),
+
+                            ArrayName =
+                                reader.GetString(
+                                    i: 2),
+
+                            IsDeleted =
+                                reader.GetBoolean(
+                                    i: 3)
+                        });
+            }
+
+            return arrays;
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Array Details
+
+        private async Task<PrismArrayDetailsItem> GetPrismArrayDetailsAsync(
+            int arrayId)
+        {
+            #region Validate Array Context
+
+            if (arrayId <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    paramName: nameof(arrayId),
+                    message: "Array_ID must be greater than zero.");
+            }
+
+            if (!_activeProjectId.HasValue)
+            {
+                throw new InvalidOperationException(
+                    "Select an active project.");
+            }
+
+            int projectId =
+                _activeProjectId.Value;
+
+            #endregion
+
+
+            #region Define Array Detail Query
+
+            const string arraySql = """
+                SELECT
+                    PA.[Array_ID],
+                    PA.[Project_ID],
+                    PA.[ArrayType],
+                    PA.[ArrayName],
+                    PA.[IsDeleted],
+                    PAP.[PointRole],
+                    PN.[PointName_ID],
+                    PN.[PointName],
+                    PN.[ReplacementName]
+                FROM [dbo].[PrismArray] AS PA
+                LEFT JOIN [dbo].[PrismArrayPoint] AS PAP
+                    ON PAP.[Array_ID] = PA.[Array_ID]
+                    AND PAP.[IsDeleted] = 0
+                LEFT JOIN [dbo].[PointName] AS PN
+                    ON PN.[PointName_ID] = PAP.[PointName_ID]
+                WHERE
+                    PA.[Array_ID] = @Array_ID
+                    AND PA.[Project_ID] = @Project_ID
+                    AND PA.[IsDeleted] = 0
+                ORDER BY
+                    PAP.[PointRole];
+                """;
+
+            #endregion
+
+
+            #region Load Array Details
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand arrayCommand =
+                new(
+                    cmdText: arraySql,
+                    connection: databaseConnection);
+
+            arrayCommand.Parameters.Add(
+                parameterName: "@Array_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    arrayId;
+
+            arrayCommand.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    projectId;
+
+            PrismArrayDetailsItem? details =
+                null;
+
+            await using SqlDataReader reader =
+                await arrayCommand.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                details ??=
+                    new PrismArrayDetailsItem
+                    {
+                        Array_ID =
+                            reader.GetInt32(
+                                i: 0),
+
+                        Project_ID =
+                            reader.GetInt32(
+                                i: 1),
+
+                        ArrayType =
+                            reader.GetByte(
+                                i: 2),
+
+                        ArrayName =
+                            reader.GetString(
+                                i: 3),
+
+                        IsDeleted =
+                            reader.GetBoolean(
+                                i: 4)
+                    };
+
+                if (reader.IsDBNull(
+                    i: 5) ||
+                    reader.IsDBNull(
+                        i: 6))
+                {
+                    continue;
+                }
+
+                string roleText =
+                    reader.GetString(
+                        i: 5);
+
+                if (string.IsNullOrWhiteSpace(roleText))
+                {
+                    continue;
+                }
+
+                char pointRole =
+                    ValidatePrismArrayPointRole(
+                        pointRole: roleText[0]);
+
+                details.Points.Add(
+                    key: pointRole,
+                    value:
+                        new PrismArrayAvailablePoint
+                        {
+                            PointName_ID =
+                                reader.GetInt32(
+                                    i: 6),
+
+                            PointName =
+                                reader.GetString(
+                                    i: 7),
+
+                            ReplacementName =
+                                reader.GetString(
+                                    i: 8)
+                        });
+            }
+
+            #endregion
+
+
+            #region Validate Array Details
+
+            if (details is null)
+            {
+                throw new InvalidOperationException(
+                    "Array not found.");
+            }
+
+            foreach (char pointRole
+                in PrismArrayPointRoles)
+            {
+                if (!details.Points.ContainsKey(
+                    key: pointRole))
+                {
+                    throw new InvalidOperationException(
+                        $"Array point {pointRole} missing.");
+                }
+            }
+
+            if (details.Points.Count != 5)
+            {
+                throw new InvalidOperationException(
+                    "Array membership invalid.");
+            }
+
+            return details;
+
+            #endregion
+        }
+
+
+        private static string BuildPrismArrayDetailsText(
+            PrismArrayDetailsItem details)
+        {
+            #region Build Array Details Text
+
+            ArgumentNullException.ThrowIfNull(
+                argument: details);
+
+            StringBuilder message =
+                new();
+
+            message.AppendLine(
+                value: $"Array ID: {details.Array_ID}");
+
+            message.AppendLine(
+                value: $"Array Name: {details.ArrayName}");
+
+            message.AppendLine(
+                value: $"Type: {details.ArrayTypeName}");
+
+            message.AppendLine();
+
+            foreach (char pointRole
+                in PrismArrayPointRoles)
+            {
+                PrismArrayAvailablePoint point =
+                    details.Points[pointRole];
+
+                message.AppendLine(
+                    value:
+                        $"{pointRole}: {point.ReplacementName}");
+            }
+
+            return message
+                .ToString()
+                .TrimEnd();
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Array Deletion
+
+        private async Task DeletePrismArrayAsync(
+            int arrayId)
+        {
+            #region Validate Array Delete Context
+
+            if (arrayId <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    paramName: nameof(arrayId),
+                    message: "Array_ID must be greater than zero.");
+            }
+
+            if (!_activeProjectId.HasValue ||
+                string.IsNullOrWhiteSpace(_activeProjectName))
+            {
+                throw new InvalidOperationException(
+                    "Select an active project.");
+            }
+
+            int projectId =
+                _activeProjectId.Value;
+
+            string projectName =
+                _activeProjectName;
+
+            #endregion
+
+
+            #region Open Database Connection
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            #endregion
+
+
+            #region Begin Array Soft-Delete Transaction
+
+            using SqlTransaction transaction =
+                databaseConnection.BeginTransaction(
+                    iso:
+                        System.Data.IsolationLevel.Serializable);
+
+            bool transactionCommitted =
+                false;
+
+            #endregion
+
+
+            try
+            {
+                #region Acquire Array Definition Lock
+
+                await AcquirePrismArrayDefinitionTransactionLockAsync(
+                    projectId: projectId,
+                    databaseConnection: databaseConnection,
+                    transaction: transaction);
+
+                #endregion
+
+
+                #region Revalidate Target Project
+
+                await ValidateImportTargetProjectAsync(
+                    projectId: projectId,
+                    expectedProjectName: projectName,
+                    databaseConnection: databaseConnection,
+                    transaction: transaction);
+
+                #endregion
+
+
+                #region Validate Active Array Ownership
+
+                const string arraySql = """
+                    SELECT
+                        [ArrayName]
+                    FROM [dbo].[PrismArray] WITH (UPDLOCK, HOLDLOCK)
+                    WHERE
+                        [Array_ID] = @Array_ID
+                        AND [Project_ID] = @Project_ID
+                        AND [IsDeleted] = 0;
+                    """;
+
+                await using (SqlCommand arrayCommand =
+                    new(
+                        cmdText: arraySql,
+                        connection: databaseConnection,
+                        transaction: transaction))
+                {
+                    arrayCommand.Parameters.Add(
+                        parameterName: "@Array_ID",
+                        sqlDbType: System.Data.SqlDbType.Int)
+                        .Value =
+                            arrayId;
+
+                    arrayCommand.Parameters.Add(
+                        parameterName: "@Project_ID",
+                        sqlDbType: System.Data.SqlDbType.Int)
+                        .Value =
+                            projectId;
+
+                    object? arrayNameValue =
+                        await arrayCommand.ExecuteScalarAsync();
+
+                    if (arrayNameValue is null ||
+                        arrayNameValue == DBNull.Value)
+                    {
+                        throw new InvalidOperationException(
+                            "Array not found.");
+                    }
+                }
+
+                #endregion
+
+
+                #region Soft Delete Array Membership
+
+                const string deletePointSql = """
+                    UPDATE [dbo].[PrismArrayPoint]
+                    SET [IsDeleted] = 1
+                    WHERE
+                        [Array_ID] = @Array_ID
+                        AND [IsDeleted] = 0;
+                    """;
+
+                await using (SqlCommand deletePointCommand =
+                    new(
+                        cmdText: deletePointSql,
+                        connection: databaseConnection,
+                        transaction: transaction))
+                {
+                    deletePointCommand.Parameters.Add(
+                        parameterName: "@Array_ID",
+                        sqlDbType: System.Data.SqlDbType.Int)
+                        .Value =
+                            arrayId;
+
+                    int deletedPointRows =
+                        await deletePointCommand.ExecuteNonQueryAsync();
+
+                    if (deletedPointRows != 5)
+                    {
+                        throw new InvalidOperationException(
+                            "Array membership invalid.");
+                    }
+                }
+
+                #endregion
+
+
+                #region Soft Delete Array Definition
+
+                const string deleteArraySql = """
+                    UPDATE [dbo].[PrismArray]
+                    SET [IsDeleted] = 1
+                    WHERE
+                        [Array_ID] = @Array_ID
+                        AND [Project_ID] = @Project_ID
+                        AND [IsDeleted] = 0;
+                    """;
+
+                await using (SqlCommand deleteArrayCommand =
+                    new(
+                        cmdText: deleteArraySql,
+                        connection: databaseConnection,
+                        transaction: transaction))
+                {
+                    deleteArrayCommand.Parameters.Add(
+                        parameterName: "@Array_ID",
+                        sqlDbType: System.Data.SqlDbType.Int)
+                        .Value =
+                            arrayId;
+
+                    deleteArrayCommand.Parameters.Add(
+                        parameterName: "@Project_ID",
+                        sqlDbType: System.Data.SqlDbType.Int)
+                        .Value =
+                            projectId;
+
+                    int deletedArrayRows =
+                        await deleteArrayCommand.ExecuteNonQueryAsync();
+
+                    if (deletedArrayRows != 1)
+                    {
+                        throw new InvalidOperationException(
+                            "Array delete failed.");
+                    }
+                }
+
+                #endregion
+
+
+                #region Commit Array Soft Delete
+
+                transaction.Commit();
+
+                transactionCommitted =
+                    true;
+
+                #endregion
+
+
+                #region Refresh Array Lists
+
+                if (_prismArrayProjectId.HasValue &&
+                    _prismArrayProjectId.Value == projectId)
+                {
+                    await ReloadPrismArrayConfigurationListsAsync();
+                }
+
+                #endregion
+            }
+            catch
+            {
+                #region Roll Back Array Soft Delete
+
+                if (!transactionCommitted)
+                {
+                    try
+                    {
+                        transaction.Rollback();
+                    }
+                    catch
+                    {
+                        // Preserve the original exception.
+                    }
+                }
+
+                throw;
+
+                #endregion
+            }
+        }
+
+        #endregion
+
+
+        #region Tunnel Convergence Chord Helpers
+
+        private static decimal CalculateThreeDimensionalDistance(
+            decimal easting1,
+            decimal northing1,
+            decimal height1,
+            decimal easting2,
+            decimal northing2,
+            decimal height2)
+        {
+            #region Calculate Three-Dimensional Distance
+
+            double deltaEasting =
+                (double)(easting2 - easting1);
+
+            double deltaNorthing =
+                (double)(northing2 - northing1);
+
+            double deltaHeight =
+                (double)(height2 - height1);
+
+            double distance =
+                Math.Sqrt(
+                    d:
+                        (deltaEasting * deltaEasting) +
+                        (deltaNorthing * deltaNorthing) +
+                        (deltaHeight * deltaHeight));
+
+            return (decimal)distance;
+
+            #endregion
+        }
+
+
+        private static decimal CalculateTunnelConvergenceChordChange(
+            decimal referenceEasting1,
+            decimal referenceNorthing1,
+            decimal referenceHeight1,
+            decimal referenceEasting2,
+            decimal referenceNorthing2,
+            decimal referenceHeight2,
+            decimal currentEasting1,
+            decimal currentNorthing1,
+            decimal currentHeight1,
+            decimal currentEasting2,
+            decimal currentNorthing2,
+            decimal currentHeight2)
+        {
+            #region Calculate Reference Chord
+
+            decimal referenceDistance =
+                CalculateThreeDimensionalDistance(
+                    easting1: referenceEasting1,
+                    northing1: referenceNorthing1,
+                    height1: referenceHeight1,
+                    easting2: referenceEasting2,
+                    northing2: referenceNorthing2,
+                    height2: referenceHeight2);
+
+            #endregion
+
+
+            #region Calculate Current Chord
+
+            decimal currentDistance =
+                CalculateThreeDimensionalDistance(
+                    easting1: currentEasting1,
+                    northing1: currentNorthing1,
+                    height1: currentHeight1,
+                    easting2: currentEasting2,
+                    northing2: currentNorthing2,
+                    height2: currentHeight2);
+
+            #endregion
+
+
+            #region Return Signed Chord Change
+
+            return decimal.Round(
+                d: currentDistance - referenceDistance,
+                decimals: 4,
+                mode: MidpointRounding.AwayFromZero);
+
+            #endregion
+        }
+
+        #endregion
+
+        #endregion
+
+
+        #region Prism Array Configuration UI
+
+        #region Arrays Tab Initialisation
+
+        private async void tabConfiguration_SelectionChanged(
+            object sender,
+            SelectionChangedEventArgs e)
+        {
+            #region Ignore Child Selection Events
+
+            if (!ReferenceEquals(
+                objA: e.OriginalSource,
+                objB: sender))
+            {
+                return;
+            }
+
+            #endregion
+
+
+            #region Update View Array Button State
+
+            bool arraysTabActive =
+                tabPrismArrays.IsSelected;
+
+            btnViewPrismArray.Visibility =
+                arraysTabActive
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+
+            btnViewPrismArray.IsEnabled =
+                arraysTabActive;
+
+            if (!arraysTabActive)
+            {
+                return;
+            }
+
+            #endregion
+
+
+            #region Load Array Configuration
+
+            try
+            {
+                await RefreshPrismArrayConfigurationUiAsync();
+            }
+            catch (Exception ex)
+            {
+                txtPrismArrayStatus.Text =
+                    $"Unable to load arrays: {ex.Message}";
+            }
+
+            #endregion
+        }
+
+
+        private async Task RefreshPrismArrayConfigurationUiAsync()
+        {
+            #region Validate Active Project
+
+            if (!_activeProjectId.HasValue ||
+                string.IsNullOrWhiteSpace(_activeProjectName))
+            {
+                ResetPrismArrayConfigurationState();
+
+                txtPrismArrayStatus.Text =
+                    "Select an active project.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Establish Or Refresh Array Project Context
+
+            if (!_prismArrayProjectId.HasValue ||
+                _prismArrayProjectId.Value != _activeProjectId.Value)
+            {
+                await InitialisePrismArrayConfigurationForActiveProjectAsync();
+            }
+            else
+            {
+                await ReloadPrismArrayConfigurationListsAsync();
+            }
+
+            #endregion
+
+
+            #region Refresh Array User Interface
+
+            UpdatePrismArrayAssignmentDisplay();
+
+            dgCommittedPrismArrays.SelectedItem =
+                null;
+
+            btnViewPrismArray.Visibility =
+                Visibility.Visible;
+
+            btnViewPrismArray.IsEnabled =
+                true;
+
+            txtPrismArrayStatus.Text =
+                $"{_availablePrismArrayPoints.Count} point(s) available; " +
+                $"{_committedPrismArrays.Count} array(s) committed.";
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Array Definition Controls
+
+        private void ClearPrismArrayDefinitionControls()
+        {
+            #region Clear Definition Header
+
+            cmbPrismArrayType.SelectedIndex =
+                -1;
+
+            txtPrismArrayName.Clear();
+
+            #endregion
+
+
+            #region Clear Assignment Display
+
+            txtPrismArrayPointA.Text =
+                string.Empty;
+
+            txtPrismArrayPointB.Text =
+                string.Empty;
+
+            txtPrismArrayPointC.Text =
+                string.Empty;
+
+            txtPrismArrayPointD.Text =
+                string.Empty;
+
+            txtPrismArrayPointE.Text =
+                string.Empty;
+
+            btnClearPrismArrayA.IsEnabled =
+                false;
+
+            btnClearPrismArrayB.IsEnabled =
+                false;
+
+            btnClearPrismArrayC.IsEnabled =
+                false;
+
+            btnClearPrismArrayD.IsEnabled =
+                false;
+
+            btnClearPrismArrayE.IsEnabled =
+                false;
+
+            dgPrismArrayAvailablePoints.SelectedItem =
+                null;
+
+            #endregion
+        }
+
+
+        private void UpdatePrismArrayAssignmentDisplay()
+        {
+            #region Resolve Current Assignments
+
+            PrismArrayAvailablePoint? pointA =
+                GetPrismArrayPointAssignment(
+                    pointRole: 'A');
+
+            PrismArrayAvailablePoint? pointB =
+                GetPrismArrayPointAssignment(
+                    pointRole: 'B');
+
+            PrismArrayAvailablePoint? pointC =
+                GetPrismArrayPointAssignment(
+                    pointRole: 'C');
+
+            PrismArrayAvailablePoint? pointD =
+                GetPrismArrayPointAssignment(
+                    pointRole: 'D');
+
+            PrismArrayAvailablePoint? pointE =
+                GetPrismArrayPointAssignment(
+                    pointRole: 'E');
+
+            #endregion
+
+
+            #region Update Assignment Text
+
+            txtPrismArrayPointA.Text =
+                pointA?.ReplacementName ?? string.Empty;
+
+            txtPrismArrayPointB.Text =
+                pointB?.ReplacementName ?? string.Empty;
+
+            txtPrismArrayPointC.Text =
+                pointC?.ReplacementName ?? string.Empty;
+
+            txtPrismArrayPointD.Text =
+                pointD?.ReplacementName ?? string.Empty;
+
+            txtPrismArrayPointE.Text =
+                pointE?.ReplacementName ?? string.Empty;
+
+            #endregion
+
+
+            #region Update Clear Buttons
+
+            btnClearPrismArrayA.IsEnabled =
+                pointA is not null;
+
+            btnClearPrismArrayB.IsEnabled =
+                pointB is not null;
+
+            btnClearPrismArrayC.IsEnabled =
+                pointC is not null;
+
+            btnClearPrismArrayD.IsEnabled =
+                pointD is not null;
+
+            btnClearPrismArrayE.IsEnabled =
+                pointE is not null;
+
+            #endregion
+        }
+
+
+        private void btnClearPrismArrayDefinition_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Clear Pending Array Definition
+
+            ResetPendingPrismArrayDefinition();
+
+            ClearPrismArrayDefinitionControls();
+
+            txtPrismArrayStatus.Text =
+                "Definition cleared.";
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region A-E Assignment Event Handlers
+
+        private void AssignSelectedPrismArrayPointFromUi(
+            char pointRole)
+        {
+            #region Validate Selected Available Point
+
+            if (dgPrismArrayAvailablePoints.SelectedItem
+                is not PrismArrayAvailablePoint selectedPoint)
+            {
+                txtPrismArrayStatus.Text =
+                    "Select an available point.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Assign Point
+
+            try
+            {
+                AssignPrismArrayPoint(
+                    pointRole: pointRole,
+                    pointNameId: selectedPoint.PointName_ID);
+
+                dgPrismArrayAvailablePoints.SelectedItem =
+                    null;
+
+                UpdatePrismArrayAssignmentDisplay();
+
+                txtPrismArrayStatus.Text =
+                    $"Point {char.ToUpperInvariant(pointRole)} assigned.";
+            }
+            catch (Exception ex)
+            {
+                txtPrismArrayStatus.Text =
+                    ex.Message;
+            }
+
+            #endregion
+        }
+
+
+        private void ClearPrismArrayPointFromUi(
+            char pointRole)
+        {
+            #region Clear Point Assignment
+
+            try
+            {
+                ClearPrismArrayPointAssignment(
+                    pointRole: pointRole);
+
+                UpdatePrismArrayAssignmentDisplay();
+
+                txtPrismArrayStatus.Text =
+                    $"Point {char.ToUpperInvariant(pointRole)} cleared.";
+            }
+            catch (Exception ex)
+            {
+                txtPrismArrayStatus.Text =
+                    ex.Message;
+            }
+
+            #endregion
+        }
+
+
+        private void btnAssignPrismArrayA_Click(object sender, RoutedEventArgs e) =>
+            AssignSelectedPrismArrayPointFromUi(pointRole: 'A');
+
+        private void btnAssignPrismArrayB_Click(object sender, RoutedEventArgs e) =>
+            AssignSelectedPrismArrayPointFromUi(pointRole: 'B');
+
+        private void btnAssignPrismArrayC_Click(object sender, RoutedEventArgs e) =>
+            AssignSelectedPrismArrayPointFromUi(pointRole: 'C');
+
+        private void btnAssignPrismArrayD_Click(object sender, RoutedEventArgs e) =>
+            AssignSelectedPrismArrayPointFromUi(pointRole: 'D');
+
+        private void btnAssignPrismArrayE_Click(object sender, RoutedEventArgs e) =>
+            AssignSelectedPrismArrayPointFromUi(pointRole: 'E');
+
+
+        private void btnClearPrismArrayA_Click(object sender, RoutedEventArgs e) =>
+            ClearPrismArrayPointFromUi(pointRole: 'A');
+
+        private void btnClearPrismArrayB_Click(object sender, RoutedEventArgs e) =>
+            ClearPrismArrayPointFromUi(pointRole: 'B');
+
+        private void btnClearPrismArrayC_Click(object sender, RoutedEventArgs e) =>
+            ClearPrismArrayPointFromUi(pointRole: 'C');
+
+        private void btnClearPrismArrayD_Click(object sender, RoutedEventArgs e) =>
+            ClearPrismArrayPointFromUi(pointRole: 'D');
+
+        private void btnClearPrismArrayE_Click(object sender, RoutedEventArgs e) =>
+            ClearPrismArrayPointFromUi(pointRole: 'E');
+
+        #endregion
+
+
+        #region Array Commit UI
+
+        private static byte GetSelectedPrismArrayTypeFromUi(
+            ComboBox arrayTypeComboBox)
+        {
+            #region Resolve Selected Array Type
+
+            ArgumentNullException.ThrowIfNull(
+                argument: arrayTypeComboBox);
+
+            return arrayTypeComboBox.SelectedIndex switch
+            {
+                0 => PrismArrayTypeStructural,
+                1 => PrismArrayTypeTunnelConvergence,
+
+                _ => throw new InvalidOperationException(
+                    "Select an array type.")
+            };
+
+            #endregion
+        }
+
+
+        private async void btnCommitPrismArray_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Prepare Array Definition
+
+            string arrayName =
+                txtPrismArrayName.Text?.Trim()
+                ?? string.Empty;
+
+            byte arrayType;
+
+            try
+            {
+                if (!_activeProjectId.HasValue)
+                {
+                    throw new InvalidOperationException(
+                        "Select an active project.");
+                }
+
+                if (!_prismArrayProjectId.HasValue ||
+                    _prismArrayProjectId.Value != _activeProjectId.Value)
+                {
+                    await InitialisePrismArrayConfigurationForActiveProjectAsync();
+                }
+
+                arrayType =
+                    GetSelectedPrismArrayTypeFromUi(
+                        arrayTypeComboBox: cmbPrismArrayType);
+
+                SetPendingPrismArrayDefinition(
+                    arrayType: arrayType,
+                    arrayName: arrayName);
+
+                _ = CapturePrismArrayPointAssignments();
+            }
+            catch (Exception ex)
+            {
+                txtPrismArrayStatus.Text =
+                    ex.Message;
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Confirm Array Commit
+
+            string confirmationMessage =
+                $"Project: {_prismArrayProjectName}\n" +
+                $"Type: {GetPrismArrayTypeName(arrayType: arrayType)}\n" +
+                $"Array: {arrayName}\n\n" +
+                $"A: {GetPrismArrayPointAssignment(pointRole: 'A')!.ReplacementName}\n" +
+                $"B: {GetPrismArrayPointAssignment(pointRole: 'B')!.ReplacementName}\n" +
+                $"C: {GetPrismArrayPointAssignment(pointRole: 'C')!.ReplacementName}\n" +
+                $"D: {GetPrismArrayPointAssignment(pointRole: 'D')!.ReplacementName}\n" +
+                $"E: {GetPrismArrayPointAssignment(pointRole: 'E')!.ReplacementName}\n\n" +
+                "Commit this array?";
+
+            MessageBoxResult confirmation =
+                MessageBox.Show(
+                    owner: this,
+                    messageBoxText: confirmationMessage,
+                    caption: "Confirm Array",
+                    button: MessageBoxButton.YesNo,
+                    icon: MessageBoxImage.Question,
+                    defaultResult: MessageBoxResult.No);
+
+            if (confirmation != MessageBoxResult.Yes)
+            {
+                txtPrismArrayStatus.Text =
+                    "Commit cancelled.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Commit Array
+
+            btnCommitPrismArray.IsEnabled =
+                false;
+
+            try
+            {
+                int arrayId =
+                    await CommitCurrentPrismArrayDefinitionAsync();
+
+                cmbPrismArrayType.SelectedIndex =
+                    -1;
+
+                txtPrismArrayName.Clear();
+
+                UpdatePrismArrayAssignmentDisplay();
+
+                foreach (PrismArraySummaryItem committedArray
+                    in _committedPrismArrays)
+                {
+                    if (committedArray.Array_ID == arrayId)
+                    {
+                        dgCommittedPrismArrays.SelectedItem =
+                            committedArray;
+
+                        dgCommittedPrismArrays.ScrollIntoView(
+                            item: committedArray);
+
+                        break;
+                    }
+                }
+
+                txtPrismArrayStatus.Text =
+                    $"Array '{arrayName}' committed.";
+            }
+            catch (Exception ex)
+            {
+                txtPrismArrayStatus.Text =
+                    $"Commit failed: {ex.Message}";
+            }
+            finally
+            {
+                btnCommitPrismArray.IsEnabled =
+                    true;
+            }
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Committed Array View And Delete
+
+        private void dgCommittedPrismArrays_SelectionChanged(
+            object sender,
+            SelectionChangedEventArgs e)
+        {
+            #region Maintain View Button State
+
+            btnViewPrismArray.IsEnabled =
+                tabPrismArrays.IsSelected;
+
+            #endregion
+        }
+
+
+        private async void btnViewPrismArray_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Validate Array Review Context
+
+            if (!tabPrismArrays.IsSelected)
+            {
+                return;
+            }
+
+            if (!_activeProjectId.HasValue ||
+                string.IsNullOrWhiteSpace(_activeProjectName))
+            {
+                txtPrismArrayStatus.Text =
+                    "Select an active project.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Prepare Array Review
+
+            btnViewPrismArray.IsEnabled =
+                false;
+
+            #endregion
+
+
+            try
+            {
+                #region Reload Committed Arrays From Database
+
+                await RefreshPrismArrayConfigurationUiAsync();
+
+                if (_committedPrismArrays.Count == 0)
+                {
+                    MessageBox.Show(
+                        owner: this,
+                        messageBoxText:
+                            "No committed arrays.",
+                        caption:
+                            "View Array",
+                        button:
+                            MessageBoxButton.OK,
+                        icon:
+                            MessageBoxImage.Information);
+
+                    txtPrismArrayStatus.Text =
+                        "No committed arrays.";
+
+                    return;
+                }
+
+                #endregion
+
+
+                #region Build Array Selection List
+
+                List<ArraySelectionItem> arraySelectionItems =
+                    new();
+
+                foreach (PrismArraySummaryItem committedArray
+                    in _committedPrismArrays)
+                {
+                    arraySelectionItems.Add(
+                        item:
+                            new ArraySelectionItem
+                            {
+                                Array_ID =
+                                    committedArray.Array_ID,
+
+                                ArrayTypeName =
+                                    committedArray.ArrayTypeName,
+
+                                ArrayName =
+                                    committedArray.ArrayName
+                            });
+                }
+
+                #endregion
+
+
+                #region Select Committed Array
+
+                ArraySelectionWindow selectionWindow =
+                    new(
+                        projectName:
+                            _activeProjectName,
+                        arrays:
+                            arraySelectionItems)
+                    {
+                        Owner =
+                            this
+                    };
+
+                bool? selectionResult =
+                    selectionWindow.ShowDialog();
+
+                if (selectionResult != true ||
+                    !selectionWindow.SelectedArrayId.HasValue)
+                {
+                    txtPrismArrayStatus.Text =
+                        "Array review cancelled.";
+
+                    return;
+                }
+
+                int selectedArrayId =
+                    selectionWindow.SelectedArrayId.Value;
+
+                #endregion
+
+
+                #region Load Selected Array Details
+
+                PrismArrayDetailsItem details =
+                    await GetPrismArrayDetailsAsync(
+                        arrayId:
+                            selectedArrayId);
+
+                #endregion
+
+
+                #region Display Array Details
+
+                ArrayDetailsWindow detailsWindow =
+                    new(
+                        arrayId:
+                            details.Array_ID,
+                        arrayName:
+                            details.ArrayName,
+                        arrayTypeName:
+                            details.ArrayTypeName,
+                        pointA:
+                            details.Points['A'].ReplacementName,
+                        pointB:
+                            details.Points['B'].ReplacementName,
+                        pointC:
+                            details.Points['C'].ReplacementName,
+                        pointD:
+                            details.Points['D'].ReplacementName,
+                        pointE:
+                            details.Points['E'].ReplacementName)
+                    {
+                        Owner =
+                            this
+                    };
+
+                bool? detailsResult =
+                    detailsWindow.ShowDialog();
+
+                if (detailsResult != true ||
+                    !detailsWindow.DeleteRequested)
+                {
+                    txtPrismArrayStatus.Text =
+                        $"Array '{details.ArrayName}' retained.";
+
+                    return;
+                }
+
+                #endregion
+
+
+                #region Confirm Array Soft Delete
+
+                MessageBoxResult deleteConfirmation =
+                    MessageBox.Show(
+                        owner:
+                            this,
+                        messageBoxText:
+                            $"Delete array '{details.ArrayName}'?\n\n" +
+                            "The array will be marked as deleted. " +
+                            "Existing data will be retained.",
+                        caption:
+                            "Confirm Delete Array",
+                        button:
+                            MessageBoxButton.YesNo,
+                        icon:
+                            MessageBoxImage.Warning,
+                        defaultResult:
+                            MessageBoxResult.No);
+
+                if (deleteConfirmation != MessageBoxResult.Yes)
+                {
+                    txtPrismArrayStatus.Text =
+                        "Delete cancelled.";
+
+                    return;
+                }
+
+                #endregion
+
+
+                #region Soft Delete Array
+
+                await DeletePrismArrayAsync(
+                    arrayId:
+                        details.Array_ID);
+
+                await RefreshPrismArrayConfigurationUiAsync();
+
+                txtPrismArrayStatus.Text =
+                    $"Array '{details.ArrayName}' deleted.";
+
+                #endregion
+            }
+            catch (Exception ex)
+            {
+                txtPrismArrayStatus.Text =
+                    ex.Message;
+            }
+            finally
+            {
+                #region Restore View Array Button
+
+                btnViewPrismArray.Visibility =
+                    tabPrismArrays.IsSelected
+                        ? Visibility.Visible
+                        : Visibility.Collapsed;
+
+                btnViewPrismArray.IsEnabled =
+                    tabPrismArrays.IsSelected;
+
+                #endregion
+            }
+        }
+
+        #endregion
+
+        #endregion
+
+
+        #region Constructor
+
+        public MainWindow()
+        {
+            #region Initialise Window Components
+
+            InitializeComponent();
+
+            #endregion
+
+
+            #region EPPlus License
+
+            gnaT.epplusLicense();
+
+            #endregion
+
+
+            #region Initialise Project DataGrid
+
+            dgProjects.ItemsSource =
+                _projectItems;
+
+            #endregion
+
+
+            #region Initialise Reference Coordinate Import DataGrid
+
+            dgReferenceCoordinateImport.ItemsSource =
+                _referenceImportItems;
+
+            #endregion
+
+
+            #region Initialise Geotechnical Sensor Import DataGrid
+
+            dgGeotechSensorImport.ItemsSource =
+                _geotechImportItems;
+
+            #endregion
+
+
+            #region Initialise Prism Array DataGrids
+
+            dgPrismArrayAvailablePoints.ItemsSource =
+                _availablePrismArrayPoints;
+
+            dgCommittedPrismArrays.ItemsSource =
+                _committedPrismArrays;
+
+            #endregion
+
+
+            #region Register Window Events
+
+            Loaded +=
+                MainWindow_Loaded;
+
+            Closed +=
+                MainWindow_Closed;
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Window Initialisation
+
+        #region Application Startup
+
+        private async void MainWindow_Loaded(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Load Persisted Startup Configuration
+
+            // Registry values are startup defaults only.
+            // They are read once when this process starts.
+
+            LoadDatabaseConnectionString();
+
+            LoadActiveProjectFromRegistry();
+
+            #endregion
+
+
+            #region Initialise Process-Local Active Project
+
+            // A persisted Project_ID does not become operational merely because
+            // it exists in the Registry.
+            //
+            // The project must first be validated against SQL Server and this
+            // application instance must acquire its Shared project lock.
+
+            await InitialiseStartupActiveProjectAsync();
+
+            #endregion
+        }
+
+        #endregion
+
+
+
+        private void MainWindow_Closed(
+            object? sender,
+            EventArgs e)
+        {
+            #region Release Cross-Instance Project Lock
+
+            ReleaseActiveProjectLockConnection();
+
+            #endregion
+        }
+
+
+
+
+        #region Registry Persistence
+
+        #region Database Connection String Persistence
+
+        private void LoadDatabaseConnectionString()
+        {
+            #region Initialise Connection String
+
+            string connectionString =
+                string.Empty;
+
+            #endregion
+
+
+            #region Read Connection String From Registry
+
+            using RegistryKey? registryKey =
+                Registry.CurrentUser.OpenSubKey(
+                    name: RegistryPath,
+                    writable: false);
+
+            if (registryKey is not null)
+            {
+                connectionString =
+                    registryKey.GetValue(
+                        name: RegistryDatabaseConnectionString,
+                        defaultValue: string.Empty)?.ToString()
+                    ?? string.Empty;
+            }
+
+            #endregion
+
+
+            #region Populate Connection String Control
+
+            txtDbConnectionString.Text =
+                connectionString;
+
+            _validatedDatabaseConnectionString =
+                connectionString;
+
+            #endregion
+        }
+
+
+        private static void SaveDatabaseConnectionString(
+            string connectionString)
+        {
+            #region Validate Connection String
+
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                throw new ArgumentException(
+                    message: "Database connection string cannot be empty.",
+                    paramName: nameof(connectionString));
+            }
+
+            #endregion
+
+
+            #region Write Connection String To Registry
+
+            using RegistryKey registryKey =
+                Registry.CurrentUser.CreateSubKey(
+                    subkey: RegistryPath,
+                    writable: true)
+                ?? throw new InvalidOperationException(
+                    $"Unable to create or open registry key " +
+                    $"'HKEY_CURRENT_USER\\{RegistryPath}'.");
+
+            registryKey.SetValue(
+                name: RegistryDatabaseConnectionString,
+                value: connectionString,
+                valueKind: RegistryValueKind.String);
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Active Project Persistence
+
+        private void LoadActiveProjectFromRegistry()
+        {
+            #region Initialise Process-Local Active Project
+
+            _activeProjectId = null;
+
+            _activeProjectName =
+                string.Empty;
+
+            #endregion
+
+
+            #region Read Persisted Startup Default
+
+            using RegistryKey? registryKey =
+                Registry.CurrentUser.OpenSubKey(
+                    name: RegistryPath,
+                    writable: false);
+
+            object? activeProjectIdValue =
+                registryKey?.GetValue(
+                    name: RegistryActiveProjectId,
+                    defaultValue: null);
+
+            string activeProjectName =
+                registryKey?.GetValue(
+                    name: RegistryActiveProjectName,
+                    defaultValue: string.Empty)?.ToString()
+                ?? string.Empty;
+
+            #endregion
+
+
+            #region Populate Process-Local Runtime State
+
+            if (activeProjectIdValue is int activeProjectId &&
+                activeProjectId > 0)
+            {
+                _activeProjectId =
+                    activeProjectId;
+
+                _activeProjectName =
+                    activeProjectName.Trim();
+            }
+
+            #endregion
+
+
+            #region Update Active Project Display
+
+            txtActiveProject.Text =
+                _activeProjectId.HasValue &&
+                !string.IsNullOrWhiteSpace(_activeProjectName)
+                    ? _activeProjectName
+                    : "No active project";
+
+            #endregion
+        }
+
+
+        private static void SaveActiveProjectToRegistry(
+            int projectId,
+            string projectName)
+        {
+            #region Validate Active Project
+
+            if (projectId <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    paramName: nameof(projectId),
+                    message: "Active Project_ID must be greater than zero.");
+            }
+
+            string validatedProjectName =
+                projectName?.Trim()
+                ?? throw new ArgumentNullException(
+                    paramName: nameof(projectName));
+
+            if (string.IsNullOrWhiteSpace(validatedProjectName))
+            {
+                throw new ArgumentException(
+                    message: "Active project name cannot be empty.",
+                    paramName: nameof(projectName));
+            }
+
+            #endregion
+
+
+            #region Persist Startup Default
+
+            using RegistryKey registryKey =
+                Registry.CurrentUser.CreateSubKey(
+                    subkey: RegistryPath,
+                    writable: true)
+                ?? throw new InvalidOperationException(
+                    $"Unable to create or open registry key " +
+                    $"'HKEY_CURRENT_USER\\{RegistryPath}'.");
+
+            registryKey.SetValue(
+                name: RegistryActiveProjectId,
+                value: projectId,
+                valueKind: RegistryValueKind.DWord);
+
+            registryKey.SetValue(
+                name: RegistryActiveProjectName,
+                value: validatedProjectName,
+                valueKind: RegistryValueKind.String);
+
+            #endregion
+        }
+
+
+        private static void ClearActiveProjectFromRegistry()
+        {
+            #region Open Registry Configuration
+
+            using RegistryKey? registryKey =
+                Registry.CurrentUser.OpenSubKey(
+                    name: RegistryPath,
+                    writable: true);
+
+            if (registryKey is null)
+            {
+                return;
+            }
+
+            #endregion
+
+
+            #region Remove Persisted Startup Default
+
+            registryKey.DeleteValue(
+                name: RegistryActiveProjectId,
+                throwOnMissingValue: false);
+
+            registryKey.DeleteValue(
+                name: RegistryActiveProjectName,
+                throwOnMissingValue: false);
+
+            #endregion
+        }
+
+        #endregion
+
+        #endregion
+
+        #endregion
+
+
+        #region Database Connection Infrastructure
+
+        private string GetValidatedDatabaseConnectionString()
+        {
+            #region Validate Operational Connection String
+
+            if (string.IsNullOrWhiteSpace(_validatedDatabaseConnectionString))
+            {
+                throw new InvalidOperationException(
+                    "Test the database connection first.");
+            }
+
+            string enteredConnectionString =
+                txtDbConnectionString.Text?.Trim()
+                ?? string.Empty;
+
+            if (!ConnectionStringsEquivalent(
+                firstConnectionString: enteredConnectionString,
+                secondConnectionString: _validatedDatabaseConnectionString))
+            {
+                throw new InvalidOperationException(
+                    "Database connection changed. Test it first.");
+            }
+
+            return _validatedDatabaseConnectionString;
+
+            #endregion
+        }
+
+
+        private string GetTrackGeometryConnectionString()
+        {
+            #region Build Track Geometry Connection String
+
+            return BuildDatabaseConnectionString(
+                baseConnectionString: GetValidatedDatabaseConnectionString(),
+                databaseName: TrackGeometryDatabaseName,
+                pooling: null);
+
+            #endregion
+        }
+
+
+        private static string BuildDatabaseConnectionString(
+            string baseConnectionString,
+            string databaseName,
+            bool? pooling)
+        {
+            #region Build Database Connection String
+
+            if (string.IsNullOrWhiteSpace(baseConnectionString))
+            {
+                throw new ArgumentException(
+                    message: "Database connection string cannot be empty.",
+                    paramName: nameof(baseConnectionString));
+            }
+
+            SqlConnectionStringBuilder connectionBuilder =
+                new(
+                    connectionString: baseConnectionString)
+                {
+                    InitialCatalog =
+                        databaseName
+                };
+
+            if (pooling.HasValue)
+            {
+                connectionBuilder.Pooling =
+                    pooling.Value;
+            }
+
+            return connectionBuilder.ConnectionString;
+
+            #endregion
+        }
+
+
+        private static bool ConnectionStringsEquivalent(
+            string firstConnectionString,
+            string secondConnectionString)
+        {
+            #region Compare Normalised Connection Strings
+
+            if (string.IsNullOrWhiteSpace(firstConnectionString) ||
+                string.IsNullOrWhiteSpace(secondConnectionString))
+            {
+                return string.Equals(
+                    a: firstConnectionString?.Trim(),
+                    b: secondConnectionString?.Trim(),
+                    comparisonType: StringComparison.Ordinal);
+            }
+
+            string firstNormalised =
+                new SqlConnectionStringBuilder(
+                    connectionString: firstConnectionString)
+                    .ConnectionString;
+
+            string secondNormalised =
+                new SqlConnectionStringBuilder(
+                    connectionString: secondConnectionString)
+                    .ConnectionString;
+
+            return string.Equals(
+                a: firstNormalised,
+                b: secondNormalised,
+                comparisonType: StringComparison.Ordinal);
+
+            #endregion
+        }
+
+
+        private void ResetDatabaseDependentRuntimeState(
+            bool clearPersistedActiveProject)
+        {
+            #region Release Active Project Lock
+
+            ReleaseActiveProjectLockConnection();
+
+            #endregion
+
+
+            #region Clear Process State
+
+            _activeProjectId =
+                null;
+
+            _activeProjectName =
+                string.Empty;
+
+            txtActiveProject.Text =
+                "No active project";
+
+            _projectItems.Clear();
+
+            ResetReferenceImportState(
+                statusMessage: "No CSV selected.");
+
+            ResetGeotechImportState(
+                statusMessage: "No CSV selected.");
+
+            ResetPrismPairImportState(
+                statusMessage: "No workbook selected.");
+
+            ResetPrismArrayConfigurationState();
+
+            #endregion
+
+
+            #region Clear Persisted Active Project
+
+            if (clearPersistedActiveProject)
+            {
+                ClearActiveProjectFromRegistry();
+            }
+
+            #endregion
+        }
+
+
+        private async void btnTestDbConnection_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Validate Connection String
+
+            string connectionString =
+                txtDbConnectionString.Text?.Trim()
+                ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                txtDbConnectionStatus.Text =
+                    "Enter a database connection string.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Prepare Connection Test
+
+            btnTestDbConnection.IsEnabled =
+                false;
+
+            txtDbConnectionStatus.Text =
+                "Testing database connection...";
+
+            #endregion
+
+
+            try
+            {
+                #region Test SQL Database Connection
+
+                await using SqlConnection sqlConnection =
+                    new(
+                        connectionString: connectionString);
+
+                await sqlConnection.OpenAsync();
+
+                #endregion
+
+
+                #region Handle Connection Change
+
+                bool connectionChanged =
+                    !string.IsNullOrWhiteSpace(_validatedDatabaseConnectionString) &&
+                    !ConnectionStringsEquivalent(
+                        firstConnectionString: connectionString,
+                        secondConnectionString: _validatedDatabaseConnectionString);
+
+                if (connectionChanged)
+                {
+                    ResetDatabaseDependentRuntimeState(
+                        clearPersistedActiveProject: true);
+                }
+
+                _validatedDatabaseConnectionString =
+                    connectionString;
+
+                SaveDatabaseConnectionString(
+                    connectionString: connectionString);
+
+                #endregion
+
+
+                #region Report Success
+
+                txtDbConnectionStatus.Text =
+                    $"Connection successful. " +
+                    $"Server: {sqlConnection.DataSource}; " +
+                    $"Database: {sqlConnection.Database}";
+
+                #endregion
+            }
+            catch (SqlException ex)
+            {
+                txtDbConnectionStatus.Text =
+                    $"SQL connection failed: {ex.Message}";
+            }
+            catch (ArgumentException ex)
+            {
+                txtDbConnectionStatus.Text =
+                    $"Invalid connection: {ex.Message}";
+            }
+            catch (InvalidOperationException ex)
+            {
+                txtDbConnectionStatus.Text =
+                    ex.Message;
+            }
+            catch (Exception ex)
+            {
+                txtDbConnectionStatus.Text =
+                    $"Connection test failed: {ex.Message}";
+            }
+            finally
+            {
+                btnTestDbConnection.IsEnabled =
+                    true;
+            }
+        }
+
+        #endregion
+
+
+        #region Import Target Project Validation
+
+        private static async Task ValidateImportTargetProjectAsync(
+            int projectId,
+            string expectedProjectName,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Read Target Project
+
+            const string projectSql = """
+                SELECT
+                    [ProjectName]
+                FROM [dbo].[Project] WITH (UPDLOCK, HOLDLOCK)
+                WHERE
+                    [Project_ID] = @Project_ID
+                    AND [IsDeleted] = 0;
+                """;
+
+            await using SqlCommand projectCommand =
+                new(
+                    cmdText: projectSql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            projectCommand.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    projectId;
+
+            object? projectNameValue =
+                await projectCommand.ExecuteScalarAsync();
+
+            if (projectNameValue is null ||
+                projectNameValue == DBNull.Value)
+            {
+                throw new InvalidOperationException(
+                    "Target project unavailable.");
+            }
+
+            string databaseProjectName =
+                Convert.ToString(
+                    value: projectNameValue,
+                    provider: System.Globalization.CultureInfo.InvariantCulture)
+                ?? throw new InvalidOperationException(
+                    "Target project name unavailable.");
+
+            #endregion
+
+
+            #region Verify Project Name
+
+            if (!string.Equals(
+                a: databaseProjectName,
+                b: expectedProjectName,
+                comparisonType: StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Target project changed. Reselect the import source.");
+            }
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Clear Selected Database Table
+
+        private async void btnClearTables_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Validate Table Selection
+
+            if (cmbClearTables.SelectedItem
+                is not ComboBoxItem selectedItem)
+            {
+                txtDbConnectionStatus.Text =
+                    "Select a table.";
+
+                return;
+            }
+
+            string selectedTable =
+                selectedItem.Content?.ToString()?.Trim()
+                ?? string.Empty;
+
+            if (cmbClearTables.SelectedIndex == 0 ||
+                string.IsNullOrWhiteSpace(selectedTable))
+            {
+                txtDbConnectionStatus.Text =
+                    "Select a table.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Confirm Clear Operation
+
+            string confirmationMessage =
+                $"Clear table '{selectedTable}'?\n\nThis cannot be undone.";
+
+            MessageBoxResult confirmation =
+                MessageBox.Show(
+                    owner: this,
+                    messageBoxText: confirmationMessage,
+                    caption: "Confirm Clear Table",
+                    button: MessageBoxButton.YesNo,
+                    icon: MessageBoxImage.Warning,
+                    defaultResult: MessageBoxResult.No);
+
+            if (confirmation != MessageBoxResult.Yes)
+            {
+                txtDbConnectionStatus.Text =
+                    "Clear cancelled.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Prepare User Interface
+
+            btnClearTables.IsEnabled =
+                false;
+
+            cmbClearTables.IsEnabled =
+                false;
+
+            txtDbConnectionStatus.Text =
+                $"Clearing '{selectedTable}'...";
+
+            #endregion
+
+
+            try
+            {
+                #region Clear Selected Table
+
+                await ClearDatabaseTableAsync(
+                    tableName: selectedTable);
+
+                #endregion
+
+
+                #region Reset Application State
+
+                if (selectedTable == "Project")
+                {
+                    ReleaseActiveProjectLockConnection();
+
+                    _activeProjectId =
+                        null;
+
+                    _activeProjectName =
+                        string.Empty;
+
+                    txtActiveProject.Text =
+                        "No active project";
+
+                    ClearActiveProjectFromRegistry();
+
+                    _projectItems.Clear();
+
+                    ResetReferenceImportState(
+                        statusMessage: "No CSV selected.");
+
+                    ResetGeotechImportState(
+                        statusMessage: "No CSV selected.");
+
+                    ResetPrismPairImportState(
+                        statusMessage: "No workbook selected.");
+
+                    ResetPrismArrayConfigurationState();
+                }
+                else if (selectedTable == "PointName" ||
+                         selectedTable == "CoordinatesReference")
+                {
+                    ResetReferenceImportState(
+                        statusMessage: "No CSV selected.");
+
+                    ResetGeotechImportState(
+                        statusMessage: "No CSV selected.");
+
+                    ResetPrismPairImportState(
+                        statusMessage: "No workbook selected.");
+
+                    ResetPrismArrayConfigurationState();
+                }
+                else if (selectedTable == "Track" ||
+                         selectedTable == "PrismPairs")
+                {
+                    ResetPrismPairImportState(
+                        statusMessage: "No workbook selected.");
+                }
+
+                #endregion
+
+
+                #region Report Success
+
+
+                txtDbConnectionStatus.Text =
+    $"'{selectedTable}' cleared.";
+
+                cmbClearTables.SelectedIndex =
+                    0;
+
+                #endregion
+            }
+            catch (SqlException ex)
+                when (ex.Number == 547)
+            {
+                #region Report Foreign Key Failure
+
+                txtDbConnectionStatus.Text =
+                    $"'{selectedTable}': Related records exist.";
+
+                #endregion
+            }
+            catch (SqlException ex)
+            {
+                #region Report SQL Failure
+
+                txtDbConnectionStatus.Text =
+                    $"Clear failed: {ex.Message}";
+
+                #endregion
+            }
+            catch (Exception ex)
+            {
+                #region Report Clear Failure
+
+                txtDbConnectionStatus.Text =
+                    $"Clear failed: {ex.Message}";
+
+                #endregion
+            }
+            finally
+            {
+                #region Restore User Interface
+
+                btnClearTables.IsEnabled =
+                    true;
+
+                cmbClearTables.IsEnabled =
+                    true;
+
+                #endregion
+            }
+        }
+
+
+        private async Task ClearDatabaseTableAsync(
+            string tableName)
+        {
+
+
+            #region Validate Table Name
+
+            string clearSql =
+                tableName switch
+                {
+                    "CoordinatesReference" =>
+                        "DELETE FROM [dbo].[CoordinatesReference];",
+
+                    "PrismPairs" =>
+                        """
+    SET XACT_ABORT ON;
+
+    BEGIN TRY
+
+        BEGIN TRANSACTION;
+
+        DELETE FROM [dbo].[PrismPairs];
+        DELETE FROM [dbo].[Track];
+
+        COMMIT TRANSACTION;
+
+    END TRY
+
+    BEGIN CATCH
+
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+
+        THROW;
+
+    END CATCH;
+    """,
+
+                    _ =>
+                        throw new InvalidOperationException(
+                            "Invalid table selection.")
+                };
+
+            #endregion
+
+
+            #region Resolve Database Connection String
+
+            string databaseConnectionString =
+                GetTrackGeometryConnectionString();
+
+            #endregion
+
+
+            #region Execute Clear Operation
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        databaseConnectionString);
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand clearCommand =
+                new(
+                    cmdText: clearSql,
+                    connection: databaseConnection);
+
+            await clearCommand.ExecuteNonQueryAsync();
+
+            #endregion
+        }
+
+        #endregion
+
+
+
+        #region Database Creation
+
+        private async void btnCreateDb_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Validate Connection String
+
+            string connectionString;
+
+            try
+            {
+                connectionString =
+                    GetValidatedDatabaseConnectionString();
+            }
+            catch (InvalidOperationException ex)
+            {
+                txtDbConnectionStatus.Text =
+                    ex.Message;
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Prepare User Interface
+
+            btnCreateDb.IsEnabled =
+                false;
+
+            btnTestDbConnection.IsEnabled =
+                false;
+
+            txtDbConnectionStatus.Text =
+                $"Checking database '{TrackGeometryDatabaseName}'...";
+
+            #endregion
+
+
+            try
+            {
+                #region Check Whether Database Exists
+
+                bool databaseExists =
+                    await DatabaseExistsAsync(
+                        connectionString: connectionString);
+
+                #endregion
+
+
+                #region Confirm Existing Database Recreation
+
+                bool recreateExistingDatabase =
+                    false;
+
+                if (databaseExists)
+                {
+                    #region First Recreation Warning
+
+                    MessageBoxResult confirmation =
+                        MessageBox.Show(
+                            messageBoxText:
+                                $"Database '{TrackGeometryDatabaseName}' already exists.\n\n" +
+                                "Recreating the database will permanently delete ALL " +
+                                "existing data and completely recreate the database and " +
+                                "all table structures.\n\n" +
+                                "THIS OPERATION CANNOT BE UNDONE.\n\n" +
+                                "Do you want to permanently delete and recreate the database?",
+                            caption: "Recreate Database Warning",
+                            button: MessageBoxButton.YesNo,
+                            icon: MessageBoxImage.Warning,
+                            defaultResult: MessageBoxResult.No);
+
+                    if (confirmation != MessageBoxResult.Yes)
+                    {
+                        txtDbConnectionStatus.Text =
+                            $"Database '{TrackGeometryDatabaseName}' was not changed.";
+
+                        return;
+                    }
+
+                    #endregion
+
+
+                    #region Final Recreation Warning
+
+                    ConfirmDatabaseRecreationWindow finalConfirmation =
+                        new()
+                        {
+                            Owner = this
+                        };
+
+                    bool? proceedWithRecreation =
+                        finalConfirmation.ShowDialog();
+
+                    if (proceedWithRecreation != true)
+                    {
+                        txtDbConnectionStatus.Text =
+                            $"Database '{TrackGeometryDatabaseName}' recreation was aborted.";
+
+                        return;
+                    }
+
+                    #endregion
+
+
+                    #region Set Recreation Mode
+
+                    recreateExistingDatabase =
+                        true;
+
+                    #endregion
+                }
+
+                #endregion
+
+
+                #region Create Or Recreate Database
+
+                txtDbConnectionStatus.Text =
+                    recreateExistingDatabase
+                        ? $"Recreating database '{TrackGeometryDatabaseName}'..."
+                        : $"Creating database '{TrackGeometryDatabaseName}'...";
+
+                if (recreateExistingDatabase)
+                {
+                    ResetDatabaseDependentRuntimeState(
+                        clearPersistedActiveProject: true);
+                }
+
+                await CreateDatabaseAndTablesAsync(
+                    connectionString: connectionString,
+                    recreateExistingDatabase: recreateExistingDatabase);
+
+                #endregion
+
+
+                #region Report Successful Completion
+
+                txtDbConnectionStatus.Text =
+                    recreateExistingDatabase
+                        ? $"Database '{TrackGeometryDatabaseName}' was recreated successfully. " +
+                          $"All tables are empty."
+                        : $"Database '{TrackGeometryDatabaseName}' and all required tables " +
+                          $"were created successfully.";
+
+                #endregion
+            }
+
+            #region Handle Database Errors
+
+            catch (SqlException ex)
+            {
+                txtDbConnectionStatus.Text =
+                    $"Database operation failed: {ex.Message}";
+            }
+            catch (ArgumentException ex)
+            {
+                txtDbConnectionStatus.Text =
+                    $"Invalid database configuration: {ex.Message}";
+            }
+            catch (InvalidOperationException ex)
+            {
+                txtDbConnectionStatus.Text =
+                    $"Database operation failed: {ex.Message}";
+            }
+            catch (Exception ex)
+            {
+                txtDbConnectionStatus.Text =
+                    $"Database operation failed: {ex.Message}";
+            }
+
+            #endregion
+
+
+            #region Restore User Interface
+
+            finally
+            {
+                btnCreateDb.IsEnabled =
+                    true;
+
+                btnTestDbConnection.IsEnabled =
+                    true;
+            }
+
+            #endregion
+        }
+
+
+        private static async Task<bool> DatabaseExistsAsync(
+            string connectionString)
+        {
+            #region Validate Connection String
+
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                throw new ArgumentException(
+                    message: "Database connection string cannot be empty.",
+                    paramName: nameof(connectionString));
+            }
+
+            #endregion
+
+
+            #region Build Master Database Connection String
+
+            string masterConnectionString =
+                BuildDatabaseConnectionString(
+                    baseConnectionString: connectionString,
+                    databaseName: "master",
+                    pooling: null);
+
+            #endregion
+
+
+            #region Check Database Existence
+
+            const string databaseExistsSql = """
+                SELECT
+                    CASE
+                        WHEN DB_ID(N'DBTrackGeometry') IS NULL THEN 0
+                        ELSE 1
+                    END;
+                """;
+
+            await using SqlConnection masterConnection =
+                new(
+                    connectionString: masterConnectionString);
+
+            await masterConnection.OpenAsync();
+
+            await using SqlCommand databaseExistsCommand =
+                new(
+                    cmdText: databaseExistsSql,
+                    connection: masterConnection);
+
+            object databaseExistsResult =
+                await databaseExistsCommand.ExecuteScalarAsync()
+                ?? throw new InvalidOperationException(
+                    "SQL Server returned no result when checking database existence.");
+
+            return Convert.ToInt32(
+                value: databaseExistsResult) == 1;
+
+            #endregion
+        }
+
+
+        private static async Task CreateDatabaseAndTablesAsync(
+            string connectionString,
+            bool recreateExistingDatabase)
+        {
+            #region Validate Connection String
+
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                throw new ArgumentException(
+                    message: "Database connection string cannot be empty.",
+                    paramName: nameof(connectionString));
+            }
+
+            #endregion
+
+
+            #region Build Master Database Connection String
+
+            string masterConnectionString =
+                BuildDatabaseConnectionString(
+                    baseConnectionString: connectionString,
+                    databaseName: "master",
+                    pooling: null);
+
+            #endregion
+
+
+            #region Create Or Recreate Database
+
+            await using (SqlConnection masterConnection =
+                new(
+                    connectionString: masterConnectionString))
+            {
+                await masterConnection.OpenAsync();
+
+                string databaseCreationSql;
+
+                if (recreateExistingDatabase)
+                {
+                    databaseCreationSql = """
+                        IF DB_ID(N'DBTrackGeometry') IS NOT NULL
+                        BEGIN
+                            ALTER DATABASE [DBTrackGeometry]
+                            SET SINGLE_USER
+                            WITH ROLLBACK IMMEDIATE;
+
+                            DROP DATABASE [DBTrackGeometry];
+                        END;
+
+                        CREATE DATABASE [DBTrackGeometry];
+                        """;
+                }
+                else
+                {
+                    databaseCreationSql = """
+                        IF DB_ID(N'DBTrackGeometry') IS NULL
+                        BEGIN
+                            CREATE DATABASE [DBTrackGeometry];
+                        END;
+                        """;
+                }
+
+                await using SqlCommand createDatabaseCommand =
+                    new(
+                        cmdText: databaseCreationSql,
+                        connection: masterConnection);
+
+                await createDatabaseCommand.ExecuteNonQueryAsync();
+            }
+
+            #endregion
+
+
+            #region Build Track Geometry Database Connection String
+
+            string databaseConnectionString =
+                BuildDatabaseConnectionString(
+                    baseConnectionString: connectionString,
+                    databaseName: TrackGeometryDatabaseName,
+                    pooling: null);
+
+            #endregion
+
+
+            #region Define Database Table Structure
+
+            const string createTablesSql = """
+                SET XACT_ABORT ON;
+
+                BEGIN TRY
+
+                    BEGIN TRANSACTION;
+
+
+                    /* =============================================================
+                       PROJECT
+                       Soft deletion:
+                           IsDeleted = 0 -> Active
+                           IsDeleted = 1 -> Deleted / retired
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.Project', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[Project]
+                        (
+                            [Project_ID] int IDENTITY(1,1) NOT NULL,
+                            [ProjectName] nvarchar(200) NOT NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_Project_IsDeleted]
+                                DEFAULT (0),
+
+                            CONSTRAINT [PK_Project]
+                                PRIMARY KEY CLUSTERED ([Project_ID]),
+
+                            CONSTRAINT [UQ_Project_ProjectName]
+                                UNIQUE ([ProjectName])
+                        );
+
+                    END;
+
+
+                    /* =============================================================
+                       POINT NAME
+                       ReplacementName must be populated by the application.
+                       If no replacement name exists:
+                           ReplacementName = PointName
+
+                       Soft deletion:
+                           IsDeleted = 0 -> Active
+                           IsDeleted = 1 -> Deleted / retired
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.PointName', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[PointName]
+                        (
+                            [PointName_ID] int IDENTITY(1,1) NOT NULL,
+                            [PointName] nvarchar(50) NOT NULL,
+                            [ReplacementName] nvarchar(50) NOT NULL,
+                            [Project_ID] int NOT NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_PointName_IsDeleted]
+                                DEFAULT (0),
+
+                            CONSTRAINT [PK_PointName]
+                                PRIMARY KEY CLUSTERED ([PointName_ID]),
+
+                            CONSTRAINT [UQ_PointName_Project_PointName]
+                                UNIQUE ([Project_ID], [PointName]),
+
+                            CONSTRAINT [FK_PointName_Project]
+                                FOREIGN KEY ([Project_ID])
+                                REFERENCES [dbo].[Project] ([Project_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                    END;
+
+
+                    /* =============================================================
+                       GEOTECHNICAL SENSORS
+                       SensorName / ReplacementName identify the sensor within
+                       the active project. SensorType is a user descriptor such
+                       as Tilt, Vibration, etc.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.GeotecSensors', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[GeotecSensors]
+                        (
+                            [SensorID] int IDENTITY(1,1) NOT NULL,
+                            [SensorName] nvarchar(50) NOT NULL,
+                            [ReplacementName] nvarchar(50) NOT NULL,
+                            [SensorType] nvarchar(50) NOT NULL,
+                            [Project_ID] int NOT NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_GeotecSensors_IsDeleted]
+                                DEFAULT (0),
+
+                            CONSTRAINT [PK_GeotecSensors]
+                                PRIMARY KEY CLUSTERED ([SensorID]),
+
+                            CONSTRAINT [UQ_GeotecSensors_Project_SensorName]
+                                UNIQUE ([Project_ID], [SensorName]),
+
+                            CONSTRAINT [FK_GeotecSensors_Project]
+                                FOREIGN KEY ([Project_ID])
+                                REFERENCES [dbo].[Project] ([Project_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_GeotecSensors_Project_SensorType]
+                            ON [dbo].[GeotecSensors]
+                            ([Project_ID], [SensorType]);
+
+                    END;
+
+
+                    /* =============================================================
+                       COORDINATES REFERENCE
+                       One shared reference-coordinate table for both monitoring
+                       points and geotechnical sensors. Exactly one owner key must
+                       be populated on each row:
+
+                           PointName_ID != NULL, SensorID = NULL
+                       OR
+                           PointName_ID = NULL, SensorID != NULL
+
+                       Coordinates are stored to six decimal places.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.CoordinatesReference', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[CoordinatesReference]
+                        (
+                            [Coordinate_ID] int IDENTITY(1,1) NOT NULL,
+                            [PointName_ID] int NULL,
+                            [SensorID] int NULL,
+                            [Eref] decimal(18,6) NOT NULL,
+                            [Nref] decimal(18,6) NOT NULL,
+                            [Href] decimal(18,6) NOT NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_CoordinatesReference_IsDeleted]
+                                DEFAULT (0),
+
+                            CONSTRAINT [PK_CoordinatesReference]
+                                PRIMARY KEY CLUSTERED ([Coordinate_ID]),
+
+                            CONSTRAINT [CK_CoordinatesReference_OneOwner]
+                                CHECK
+                                (
+                                    ([PointName_ID] IS NOT NULL AND [SensorID] IS NULL)
+                                    OR
+                                    ([PointName_ID] IS NULL AND [SensorID] IS NOT NULL)
+                                ),
+
+                            CONSTRAINT [FK_CoordinatesReference_PointName]
+                                FOREIGN KEY ([PointName_ID])
+                                REFERENCES [dbo].[PointName] ([PointName_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION,
+
+                            CONSTRAINT [FK_CoordinatesReference_GeotecSensors]
+                                FOREIGN KEY ([SensorID])
+                                REFERENCES [dbo].[GeotecSensors] ([SensorID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE UNIQUE INDEX
+                            [UX_CoordinatesReference_Active_PointName]
+                            ON [dbo].[CoordinatesReference] ([PointName_ID])
+                            WHERE
+                                [IsDeleted] = 0
+                                AND [PointName_ID] IS NOT NULL;
+
+                        CREATE UNIQUE INDEX
+                            [UX_CoordinatesReference_Active_SensorID]
+                            ON [dbo].[CoordinatesReference] ([SensorID])
+                            WHERE
+                                [IsDeleted] = 0
+                                AND [SensorID] IS NOT NULL;
+
+                    END;
+
+
+                    /* =============================================================
+                       COORDINATES CURRENT
+                       One current coordinate set per point.
+                       Coordinates stored in metres.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.CoordinatesCurrent', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[CoordinatesCurrent]
+                        (
+                            [PointName_ID] int NOT NULL,
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [E] decimal(18,4) NOT NULL,
+                            [N] decimal(18,4) NOT NULL,
+                            [H] decimal(18,4) NOT NULL,
+
+                            [IsDeleted] bit NOT NULL
+
+                                CONSTRAINT [DF_CoordinatesCurrent_IsDeleted]
+
+                                DEFAULT (0),
+
+
+                            CONSTRAINT [PK_CoordinatesCurrent]
+                                PRIMARY KEY CLUSTERED ([PointName_ID]),
+
+                            CONSTRAINT [FK_CoordinatesCurrent_PointName]
+                                FOREIGN KEY ([PointName_ID])
+                                REFERENCES [dbo].[PointName] ([PointName_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_CoordinatesCurrent_UTCtime]
+                            ON [dbo].[CoordinatesCurrent] ([UTCtime]);
+
+                    END;
+
+
+                    /* =============================================================
+                       TRACK
+                       Each Track belongs to one Project.
+                       TrackName is unique within that Project.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.Track', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[Track]
+                        (
+                            [Track_ID] int IDENTITY(1,1) NOT NULL,
+                            [Project_ID] int NOT NULL,
+                            [TrackName] nvarchar(200) NOT NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_Track_IsDeleted]
+                                DEFAULT (0),
+
+                            CONSTRAINT [PK_Track]
+                                PRIMARY KEY CLUSTERED ([Track_ID]),
+
+                            CONSTRAINT [UQ_Track_Project_TrackName]
+                                UNIQUE ([Project_ID], [TrackName]),
+
+                            CONSTRAINT [FK_Track_Project]
+                                FOREIGN KEY ([Project_ID])
+                                REFERENCES [dbo].[Project] ([Project_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                    END;
+
+
+                    /* =============================================================
+                       PRISM PAIRS
+                       Each pair belongs to one Track and has an explicit order.
+                       Left and Right points must be different.
+                       Same-project validation is performed by the application.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.PrismPairs', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[PrismPairs]
+                        (
+                            [PrismPair_ID] int IDENTITY(1,1) NOT NULL,
+                            [Track_ID] int NOT NULL,
+                            [PairOrder] int NOT NULL,
+                            [Left_ID] int NOT NULL,
+                            [Right_ID] int NOT NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_PrismPairs_IsDeleted]
+                                DEFAULT (0),
+
+                            CONSTRAINT [PK_PrismPairs]
+                                PRIMARY KEY CLUSTERED ([PrismPair_ID]),
+
+                            CONSTRAINT [UQ_PrismPairs_Left_Right]
+                                UNIQUE ([Left_ID], [Right_ID]),
+
+                            CONSTRAINT [UQ_PrismPairs_Track_PairOrder]
+                                UNIQUE ([Track_ID], [PairOrder]),
+
+                            CONSTRAINT [CK_PrismPairs_DifferentPoints]
+                                CHECK ([Left_ID] <> [Right_ID]),
+
+                            CONSTRAINT [CK_PrismPairs_PairOrder]
+                                CHECK ([PairOrder] > 0),
+
+                            CONSTRAINT [FK_PrismPairs_Track]
+                                FOREIGN KEY ([Track_ID])
+                                REFERENCES [dbo].[Track] ([Track_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION,
+
+                            CONSTRAINT [FK_PrismPairs_LeftPoint]
+                                FOREIGN KEY ([Left_ID])
+                                REFERENCES [dbo].[PointName] ([PointName_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION,
+
+                            CONSTRAINT [FK_PrismPairs_RightPoint]
+                                FOREIGN KEY ([Right_ID])
+                                REFERENCES [dbo].[PointName] ([PointName_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_PrismPairs_Track_ID]
+                            ON [dbo].[PrismPairs] ([Track_ID]);
+
+                    END;
+
+
+                    /* =============================================================
+                       PRISM ARRAY
+                       Common definition for Structural Array and Tunnel Convergence.
+
+                       ArrayType:
+                           1 -> Structural Array
+                           2 -> Tunnel Convergence
+
+                       Soft deletion:
+                           IsDeleted = 0 -> Active
+                           IsDeleted = 1 -> Deleted / retired
+
+                       Active array names are unique within a project. Deleted
+                       array names may be reused.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.PrismArray', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[PrismArray]
+                        (
+                            [Array_ID] int IDENTITY(1,1) NOT NULL,
+                            [Project_ID] int NOT NULL,
+                            [ArrayName] nvarchar(200) NOT NULL,
+                            [ArrayType] tinyint NOT NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_PrismArray_IsDeleted]
+                                DEFAULT (0),
+
+                            CONSTRAINT [PK_PrismArray]
+                                PRIMARY KEY CLUSTERED ([Array_ID]),
+
+                            CONSTRAINT [CK_PrismArray_ArrayType]
+                                CHECK ([ArrayType] IN (1,2)),
+
+                            CONSTRAINT [FK_PrismArray_Project]
+                                FOREIGN KEY ([Project_ID])
+                                REFERENCES [dbo].[Project] ([Project_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_PrismArray_Project_ID]
+                            ON [dbo].[PrismArray] ([Project_ID]);
+
+                        CREATE UNIQUE INDEX
+                            [UX_PrismArray_Active_Project_ArrayName]
+                            ON [dbo].[PrismArray]
+                            (
+                                [Project_ID],
+                                [ArrayName]
+                            )
+                            WHERE [IsDeleted] = 0;
+
+                    END;
+
+
+                    /* =============================================================
+                       PRISM ARRAY POINT
+                       Common A-E point membership for every array type.
+
+                       A point may belong to one ACTIVE array only.
+                       Each array may contain one point for each role A-E.
+
+                       Soft-deleted membership rows are retained so historical
+                       array data remain referentially intact.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.PrismArrayPoint', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[PrismArrayPoint]
+                        (
+                            [Array_ID] int NOT NULL,
+                            [PointRole] char(1) NOT NULL,
+                            [PointName_ID] int NOT NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_PrismArrayPoint_IsDeleted]
+                                DEFAULT (0),
+
+                            CONSTRAINT [PK_PrismArrayPoint]
+                                PRIMARY KEY CLUSTERED
+                                ([Array_ID], [PointRole]),
+
+                            CONSTRAINT [UQ_PrismArrayPoint_Array_Point]
+                                UNIQUE ([Array_ID], [PointName_ID]),
+
+                            CONSTRAINT [CK_PrismArrayPoint_PointRole]
+                                CHECK ([PointRole] IN ('A','B','C','D','E')),
+
+                            CONSTRAINT [FK_PrismArrayPoint_Array]
+                                FOREIGN KEY ([Array_ID])
+                                REFERENCES [dbo].[PrismArray] ([Array_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION,
+
+                            CONSTRAINT [FK_PrismArrayPoint_PointName]
+                                FOREIGN KEY ([PointName_ID])
+                                REFERENCES [dbo].[PointName] ([PointName_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE UNIQUE INDEX
+                            [UX_PrismArrayPoint_Active_PointName_ID]
+                            ON [dbo].[PrismArrayPoint]
+                            (
+                                [PointName_ID]
+                            )
+                            WHERE [IsDeleted] = 0;
+
+                    END;
+
+
+                    /* =============================================================
+                       dH EPOCHS
+                       Individual epoch values stored in metres.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.DhEpochs', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[DhEpochs]
+                        (
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [PointName_ID] int NOT NULL,
+                            [dH] decimal(18,4) NOT NULL,
+
+                            [IsDeleted] bit NOT NULL
+
+                                CONSTRAINT [DF_DhEpochs_IsDeleted]
+
+                                DEFAULT (0),
+
+
+                            CONSTRAINT [PK_DhEpochs]
+                                PRIMARY KEY CLUSTERED
+                                ([PointName_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_DhEpochs_PointName]
+                                FOREIGN KEY ([PointName_ID])
+                                REFERENCES [dbo].[PointName] ([PointName_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_DhEpochs_UTCtime]
+                            ON [dbo].[DhEpochs] ([UTCtime]);
+
+                    END;
+
+
+                    /* =============================================================
+                       SLEW EPOCHS
+                       Individual epoch values stored in metres.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.SlewEpochs', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[SlewEpochs]
+                        (
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [PointName_ID] int NOT NULL,
+                            [Slew] decimal(18,4) NOT NULL,
+
+                            [IsDeleted] bit NOT NULL
+
+                                CONSTRAINT [DF_SlewEpochs_IsDeleted]
+
+                                DEFAULT (0),
+
+
+                            CONSTRAINT [PK_SlewEpochs]
+                                PRIMARY KEY CLUSTERED
+                                ([PointName_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_SlewEpochs_PointName]
+                                FOREIGN KEY ([PointName_ID])
+                                REFERENCES [dbo].[PointName] ([PointName_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_SlewEpochs_UTCtime]
+                            ON [dbo].[SlewEpochs] ([UTCtime]);
+
+                    END;
+
+
+                    /* =============================================================
+                       TOP EPOCHS
+                       Individual epoch values stored in metres.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.TopEpochs', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[TopEpochs]
+                        (
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [PointName_ID] int NOT NULL,
+                            [Top] decimal(18,4) NOT NULL,
+
+                            [IsDeleted] bit NOT NULL
+
+                                CONSTRAINT [DF_TopEpochs_IsDeleted]
+
+                                DEFAULT (0),
+
+
+                            CONSTRAINT [PK_TopEpochs]
+                                PRIMARY KEY CLUSTERED
+                                ([PointName_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_TopEpochs_PointName]
+                                FOREIGN KEY ([PointName_ID])
+                                REFERENCES [dbo].[PointName] ([PointName_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_TopEpochs_UTCtime]
+                            ON [dbo].[TopEpochs] ([UTCtime]);
+
+                    END;
+
+
+                    /* =============================================================
+                       CANT EPOCHS
+                       Individual epoch values stored in metres.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.CantEpochs', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[CantEpochs]
+                        (
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [PrismPair_ID] int NOT NULL,
+                            [Cant] decimal(18,4) NOT NULL,
+
+                            [IsDeleted] bit NOT NULL
+
+                                CONSTRAINT [DF_CantEpochs_IsDeleted]
+
+                                DEFAULT (0),
+
+
+                            CONSTRAINT [PK_CantEpochs]
+                                PRIMARY KEY CLUSTERED
+                                ([PrismPair_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_CantEpochs_PrismPairs]
+                                FOREIGN KEY ([PrismPair_ID])
+                                REFERENCES [dbo].[PrismPairs] ([PrismPair_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_CantEpochs_UTCtime]
+                            ON [dbo].[CantEpochs] ([UTCtime]);
+
+                    END;
+
+
+                    /* =============================================================
+                       SHORT TWIST EPOCHS
+                       SIGNED twist displacement stored in millimetres over 3 m.
+                       Ratio is derived by the reporting software.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.ShortTwistEpochs', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[ShortTwistEpochs]
+                        (
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [PrismPair_ID] int NOT NULL,
+                            [ShortTwist] decimal(18,4) NULL,
+
+                            [IsDeleted] bit NOT NULL
+
+                                CONSTRAINT [DF_ShortTwistEpochs_IsDeleted]
+
+                                DEFAULT (0),
+
+
+                            CONSTRAINT [PK_ShortTwistEpochs]
+                                PRIMARY KEY CLUSTERED
+                                ([PrismPair_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_ShortTwistEpochs_PrismPairs]
+                                FOREIGN KEY ([PrismPair_ID])
+                                REFERENCES [dbo].[PrismPairs] ([PrismPair_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_ShortTwistEpochs_UTCtime]
+                            ON [dbo].[ShortTwistEpochs] ([UTCtime]);
+
+                    END;
+
+
+                    /* =============================================================
+                       LONG TWIST EPOCHS
+                       SIGNED twist displacement stored in millimetres over 15 m.
+                       Ratio is derived by the reporting software.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.LongTwistEpochs', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[LongTwistEpochs]
+                        (
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [PrismPair_ID] int NOT NULL,
+                            [LongTwist] decimal(18,4) NULL,
+
+                            [IsDeleted] bit NOT NULL
+
+                                CONSTRAINT [DF_LongTwistEpochs_IsDeleted]
+
+                                DEFAULT (0),
+
+
+                            CONSTRAINT [PK_LongTwistEpochs]
+                                PRIMARY KEY CLUSTERED
+                                ([PrismPair_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_LongTwistEpochs_PrismPairs]
+                                FOREIGN KEY ([PrismPair_ID])
+                                REFERENCES [dbo].[PrismPairs] ([PrismPair_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_LongTwistEpochs_UTCtime]
+                            ON [dbo].[LongTwistEpochs] ([UTCtime]);
+
+                    END;
+
+
+                    /* =============================================================
+                       COORDINATES DAILY
+                       One daily mean coordinate set per point.
+                       Coordinates stored in metres.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.CoordinatesDaily', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[CoordinatesDaily]
+                        (
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [PointName_ID] int NOT NULL,
+                            [E] decimal(18,4) NOT NULL,
+                            [N] decimal(18,4) NOT NULL,
+                            [H] decimal(18,4) NOT NULL,
+
+                            [IsDeleted] bit NOT NULL
+
+                                CONSTRAINT [DF_CoordinatesDaily_IsDeleted]
+
+                                DEFAULT (0),
+
+
+                            CONSTRAINT [PK_CoordinatesDaily]
+                                PRIMARY KEY CLUSTERED
+                                ([PointName_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_CoordinatesDaily_PointName]
+                                FOREIGN KEY ([PointName_ID])
+                                REFERENCES [dbo].[PointName] ([PointName_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_CoordinatesDaily_UTCtime]
+                            ON [dbo].[CoordinatesDaily] ([UTCtime]);
+
+                    END;
+
+
+                    /* =============================================================
+                       dH DAILY
+                       Daily mean derived from DhEpochs.
+                       Value stored in metres.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.DhDaily', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[DhDaily]
+                        (
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [PointName_ID] int NOT NULL,
+                            [dH] decimal(18,4) NOT NULL,
+
+                            [IsDeleted] bit NOT NULL
+
+                                CONSTRAINT [DF_DhDaily_IsDeleted]
+
+                                DEFAULT (0),
+
+
+                            CONSTRAINT [PK_DhDaily]
+                                PRIMARY KEY CLUSTERED
+                                ([PointName_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_DhDaily_PointName]
+                                FOREIGN KEY ([PointName_ID])
+                                REFERENCES [dbo].[PointName] ([PointName_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_DhDaily_UTCtime]
+                            ON [dbo].[DhDaily] ([UTCtime]);
+
+                    END;
+
+
+                    /* =============================================================
+                       SLEW DAILY
+                       Daily mean derived from SlewEpochs.
+                       Value stored in metres.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.SlewDaily', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[SlewDaily]
+                        (
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [PointName_ID] int NOT NULL,
+                            [Slew] decimal(18,4) NOT NULL,
+
+                            [IsDeleted] bit NOT NULL
+
+                                CONSTRAINT [DF_SlewDaily_IsDeleted]
+
+                                DEFAULT (0),
+
+
+                            CONSTRAINT [PK_SlewDaily]
+                                PRIMARY KEY CLUSTERED
+                                ([PointName_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_SlewDaily_PointName]
+                                FOREIGN KEY ([PointName_ID])
+                                REFERENCES [dbo].[PointName] ([PointName_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_SlewDaily_UTCtime]
+                            ON [dbo].[SlewDaily] ([UTCtime]);
+
+                    END;
+
+
+                    /* =============================================================
+                       TOP DAILY
+                       Daily mean derived from TopEpochs.
+                       Value stored in metres.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.TopDaily', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[TopDaily]
+                        (
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [PointName_ID] int NOT NULL,
+                            [Top] decimal(18,4) NOT NULL,
+
+                            [IsDeleted] bit NOT NULL
+
+                                CONSTRAINT [DF_TopDaily_IsDeleted]
+
+                                DEFAULT (0),
+
+
+                            CONSTRAINT [PK_TopDaily]
+                                PRIMARY KEY CLUSTERED
+                                ([PointName_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_TopDaily_PointName]
+                                FOREIGN KEY ([PointName_ID])
+                                REFERENCES [dbo].[PointName] ([PointName_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_TopDaily_UTCtime]
+                            ON [dbo].[TopDaily] ([UTCtime]);
+
+                    END;
+
+
+                    /* =============================================================
+                       CANT DAILY
+                       Daily mean derived from CantEpochs.
+                       Value stored in metres.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.CantDaily', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[CantDaily]
+                        (
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [PrismPair_ID] int NOT NULL,
+                            [Cant] decimal(18,4) NOT NULL,
+
+                            [IsDeleted] bit NOT NULL
+
+                                CONSTRAINT [DF_CantDaily_IsDeleted]
+
+                                DEFAULT (0),
+
+
+                            CONSTRAINT [PK_CantDaily]
+                                PRIMARY KEY CLUSTERED
+                                ([PrismPair_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_CantDaily_PrismPairs]
+                                FOREIGN KEY ([PrismPair_ID])
+                                REFERENCES [dbo].[PrismPairs] ([PrismPair_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_CantDaily_UTCtime]
+                            ON [dbo].[CantDaily] ([UTCtime]);
+
+                    END;
+
+
+                    /* =============================================================
+                       SHORT TWIST DAILY
+                       Daily mean of SIGNED ShortTwistEpochs displacement.
+                       Value stored in millimetres over a 3 m base.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.ShortTwistDaily', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[ShortTwistDaily]
+                        (
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [PrismPair_ID] int NOT NULL,
+                            [ShortTwist] decimal(18,4) NULL,
+
+                            [IsDeleted] bit NOT NULL
+
+                                CONSTRAINT [DF_ShortTwistDaily_IsDeleted]
+
+                                DEFAULT (0),
+
+
+                            CONSTRAINT [PK_ShortTwistDaily]
+                                PRIMARY KEY CLUSTERED
+                                ([PrismPair_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_ShortTwistDaily_PrismPairs]
+                                FOREIGN KEY ([PrismPair_ID])
+                                REFERENCES [dbo].[PrismPairs] ([PrismPair_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_ShortTwistDaily_UTCtime]
+                            ON [dbo].[ShortTwistDaily] ([UTCtime]);
+
+                    END;
+
+
+                    /* =============================================================
+                       LONG TWIST DAILY
+                       Daily mean of SIGNED LongTwistEpochs displacement.
+                       Value stored in millimetres over a 15 m base.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.LongTwistDaily', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[LongTwistDaily]
+                        (
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [PrismPair_ID] int NOT NULL,
+                            [LongTwist] decimal(18,4) NULL,
+
+                            [IsDeleted] bit NOT NULL
+
+                                CONSTRAINT [DF_LongTwistDaily_IsDeleted]
+
+                                DEFAULT (0),
+
+
+                            CONSTRAINT [PK_LongTwistDaily]
+                                PRIMARY KEY CLUSTERED
+                                ([PrismPair_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_LongTwistDaily_PrismPairs]
+                                FOREIGN KEY ([PrismPair_ID])
+                                REFERENCES [dbo].[PrismPairs] ([PrismPair_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_LongTwistDaily_UTCtime]
+                            ON [dbo].[LongTwistDaily] ([UTCtime]);
+
+                    END;
+
+
+                    /* =============================================================
+                       STRUCTURAL ARRAY EPOCHS
+                       Point displacement relative to reference coordinates.
+                       UTCtime is UTC date/time rounded to the nearest second.
+                       Values stored in metres.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.StructuralArrayEpochs', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[StructuralArrayEpochs]
+                        (
+                            [Array_ID] int NOT NULL,
+                            [PointName_ID] int NOT NULL,
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [dE] decimal(18,4) NOT NULL,
+                            [dN] decimal(18,4) NOT NULL,
+                            [dH] decimal(18,4) NOT NULL,
+
+                            [IsDeleted] bit NOT NULL
+
+                                CONSTRAINT [DF_StructuralArrayEpochs_IsDeleted]
+
+                                DEFAULT (0),
+
+
+                            CONSTRAINT [PK_StructuralArrayEpochs]
+                                PRIMARY KEY CLUSTERED
+                                ([Array_ID], [PointName_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_StructuralArrayEpochs_ArrayPoint]
+                                FOREIGN KEY ([Array_ID], [PointName_ID])
+                                REFERENCES [dbo].[PrismArrayPoint]
+                                ([Array_ID], [PointName_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_StructuralArrayEpochs_UTCtime]
+                            ON [dbo].[StructuralArrayEpochs] ([UTCtime]);
+
+                    END;
+
+
+                    /* =============================================================
+                       STRUCTURAL ARRAY DAILY
+                       Daily derived point displacement dataset.
+                       UTCtime remains a full UTC date/time to the nearest second.
+                       Values stored in metres.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.StructuralArrayDaily', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[StructuralArrayDaily]
+                        (
+                            [Array_ID] int NOT NULL,
+                            [PointName_ID] int NOT NULL,
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [dE] decimal(18,4) NOT NULL,
+                            [dN] decimal(18,4) NOT NULL,
+                            [dH] decimal(18,4) NOT NULL,
+
+                            [IsDeleted] bit NOT NULL
+
+                                CONSTRAINT [DF_StructuralArrayDaily_IsDeleted]
+
+                                DEFAULT (0),
+
+
+                            CONSTRAINT [PK_StructuralArrayDaily]
+                                PRIMARY KEY CLUSTERED
+                                ([Array_ID], [PointName_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_StructuralArrayDaily_ArrayPoint]
+                                FOREIGN KEY ([Array_ID], [PointName_ID])
+                                REFERENCES [dbo].[PrismArrayPoint]
+                                ([Array_ID], [PointName_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_StructuralArrayDaily_UTCtime]
+                            ON [dbo].[StructuralArrayDaily] ([UTCtime]);
+
+                    END;
+
+
+                    /* =============================================================
+                       TUNNEL CONVERGENCE EPOCHS
+                       Signed change in 3D chord length relative to reference.
+
+                       dChord = current 3D chord length - reference 3D chord length
+
+                       Complete chord set:
+                           AB AC AD AE BC BD BE CD CE DE
+
+                       UTCtime is UTC date/time rounded to the nearest second.
+                       Values stored in metres.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.TunnelConvergenceEpochs', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[TunnelConvergenceEpochs]
+                        (
+                            [Array_ID] int NOT NULL,
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [dAB] decimal(18,4) NOT NULL,
+                            [dAC] decimal(18,4) NOT NULL,
+                            [dAD] decimal(18,4) NOT NULL,
+                            [dAE] decimal(18,4) NOT NULL,
+                            [dBC] decimal(18,4) NOT NULL,
+                            [dBD] decimal(18,4) NOT NULL,
+                            [dBE] decimal(18,4) NOT NULL,
+                            [dCD] decimal(18,4) NOT NULL,
+                            [dCE] decimal(18,4) NOT NULL,
+                            [dDE] decimal(18,4) NOT NULL,
+
+                            [IsDeleted] bit NOT NULL
+
+                                CONSTRAINT [DF_TunnelConvergenceEpochs_IsDeleted]
+
+                                DEFAULT (0),
+
+
+                            CONSTRAINT [PK_TunnelConvergenceEpochs]
+                                PRIMARY KEY CLUSTERED
+                                ([Array_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_TunnelConvergenceEpochs_Array]
+                                FOREIGN KEY ([Array_ID])
+                                REFERENCES [dbo].[PrismArray] ([Array_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_TunnelConvergenceEpochs_UTCtime]
+                            ON [dbo].[TunnelConvergenceEpochs] ([UTCtime]);
+
+                    END;
+
+
+                    /* =============================================================
+                       TUNNEL CONVERGENCE DAILY
+                       Daily derived signed change in 3D chord length.
+                       UTCtime remains a full UTC date/time to the nearest second.
+                       Values stored in metres.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.TunnelConvergenceDaily', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[TunnelConvergenceDaily]
+                        (
+                            [Array_ID] int NOT NULL,
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [dAB] decimal(18,4) NOT NULL,
+                            [dAC] decimal(18,4) NOT NULL,
+                            [dAD] decimal(18,4) NOT NULL,
+                            [dAE] decimal(18,4) NOT NULL,
+                            [dBC] decimal(18,4) NOT NULL,
+                            [dBD] decimal(18,4) NOT NULL,
+                            [dBE] decimal(18,4) NOT NULL,
+                            [dCD] decimal(18,4) NOT NULL,
+                            [dCE] decimal(18,4) NOT NULL,
+                            [dDE] decimal(18,4) NOT NULL,
+
+                            [IsDeleted] bit NOT NULL
+
+                                CONSTRAINT [DF_TunnelConvergenceDaily_IsDeleted]
+
+                                DEFAULT (0),
+
+
+                            CONSTRAINT [PK_TunnelConvergenceDaily]
+                                PRIMARY KEY CLUSTERED
+                                ([Array_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_TunnelConvergenceDaily_Array]
+                                FOREIGN KEY ([Array_ID])
+                                REFERENCES [dbo].[PrismArray] ([Array_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_TunnelConvergenceDaily_UTCtime]
+                            ON [dbo].[TunnelConvergenceDaily] ([UTCtime]);
+
+                    END;
+
+
+                    /* =============================================================
+                       TILT EPOCH
+                       All Tilt values are stored to six decimal places.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.TiltEpoch', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[TiltEpoch]
+                        (
+                            [SensorID] int NOT NULL,
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [TiltA] decimal(18,6) NOT NULL,
+                            [TiltB] decimal(18,6) NOT NULL,
+                            [TiltC] decimal(18,6) NOT NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_TiltEpoch_IsDeleted]
+                                DEFAULT (0),
+                            [ReplacementName] nvarchar(50) NOT NULL,
+
+                            CONSTRAINT [PK_TiltEpoch]
+                                PRIMARY KEY CLUSTERED
+                                ([SensorID], [UTCtime]),
+
+                            CONSTRAINT [FK_TiltEpoch_GeotecSensors]
+                                FOREIGN KEY ([SensorID])
+                                REFERENCES [dbo].[GeotecSensors] ([SensorID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_TiltEpoch_UTCtime]
+                            ON [dbo].[TiltEpoch] ([UTCtime]);
+
+                    END;
+
+
+                    /* =============================================================
+                       TILT DAILY
+                       All Tilt values are stored to six decimal places.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.TiltDaily', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[TiltDaily]
+                        (
+                            [SensorID] int NOT NULL,
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [TiltA] decimal(18,6) NOT NULL,
+                            [TiltB] decimal(18,6) NOT NULL,
+                            [TiltC] decimal(18,6) NOT NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_TiltDaily_IsDeleted]
+                                DEFAULT (0),
+                            [ReplacementName] nvarchar(50) NOT NULL,
+
+                            CONSTRAINT [PK_TiltDaily]
+                                PRIMARY KEY CLUSTERED
+                                ([SensorID], [UTCtime]),
+
+                            CONSTRAINT [FK_TiltDaily_GeotecSensors]
+                                FOREIGN KEY ([SensorID])
+                                REFERENCES [dbo].[GeotecSensors] ([SensorID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_TiltDaily_UTCtime]
+                            ON [dbo].[TiltDaily] ([UTCtime]);
+
+                    END;
+
+
+                    /* =============================================================
+                       VIBRATION EPOCH
+                       All Vibration values are stored to six decimal places.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.VibrationEpoch', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[VibrationEpoch]
+                        (
+                            [SensorID] int NOT NULL,
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [Vibration] decimal(18,6) NOT NULL,
+                            [PPV] decimal(18,6) NOT NULL,
+                            [PPA] decimal(18,6) NOT NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_VibrationEpoch_IsDeleted]
+                                DEFAULT (0),
+                            [ReplacementName] nvarchar(50) NOT NULL,
+
+                            CONSTRAINT [PK_VibrationEpoch]
+                                PRIMARY KEY CLUSTERED
+                                ([SensorID], [UTCtime]),
+
+                            CONSTRAINT [FK_VibrationEpoch_GeotecSensors]
+                                FOREIGN KEY ([SensorID])
+                                REFERENCES [dbo].[GeotecSensors] ([SensorID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_VibrationEpoch_UTCtime]
+                            ON [dbo].[VibrationEpoch] ([UTCtime]);
+
+                    END;
+
+
+                    /* =============================================================
+                       VIBRATION HOURLY
+                       All Vibration values are stored to six decimal places.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.VibrationHourly', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[VibrationHourly]
+                        (
+                            [SensorID] int NOT NULL,
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [Vibration] decimal(18,6) NOT NULL,
+                            [PPV] decimal(18,6) NOT NULL,
+                            [PPA] decimal(18,6) NOT NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_VibrationHourly_IsDeleted]
+                                DEFAULT (0),
+                            [ReplacementName] nvarchar(50) NOT NULL,
+
+                            CONSTRAINT [PK_VibrationHourly]
+                                PRIMARY KEY CLUSTERED
+                                ([SensorID], [UTCtime]),
+
+                            CONSTRAINT [FK_VibrationHourly_GeotecSensors]
+                                FOREIGN KEY ([SensorID])
+                                REFERENCES [dbo].[GeotecSensors] ([SensorID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_VibrationHourly_UTCtime]
+                            ON [dbo].[VibrationHourly] ([UTCtime]);
+
+                    END;
+
+
+                    /* =============================================================
+                       VIBRATION DAILY
+                       All Vibration values are stored to six decimal places.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.VibrationDaily', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[VibrationDaily]
+                        (
+                            [SensorID] int NOT NULL,
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [Vibration] decimal(18,6) NOT NULL,
+                            [PPV] decimal(18,6) NOT NULL,
+                            [PPA] decimal(18,6) NOT NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_VibrationDaily_IsDeleted]
+                                DEFAULT (0),
+                            [ReplacementName] nvarchar(50) NOT NULL,
+
+                            CONSTRAINT [PK_VibrationDaily]
+                                PRIMARY KEY CLUSTERED
+                                ([SensorID], [UTCtime]),
+
+                            CONSTRAINT [FK_VibrationDaily_GeotecSensors]
+                                FOREIGN KEY ([SensorID])
+                                REFERENCES [dbo].[GeotecSensors] ([SensorID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_VibrationDaily_UTCtime]
+                            ON [dbo].[VibrationDaily] ([UTCtime]);
+
+                    END;
+
+
+                    COMMIT TRANSACTION;
+
+                END TRY
+
+                BEGIN CATCH
+
+                    IF @@TRANCOUNT > 0
+                        ROLLBACK TRANSACTION;
+
+                    THROW;
+
+                END CATCH;
+                """;
+
+            #endregion
+
+
+            #region Create Missing Tables
+
+            await using (SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        databaseConnectionString))
+            {
+                await databaseConnection.OpenAsync();
+
+                await using SqlCommand createTablesCommand =
+                    new(
+                        cmdText: createTablesSql,
+                        connection: databaseConnection);
+
+                await createTablesCommand.ExecuteNonQueryAsync();
+            }
+
+            #endregion
+
+
+
+        }
+
+        #endregion
+
+
+        #region Project Configuration
+
+        #region Cross-Instance Project Lock Infrastructure
+
+        private static string BuildProjectLockResourceName(
+            int projectId)
+        {
+            #region Validate Project ID
+
+            if (projectId <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    paramName: nameof(projectId),
+                    message: "Project_ID must be greater than zero.");
+            }
+
+            #endregion
+
+
+            #region Build Lock Resource Name
+
+            return
+                $"{ProjectLockResourcePrefix}{projectId}";
+
+            #endregion
+        }
+
+
+        private async Task<SqlConnection> OpenSharedProjectLockConnectionAsync(
+            int projectId)
+        {
+            #region Validate Project ID
+
+            if (projectId <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    paramName: nameof(projectId),
+                    message: "Project_ID must be greater than zero.");
+            }
+
+            #endregion
+
+
+            #region Build Dedicated Lock Connection String
+
+            string lockConnectionString =
+                BuildDatabaseConnectionString(
+                    baseConnectionString: GetValidatedDatabaseConnectionString(),
+                    databaseName: TrackGeometryDatabaseName,
+                    pooling: false);
+
+            #endregion
+
+
+            #region Open Dedicated Lock Connection
+
+            SqlConnection lockConnection =
+                new(
+                    connectionString:
+                        lockConnectionString);
+
+            try
+            {
+                await lockConnection.OpenAsync();
+
+            #endregion
+
+
+                #region Acquire Shared Project Lock
+
+                const string acquireSharedLockSql = """
+            DECLARE @LockResult int;
+
+            EXEC @LockResult = sys.sp_getapplock
+                @Resource = @Resource,
+                @LockMode = 'Shared',
+                @LockOwner = 'Session',
+                @LockTimeout = 0;
+
+            SELECT @LockResult;
+            """;
+
+                await using SqlCommand acquireSharedLockCommand =
+                    new(
+                        cmdText: acquireSharedLockSql,
+                        connection: lockConnection);
+
+                acquireSharedLockCommand.Parameters.AddWithValue(
+                    parameterName: "@Resource",
+                    value: BuildProjectLockResourceName(
+                        projectId: projectId));
+
+                object lockResultObject =
+                    await acquireSharedLockCommand.ExecuteScalarAsync()
+                    ?? throw new InvalidOperationException(
+                        "SQL Server returned no result when acquiring the project lock.");
+
+                int lockResult =
+                    Convert.ToInt32(
+                        value: lockResultObject);
+
+                if (lockResult < 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Project_ID {projectId} is temporarily unavailable because " +
+                        "another application instance is changing its project state.");
+                }
+
+                #endregion
+
+
+                #region Return Locked Connection
+
+                // This connection must remain open for as long as this project is
+                // active in this application instance.
+
+                return lockConnection;
+
+                #endregion
+            }
+            catch
+            {
+                #region Release Failed Lock Connection
+
+                await lockConnection.DisposeAsync();
+
+                #endregion
+
+                throw;
+            }
+        }
+
+
+        #region Exclusive Project Lock
+
+        private async Task<SqlConnection> OpenExclusiveProjectLockConnectionAsync(
+            int projectId)
+        {
+            #region Validate Project ID
+
+            if (projectId <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    paramName: nameof(projectId),
+                    message: "Project_ID must be greater than zero.");
+            }
+
+            #endregion
+
+
+            #region Build Dedicated Lock Connection String
+
+            string lockConnectionString =
+                BuildDatabaseConnectionString(
+                    baseConnectionString: GetValidatedDatabaseConnectionString(),
+                    databaseName: TrackGeometryDatabaseName,
+                    pooling: false);
+
+            #endregion
+
+
+            #region Open Dedicated Lock Connection
+
+            SqlConnection lockConnection =
+                new(
+                    connectionString:
+                        lockConnectionString);
+
+            try
+            {
+                await lockConnection.OpenAsync();
+
+            #endregion
+
+
+                #region Acquire Exclusive Project Lock
+
+                const string acquireExclusiveLockSql = """
+            DECLARE @LockResult int;
+
+            EXEC @LockResult = sys.sp_getapplock
+                @Resource = @Resource,
+                @LockMode = 'Exclusive',
+                @LockOwner = 'Session',
+                @LockTimeout = 0;
+
+            SELECT @LockResult;
+            """;
+
+                await using SqlCommand acquireExclusiveLockCommand =
+                    new(
+                        cmdText: acquireExclusiveLockSql,
+                        connection: lockConnection);
+
+                acquireExclusiveLockCommand.Parameters.AddWithValue(
+                    parameterName: "@Resource",
+                    value: BuildProjectLockResourceName(
+                        projectId: projectId));
+
+                object lockResultObject =
+                    await acquireExclusiveLockCommand.ExecuteScalarAsync()
+                    ?? throw new InvalidOperationException(
+                        "SQL Server returned no result when acquiring the " +
+                        "exclusive project lock.");
+
+                int lockResult =
+                    Convert.ToInt32(
+                        value: lockResultObject);
+
+                if (lockResult < 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Project_ID {projectId} cannot be deleted because it is " +
+                        "currently active or otherwise in use by another running " +
+                        "application instance.");
+                }
+
+                #endregion
+
+
+                #region Return Exclusively Locked Connection
+
+                // The caller must keep this connection open throughout the complete
+                // delete operation.
+                //
+                // Disposing the connection releases the Exclusive application lock.
+
+                return lockConnection;
+
+                #endregion
+            }
+            catch
+            {
+                #region Dispose Failed Lock Connection
+
+                await lockConnection.DisposeAsync();
+
+                #endregion
+
+                throw;
+            }
+        }
+
+        #endregion
+
+
+
+
+        #region Initialise Startup Active Project
+
+        private async Task InitialiseStartupActiveProjectAsync()
+        {
+            #region Handle No Persisted Active Project
+
+            if (!_activeProjectId.HasValue)
+            {
+                _activeProjectName =
+                    string.Empty;
+
+                txtActiveProject.Text =
+                    "No active project";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Capture Startup Project ID
+
+            // Capture the value once.
+            // Do not re-read the Registry during this operation.
+
+            int startupProjectId =
+                _activeProjectId.Value;
+
+            SqlConnection? startupLockConnection =
+                null;
+
+            #endregion
+
+
+            try
+            {
+                #region Acquire Shared Project Lock
+
+                startupLockConnection =
+                    await OpenSharedProjectLockConnectionAsync(
+                        projectId: startupProjectId);
+
+                #endregion
+
+
+                #region Define Project Validation Query
+
+                const string validateProjectSql = """
+            SELECT
+                [ProjectName],
+                [IsDeleted]
+            FROM [dbo].[Project]
+            WHERE [Project_ID] = @Project_ID;
+            """;
+
+                #endregion
+
+
+                #region Validate Project Against Database
+
+                await using SqlCommand validateProjectCommand =
+                    new(
+                        cmdText: validateProjectSql,
+                        connection: startupLockConnection);
+
+                validateProjectCommand.Parameters.AddWithValue(
+                    parameterName: "@Project_ID",
+                    value: startupProjectId);
+
+                await using SqlDataReader reader =
+                    await validateProjectCommand.ExecuteReaderAsync();
+
+                if (!await reader.ReadAsync())
+                {
+                    #region Handle Missing Project
+
+                    await startupLockConnection.DisposeAsync();
+
+                    startupLockConnection =
+                        null;
+
+                    _activeProjectId =
+                        null;
+
+                    _activeProjectName =
+                        string.Empty;
+
+                    txtActiveProject.Text =
+                        "No active project";
+
+                    return;
+
+                    #endregion
+                }
+
+
+                string databaseProjectName =
+                    reader.GetString(
+                        i: 0);
+
+                bool projectIsDeleted =
+                    reader.GetBoolean(
+                        i: 1);
+
+                #endregion
+
+
+                #region Reject Deleted Project
+
+                if (projectIsDeleted)
+                {
+                    await startupLockConnection.DisposeAsync();
+
+                    startupLockConnection =
+                        null;
+
+                    _activeProjectId =
+                        null;
+
+                    _activeProjectName =
+                        string.Empty;
+
+                    txtActiveProject.Text =
+                        "No active project";
+
+                    return;
+                }
+
+                #endregion
+
+
+                #region Establish Process-Local Active Project
+
+                // Ownership of this open connection now transfers to the running
+                // application instance.
+                //
+                // The connection must remain open for as long as this project
+                // remains active in this process.
+
+                _activeProjectLockConnection =
+                    startupLockConnection;
+
+                startupLockConnection =
+                    null;
+
+                #endregion
+
+
+                #region Refresh Runtime Project Name
+
+                // Project_ID is authoritative.
+                //
+                // The SQL ProjectName replaces the Registry copy in this process
+                // in case the project has subsequently been renamed.
+                //
+                // Do NOT write the refreshed name back to the Registry here.
+                // Another running instance may have changed the startup default.
+
+                _activeProjectName =
+                    databaseProjectName;
+
+                txtActiveProject.Text =
+                    _activeProjectName;
+
+                #endregion
+            }
+            catch (Exception ex)
+            {
+                #region Dispose Incomplete Lock Connection
+
+                if (startupLockConnection is not null)
+                {
+                    await startupLockConnection.DisposeAsync();
+
+                    startupLockConnection =
+                        null;
+                }
+
+                #endregion
+
+
+                #region Clear Process-Local Active Project
+
+                ReleaseActiveProjectLockConnection();
+
+                _activeProjectId =
+                    null;
+
+                _activeProjectName =
+                    string.Empty;
+
+                txtActiveProject.Text =
+                    "No active project";
+
+                #endregion
+
+
+                #region Report Startup Lock Failure
+
+                // Do not clear or modify the Registry here.
+                //
+                // The failure may be temporary and another running instance may
+                // have changed the persisted startup default since this process
+                // originally read it.
+
+                txtDbConnectionStatus.Text =
+                    $"Startup active project unavailable: {ex.Message}";
+
+                #endregion
+            }
+        }
+
+        #endregion
+
+
+
+
+        private void ReleaseActiveProjectLockConnection()
+        {
+            #region Release Current Active Project Lock
+
+            if (_activeProjectLockConnection is not null)
+            {
+                // Pooling is disabled for this dedicated connection.
+                // Disposing it closes the underlying SQL session and therefore
+                // releases the Session-owned application lock.
+
+                _activeProjectLockConnection.Dispose();
+
+                _activeProjectLockConnection =
+                    null;
+            }
+
+            #endregion
+        }
+
+        #endregion
+
+
+
+
+
+
+        private async void btnManageProjects_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Display Project Management Overlay
+
+            brdProjectManagement.Visibility =
+                Visibility.Visible;
+
+            txtProjectManagementStatus.Text =
+                "Loading projects...";
+
+            #endregion
+
+
+            #region Load Project Data
+
+            try
+            {
+                await LoadProjectsAsync();
+
+                txtProjectManagementStatus.Text =
+                    $"{_projectItems.Count} project(s) loaded.";
+            }
+            catch (SqlException ex)
+            {
+                txtProjectManagementStatus.Text =
+                    $"Unable to load projects: {ex.Message}";
+            }
+            catch (ArgumentException ex)
+            {
+                txtProjectManagementStatus.Text =
+                    $"Invalid database configuration: {ex.Message}";
+            }
+            catch (InvalidOperationException ex)
+            {
+                txtProjectManagementStatus.Text =
+                    $"Unable to load projects: {ex.Message}";
+            }
+            catch (Exception ex)
+            {
+                txtProjectManagementStatus.Text =
+                    $"Unable to load projects: {ex.Message}";
+            }
+
+            #endregion
+        }
+
+
+        private void btnCloseProjectManagement_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Hide Project Management Overlay
+
+            brdProjectManagement.Visibility =
+                Visibility.Collapsed;
+
+            #endregion
+        }
+
+
+
+
+        #region Add Project
+
+        private async void btnAddProject_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Validate Project Name
+
+            string projectName =
+                txtNewProjectName.Text?.Trim()
+                ?? throw new InvalidOperationException(
+                    "New project name control returned null.");
+
+            if (string.IsNullOrWhiteSpace(projectName))
+            {
+                txtProjectManagementStatus.Text =
+                    "Enter a project name.";
+
+                txtNewProjectName.Focus();
+
+                return;
+            }
+
+            if (projectName.Length > 200)
+            {
+                txtProjectManagementStatus.Text =
+                    "Project name cannot exceed 200 characters.";
+
+                txtNewProjectName.Focus();
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Prepare User Interface
+
+            btnAddProject.IsEnabled =
+                false;
+
+            txtProjectManagementStatus.Text =
+                $"Checking project '{projectName}'...";
+
+            #endregion
+
+
+            try
+            {
+                #region Add Or Restore Project
+
+                bool projectAddedOrRestored =
+                    await AddOrRestoreProjectAsync(
+                        projectName: projectName);
+
+                #endregion
+
+
+                #region Refresh Project List
+
+                if (projectAddedOrRestored)
+                {
+                    txtNewProjectName.Clear();
+
+                    await LoadProjectsAsync();
+                }
+
+                #endregion
+            }
+
+            #region Handle Project Errors
+
+            catch (SqlException ex)
+                when (ex.Number == 2601 ||
+                      ex.Number == 2627)
+            {
+                // SQL Server remains the final authority for uniqueness.
+                // This also protects against two application instances attempting
+                // to create the same project at approximately the same time.
+
+                txtProjectManagementStatus.Text =
+                    $"Project '{projectName}' already exists.";
+
+                await LoadProjectsAsync();
+            }
+            catch (SqlException ex)
+            {
+                txtProjectManagementStatus.Text =
+                    $"Unable to add project: {ex.Message}";
+            }
+            catch (ArgumentException ex)
+            {
+                txtProjectManagementStatus.Text =
+                    $"Invalid project: {ex.Message}";
+            }
+            catch (InvalidOperationException ex)
+            {
+                txtProjectManagementStatus.Text =
+                    $"Unable to add project: {ex.Message}";
+            }
+            catch (Exception ex)
+            {
+                txtProjectManagementStatus.Text =
+                    $"Unable to add project: {ex.Message}";
+            }
+
+            #endregion
+
+
+            #region Restore User Interface
+
+            finally
+            {
+                btnAddProject.IsEnabled =
+                    true;
+            }
+
+            #endregion
+        }
+
+
+        private async Task<bool> AddOrRestoreProjectAsync(
+            string projectName)
+        {
+            #region Validate Project Name
+
+            string validatedProjectName =
+                projectName?.Trim()
+                ?? throw new ArgumentNullException(
+                    paramName: nameof(projectName));
+
+            if (string.IsNullOrWhiteSpace(validatedProjectName))
+            {
+                throw new ArgumentException(
+                    message: "Project name cannot be empty.",
+                    paramName: nameof(projectName));
+            }
+
+            if (validatedProjectName.Length > 200)
+            {
+                throw new ArgumentException(
+                    message: "Project name cannot exceed 200 characters.",
+                    paramName: nameof(projectName));
+            }
+
+            #endregion
+
+
+            #region Resolve Database Connection String
+
+            string databaseConnectionString =
+                GetTrackGeometryConnectionString();
+
+            #endregion
+
+
+            #region Open Database Connection
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        databaseConnectionString);
+
+            await databaseConnection.OpenAsync();
+
+            #endregion
+
+
+            #region Check For Existing Project
+
+            const string findProjectSql = """
+        SELECT
+            [Project_ID],
+            [ProjectName],
+            [IsDeleted]
+        FROM [dbo].[Project]
+        WHERE [ProjectName] = @ProjectName;
+        """;
+
+            await using SqlCommand findProjectCommand =
+                new(
+                    cmdText: findProjectSql,
+                    connection: databaseConnection);
+
+            findProjectCommand.Parameters.AddWithValue(
+                parameterName: "@ProjectName",
+                value: validatedProjectName);
+
+            int? existingProjectId =
+                null;
+
+            bool existingProjectIsDeleted =
+                false;
+
+            await using (SqlDataReader reader =
+                await findProjectCommand.ExecuteReaderAsync())
+            {
+                if (await reader.ReadAsync())
+                {
+                    existingProjectId =
+                        reader.GetInt32(
+                            i: 0);
+
+                    existingProjectIsDeleted =
+                        reader.GetBoolean(
+                            i: 2);
+                }
+            }
+
+            #endregion
+
+
+            #region Handle Existing Active Project
+
+            if (existingProjectId.HasValue &&
+                !existingProjectIsDeleted)
+            {
+                txtProjectManagementStatus.Text =
+                    $"Project '{validatedProjectName}' already exists.";
+
+                return false;
+            }
+
+            #endregion
+
+
+            #region Handle Existing Deleted Project
+
+            if (existingProjectId.HasValue &&
+                existingProjectIsDeleted)
+            {
+                MessageBoxResult restoreConfirmation =
+                    MessageBox.Show(
+                        messageBoxText:
+                            $"Project '{validatedProjectName}' already exists but is marked as deleted.\n\n" +
+                            "Do you want to restore this project?",
+                        caption: "Restore Project",
+                        button: MessageBoxButton.YesNo,
+                        icon: MessageBoxImage.Question,
+                        defaultResult: MessageBoxResult.No);
+
+                if (restoreConfirmation != MessageBoxResult.Yes)
+                {
+                    txtProjectManagementStatus.Text =
+                        $"Project '{validatedProjectName}' was not restored.";
+
+                    return false;
+                }
+
+                #region Restore Deleted Project
+
+                const string restoreProjectSql = """
+            UPDATE [dbo].[Project]
+            SET [IsDeleted] = 0
+            WHERE [Project_ID] = @Project_ID
+              AND [IsDeleted] = 1;
+            """;
+
+                await using SqlCommand restoreProjectCommand =
+                    new(
+                        cmdText: restoreProjectSql,
+                        connection: databaseConnection);
+
+                restoreProjectCommand.Parameters.AddWithValue(
+                    parameterName: "@Project_ID",
+                    value: existingProjectId.Value);
+
+                int restoredRows =
+                    await restoreProjectCommand.ExecuteNonQueryAsync();
+
+                if (restoredRows != 1)
+                {
+                    throw new InvalidOperationException(
+                        $"Project '{validatedProjectName}' could not be restored because " +
+                        "its database state changed before the operation completed.");
+                }
+
+                #endregion
+
+
+                #region Report Successful Restoration
+
+                txtProjectManagementStatus.Text =
+                    $"Project '{validatedProjectName}' restored successfully.";
+
+                return true;
+
+                #endregion
+            }
+
+            #endregion
+
+
+            #region Insert New Project
+
+            const string insertProjectSql = """
+        INSERT INTO [dbo].[Project]
+        (
+            [ProjectName],
+            [IsDeleted]
+        )
+        VALUES
+        (
+            @ProjectName,
+            0
+        );
+        """;
+
+            await using SqlCommand insertProjectCommand =
+                new(
+                    cmdText: insertProjectSql,
+                    connection: databaseConnection);
+
+            insertProjectCommand.Parameters.AddWithValue(
+                parameterName: "@ProjectName",
+                value: validatedProjectName);
+
+            int insertedRows =
+                await insertProjectCommand.ExecuteNonQueryAsync();
+
+            if (insertedRows != 1)
+            {
+                throw new InvalidOperationException(
+                    $"Project '{validatedProjectName}' was not inserted.");
+            }
+
+            #endregion
+
+
+            #region Report Successful Addition
+
+            txtProjectManagementStatus.Text =
+                $"Project '{validatedProjectName}' added successfully.";
+
+            return true;
+
+            #endregion
+        }
+
+        #endregion
+
+        #region Active Project Selection
+
+        private async void ActiveProjectRadioButton_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Validate Event Source
+
+            if (sender is not RadioButton activeProjectRadioButton)
+            {
+                throw new InvalidOperationException(
+                    "Active project selection was raised by an invalid control.");
+            }
+
+            if (activeProjectRadioButton.DataContext
+                is not ProjectConfigurationItem selectedProject)
+            {
+                throw new InvalidOperationException(
+                    "Active project selection does not contain a valid project.");
+            }
+
+            #endregion
+
+
+            #region Prevent Deleted Project Selection
+
+            if (selectedProject.IsDeleted)
+            {
+                ApplyActiveProjectStateToLoadedProjects();
+
+                txtProjectManagementStatus.Text =
+                    "A deleted project cannot be selected as the active project.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Handle Existing Active Selection
+
+            if (_activeProjectId.HasValue &&
+                _activeProjectId.Value == selectedProject.Project_ID)
+            {
+                selectedProject.IsActive =
+                    true;
+
+                txtProjectManagementStatus.Text =
+                    $"'{selectedProject.ProjectName}' is already the active project.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Preserve Existing Project Lock
+
+            // Do not release the existing Shared lock yet.
+            //
+            // The current project must remain fully operational unless the complete
+            // transition to the newly selected project succeeds.
+
+            SqlConnection? previousProjectLockConnection =
+                _activeProjectLockConnection;
+
+            SqlConnection? newProjectLockConnection =
+                null;
+
+            #endregion
+
+
+
+
+
+
+
+
+            try
+            {
+                #region Acquire New Project Shared Lock
+
+                newProjectLockConnection =
+                    await OpenSharedProjectLockConnectionAsync(
+                        projectId: selectedProject.Project_ID);
+
+                #endregion
+
+
+                #region Validate New Project Against Database
+
+                const string validateProjectSql = """
+            SELECT
+                [ProjectName],
+                [IsDeleted]
+            FROM [dbo].[Project]
+            WHERE [Project_ID] = @Project_ID;
+            """;
+
+                string databaseProjectName;
+                bool databaseProjectIsDeleted;
+
+                await using (SqlCommand validateProjectCommand =
+                    new(
+                        cmdText: validateProjectSql,
+                        connection: newProjectLockConnection))
+                {
+                    validateProjectCommand.Parameters.AddWithValue(
+                        parameterName: "@Project_ID",
+                        value: selectedProject.Project_ID);
+
+                    await using SqlDataReader reader =
+                        await validateProjectCommand.ExecuteReaderAsync();
+
+                    if (!await reader.ReadAsync())
+                    {
+                        throw new InvalidOperationException(
+                            $"Project_ID {selectedProject.Project_ID} no longer exists.");
+                    }
+
+                    databaseProjectName =
+                        reader.GetString(
+                            i: 0);
+
+                    databaseProjectIsDeleted =
+                        reader.GetBoolean(
+                            i: 1);
+                }
+
+                if (databaseProjectIsDeleted)
+                {
+                    throw new InvalidOperationException(
+                        $"Project '{databaseProjectName}' has been deleted and " +
+                        "cannot be selected as the active project.");
+                }
+
+                #endregion
+
+
+                #region Persist New Startup Default
+
+                // Persist only after the new Shared lock has been acquired and
+                // the SQL project record has been validated.
+                //
+                // This changes the default for FUTURE application instances only.
+                // Existing application instances retain their own process-local
+                // active-project state.
+
+                SaveActiveProjectToRegistry(
+                    projectId: selectedProject.Project_ID,
+                    projectName: databaseProjectName);
+
+                #endregion
+
+
+                #region Clear Existing DataGrid Active Flags
+
+                foreach (ProjectConfigurationItem projectItem in _projectItems)
+                {
+                    projectItem.IsActive =
+                        false;
+                }
+
+                #endregion
+
+
+                #region Establish New Process-Local Active Project
+
+                // SQL ProjectName is authoritative in case another application
+                // instance has renamed the project since this DataGrid was loaded.
+
+                selectedProject.ProjectName =
+                    databaseProjectName;
+
+                selectedProject.OriginalProjectName =
+                    databaseProjectName;
+
+                selectedProject.IsActive =
+                    true;
+
+                _activeProjectId =
+                    selectedProject.Project_ID;
+
+                _activeProjectName =
+                    databaseProjectName;
+
+                txtActiveProject.Text =
+                    databaseProjectName;
+
+                #endregion
+
+
+                #region Transfer Active Project Lock Ownership
+
+                // The newly opened SQL connection now becomes the dedicated Shared
+                // lock connection for this application instance.
+
+                _activeProjectLockConnection =
+                    newProjectLockConnection;
+
+                // Clear the local reference so the exception cleanup code cannot
+                // dispose the connection now owned by the application instance.
+
+                newProjectLockConnection =
+                    null;
+
+                #endregion
+
+                #region Report Successful Project Change
+
+                // Any loaded import source belongs to the project that was active
+                // when that import was started.
+                //
+                // Changing the active project invalidates all existing import state.
+
+                ResetReferenceImportState(
+                    statusMessage:
+                        $"Active project changed to '{_activeProjectName}'. " +
+                        "Select a CSV for this project.");
+
+                ResetGeotechImportState(
+                    statusMessage:
+                        $"Active project changed to '{_activeProjectName}'. " +
+                        "Select a Geotech CSV for this project.");
+
+                ResetPrismPairImportState(
+                    statusMessage:
+                        $"Active project changed to '{_activeProjectName}'. " +
+                        "Select a Track Geometry workbook for this project.");
+
+                ResetPrismArrayConfigurationState();
+
+                if (tabPrismArrays.IsSelected)
+                {
+                    try
+                    {
+                        await InitialisePrismArrayConfigurationForActiveProjectAsync();
+
+                        UpdatePrismArrayAssignmentDisplay();
+
+                        txtPrismArrayStatus.Text =
+                            $"{_availablePrismArrayPoints.Count} point(s) available; " +
+                            $"{_committedPrismArrays.Count} array(s) committed.";
+                    }
+                    catch (Exception arrayEx)
+                    {
+                        txtPrismArrayStatus.Text =
+                            $"Unable to load arrays: {arrayEx.Message}";
+                    }
+                }
+
+                txtProjectManagementStatus.Text =
+                    $"Active project set to '{_activeProjectName}'.";
+
+                #endregion
+
+
+            }
+            catch (Exception ex)
+            {
+                #region Release Incomplete New Project Lock
+
+                if (newProjectLockConnection is not null)
+                {
+                    await newProjectLockConnection.DisposeAsync();
+
+                    newProjectLockConnection =
+                        null;
+                }
+
+                #endregion
+
+
+                #region Restore Existing DataGrid State
+
+                // The process-local active-project fields and existing Shared lock
+                // were deliberately not changed until the new project had been
+                // successfully acquired and validated.
+
+                ApplyActiveProjectStateToLoadedProjects();
+
+                #endregion
+
+
+                #region Report Selection Failure
+
+                txtProjectManagementStatus.Text =
+                    $"Unable to set active project: {ex.Message}";
+
+                #endregion
+
+                return;
+            }
+
+
+            #region Release Previous Project Shared Lock
+
+            // The new project is now fully established.
+            //
+            // Only now is it safe to release the previous project's Shared lock.
+
+            if (previousProjectLockConnection is not null &&
+                !ReferenceEquals(
+                    previousProjectLockConnection,
+                    _activeProjectLockConnection))
+            {
+                try
+                {
+                    await previousProjectLockConnection.DisposeAsync();
+                }
+                catch (Exception ex)
+                {
+                    // The active-project change itself has succeeded.
+                    //
+                    // Report a lock-release warning rather than reverting the
+                    // successfully established new project.
+
+                    txtProjectManagementStatus.Text =
+                        $"Active project set to '{_activeProjectName}', " +
+                        $"but the previous project lock reported: {ex.Message}";
+                }
+            }
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Project Rename
+
+        private async void ProjectNameTextBox_LostFocus(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Validate Event Source
+
+            if (sender is not TextBox projectNameTextBox)
+            {
+                throw new InvalidOperationException(
+                    "Project-name edit was raised by an invalid control.");
+            }
+
+            if (projectNameTextBox.DataContext
+                is not ProjectConfigurationItem selectedProject)
+            {
+                throw new InvalidOperationException(
+                    "Project-name edit does not contain a valid project.");
+            }
+
+            #endregion
+
+
+            #region Read Edited Project Name
+
+            string newProjectName =
+                projectNameTextBox.Text?.Trim()
+                ?? throw new InvalidOperationException(
+                    "Project-name edit control returned null.");
+
+            string originalProjectName =
+                selectedProject.OriginalProjectName?.Trim()
+                ?? throw new InvalidOperationException(
+                    "Original project name is not available.");
+
+            #endregion
+
+
+            #region Handle Unchanged Project Name
+
+            if (string.Equals(
+                a: newProjectName,
+                b: originalProjectName,
+                comparisonType: StringComparison.Ordinal))
+            {
+                selectedProject.ProjectName =
+                    originalProjectName;
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Validate Edited Project Name
+
+            if (string.IsNullOrWhiteSpace(newProjectName))
+            {
+                selectedProject.ProjectName =
+                    originalProjectName;
+
+                projectNameTextBox.Text =
+                    originalProjectName;
+
+                txtProjectManagementStatus.Text =
+                    "Project name cannot be blank.";
+
+                return;
+            }
+
+            if (newProjectName.Length > 200)
+            {
+                selectedProject.ProjectName =
+                    originalProjectName;
+
+                projectNameTextBox.Text =
+                    originalProjectName;
+
+                txtProjectManagementStatus.Text =
+                    "Project name cannot exceed 200 characters.";
+
+                return;
+            }
+
+            #endregion
+
+
+            try
+            {
+                #region Rename Project In Database
+
+                await RenameProjectAsync(
+                    projectId: selectedProject.Project_ID,
+                    originalProjectName: originalProjectName,
+                    newProjectName: newProjectName);
+
+                #endregion
+
+
+                #region Update Local Project Item
+
+                selectedProject.ProjectName =
+                    newProjectName;
+
+                selectedProject.OriginalProjectName =
+                    newProjectName;
+
+                #endregion
+
+
+                #region Update Active Project Runtime State
+
+                if (_activeProjectId.HasValue &&
+                    _activeProjectId.Value == selectedProject.Project_ID)
+                {
+                    // Project_ID remains the authoritative operational identity.
+                    //
+                    // Only the process-local display name changes.
+
+                    _activeProjectName =
+                        newProjectName;
+
+                    if (_prismArrayProjectId.HasValue &&
+                        _prismArrayProjectId.Value == selectedProject.Project_ID)
+                    {
+                        _prismArrayProjectName =
+                            newProjectName;
+                    }
+
+                    txtActiveProject.Text =
+                        newProjectName;
+
+                    #region Update Persisted Startup Name Safely
+
+                    UpdatePersistedActiveProjectNameIfCurrent(
+                        projectId: selectedProject.Project_ID,
+                        projectName: newProjectName);
+
+                    #endregion
+                }
+
+                #endregion
+
+
+                #region Report Successful Rename
+
+                txtProjectManagementStatus.Text =
+                    $"Project renamed to '{newProjectName}'.";
+
+                #endregion
+            }
+
+            #region Handle Duplicate Project Name
+
+            catch (SqlException ex)
+                when (ex.Number == 2601 ||
+                      ex.Number == 2627)
+            {
+                await LoadProjectsAsync();
+
+                txtProjectManagementStatus.Text =
+                    $"Project name '{newProjectName}' already exists.";
+            }
+
+            #endregion
+
+
+            #region Handle Rename Errors
+
+            catch (Exception ex)
+            {
+                // SQL remains authoritative.
+                // Reload the complete list to remove any uncommitted UI value.
+
+                await LoadProjectsAsync();
+
+                txtProjectManagementStatus.Text =
+                    $"Unable to rename project: {ex.Message}";
+            }
+
+            #endregion
+        }
+
+
+        private async Task RenameProjectAsync(
+            int projectId,
+            string originalProjectName,
+            string newProjectName)
+        {
+            #region Validate Project ID
+
+            if (projectId <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    paramName: nameof(projectId),
+                    message: "Project_ID must be greater than zero.");
+            }
+
+            #endregion
+
+
+            #region Validate Original Project Name
+
+            string validatedOriginalProjectName =
+                originalProjectName?.Trim()
+                ?? throw new ArgumentNullException(
+                    paramName: nameof(originalProjectName));
+
+            if (string.IsNullOrWhiteSpace(validatedOriginalProjectName))
+            {
+                throw new ArgumentException(
+                    message: "Original project name cannot be empty.",
+                    paramName: nameof(originalProjectName));
+            }
+
+            #endregion
+
+
+            #region Validate New Project Name
+
+            string validatedNewProjectName =
+                newProjectName?.Trim()
+                ?? throw new ArgumentNullException(
+                    paramName: nameof(newProjectName));
+
+            if (string.IsNullOrWhiteSpace(validatedNewProjectName))
+            {
+                throw new ArgumentException(
+                    message: "New project name cannot be empty.",
+                    paramName: nameof(newProjectName));
+            }
+
+            if (validatedNewProjectName.Length > 200)
+            {
+                throw new ArgumentException(
+                    message: "New project name cannot exceed 200 characters.",
+                    paramName: nameof(newProjectName));
+            }
+
+            #endregion
+
+
+            #region Resolve Database Connection String
+
+            string databaseConnectionString =
+                GetTrackGeometryConnectionString();
+
+            #endregion
+
+
+            #region Define Rename Command
+
+            const string renameProjectSql = """
+        UPDATE [dbo].[Project]
+        SET
+            [ProjectName] = @NewProjectName
+        WHERE
+            [Project_ID] = @Project_ID
+            AND [ProjectName] = @OriginalProjectName;
+        """;
+
+            #endregion
+
+
+            #region Rename Project
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        databaseConnectionString);
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand renameProjectCommand =
+                new(
+                    cmdText: renameProjectSql,
+                    connection: databaseConnection);
+
+            renameProjectCommand.Parameters.AddWithValue(
+                parameterName: "@Project_ID",
+                value: projectId);
+
+            renameProjectCommand.Parameters.AddWithValue(
+                parameterName: "@OriginalProjectName",
+                value: validatedOriginalProjectName);
+
+            renameProjectCommand.Parameters.AddWithValue(
+                parameterName: "@NewProjectName",
+                value: validatedNewProjectName);
+
+            int affectedRows =
+                await renameProjectCommand.ExecuteNonQueryAsync();
+
+            if (affectedRows != 1)
+            {
+                throw new InvalidOperationException(
+                    $"Project_ID {projectId} could not be renamed because its " +
+                    "database state changed after this Project Management window " +
+                    "was loaded.");
+            }
+
+            #endregion
+        }
+
+
+        private static void UpdatePersistedActiveProjectNameIfCurrent(
+            int projectId,
+            string projectName)
+        {
+            #region Validate Parameters
+
+            if (projectId <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    paramName: nameof(projectId),
+                    message: "Project_ID must be greater than zero.");
+            }
+
+            string validatedProjectName =
+                projectName?.Trim()
+                ?? throw new ArgumentNullException(
+                    paramName: nameof(projectName));
+
+            if (string.IsNullOrWhiteSpace(validatedProjectName))
+            {
+                throw new ArgumentException(
+                    message: "Project name cannot be empty.",
+                    paramName: nameof(projectName));
+            }
+
+            #endregion
+
+
+            #region Open Persisted Startup Configuration
+
+            using RegistryKey? registryKey =
+                Registry.CurrentUser.OpenSubKey(
+                    name: RegistryPath,
+                    writable: true);
+
+            if (registryKey is null)
+            {
+                return;
+            }
+
+            #endregion
+
+
+            #region Verify Persisted Startup Project
+
+            object? persistedProjectIdValue =
+                registryKey.GetValue(
+                    name: RegistryActiveProjectId,
+                    defaultValue: null);
+
+            if (persistedProjectIdValue is not int persistedProjectId ||
+                persistedProjectId != projectId)
+            {
+                // Another running instance has changed the persisted startup
+                // project since this process started.
+                //
+                // Do not overwrite that newer startup default.
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Update Persisted Project Name
+
+            registryKey.SetValue(
+                name: RegistryActiveProjectName,
+                value: validatedProjectName,
+                valueKind: RegistryValueKind.String);
+
+            #endregion
+        }
+
+        #endregion
+
+
+
+
+        #region Project Soft Delete And Restore
+
+        private async void DeletedProjectCheckBox_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Validate Event Source
+
+            if (sender is not CheckBox deletedProjectCheckBox)
+            {
+                throw new InvalidOperationException(
+                    "Project deleted-state change was raised by an invalid control.");
+            }
+
+            if (deletedProjectCheckBox.DataContext
+                is not ProjectConfigurationItem selectedProject)
+            {
+                throw new InvalidOperationException(
+                    "Project deleted-state change does not contain a valid project.");
+            }
+
+            #endregion
+
+
+            #region Determine Requested State
+
+            bool requestedDeletedState =
+                deletedProjectCheckBox.IsChecked == true;
+
+            #endregion
+
+
+            #region Prevent Active Project Deletion
+
+            if (requestedDeletedState &&
+                (_activeProjectId == selectedProject.Project_ID ||
+                 selectedProject.IsActive))
+            {
+                // Restore the visual state because an active project
+                // is never permitted to become deleted.
+
+                selectedProject.IsDeleted =
+                    false;
+
+                deletedProjectCheckBox.IsChecked =
+                    false;
+
+                txtProjectManagementStatus.Text =
+                    $"Project '{selectedProject.ProjectName}' is active and cannot be deleted.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Prepare User Interface
+
+            deletedProjectCheckBox.IsEnabled =
+                false;
+
+            txtProjectManagementStatus.Text =
+                requestedDeletedState
+                    ? $"Deleting project '{selectedProject.ProjectName}'..."
+                    : $"Restoring project '{selectedProject.ProjectName}'...";
+
+            #endregion
+
+
+            try
+            {
+                #region Update Project Deleted State
+
+                // Persist the requested soft-delete or restore state to SQL Server.
+                //
+                // SetProjectDeletedStateAsync() also enforces the cross-instance rule:
+                // deletion requires an Exclusive application lock and therefore cannot
+                // proceed while the project is active in another running instance.
+
+                await SetProjectDeletedStateAsync(
+                    projectId: selectedProject.Project_ID,
+                    isDeleted: requestedDeletedState);
+
+                #endregion
+
+
+                #region Reload Projects From Database
+
+                // SQL is authoritative.
+                //
+                // Reload the complete project list after every change so this
+                // running instance does not rely on stale DataGrid state.
+
+                await LoadProjectsAsync();
+
+                #endregion
+
+
+                #region Report Successful Completion
+
+                txtProjectManagementStatus.Text =
+                    requestedDeletedState
+                        ? $"Project '{selectedProject.ProjectName}' deleted."
+                        : $"Project '{selectedProject.ProjectName}' restored.";
+
+                #endregion
+            }
+
+            #region Handle Project State Errors
+
+            catch (SqlException ex)
+            {
+                await LoadProjectsAsync();
+
+                txtProjectManagementStatus.Text =
+                    $"Unable to change project state: {ex.Message}";
+            }
+            catch (ArgumentException ex)
+            {
+                await LoadProjectsAsync();
+
+                txtProjectManagementStatus.Text =
+                    $"Invalid project state: {ex.Message}";
+            }
+            catch (InvalidOperationException ex)
+            {
+                await LoadProjectsAsync();
+
+                txtProjectManagementStatus.Text =
+                    $"Unable to change project state: {ex.Message}";
+            }
+            catch (Exception ex)
+            {
+                await LoadProjectsAsync();
+
+                txtProjectManagementStatus.Text =
+                    $"Unable to change project state: {ex.Message}";
+            }
+
+            #endregion
+        }
+
+
+        private async Task SetProjectDeletedStateAsync(
+    int projectId,
+    bool isDeleted)
+        {
+            #region Validate Project
+
+            if (projectId <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    paramName: nameof(projectId),
+                    message: "Project_ID must be greater than zero.");
+            }
+
+            #endregion
+
+
+            #region Protect Process-Local Active Project
+
+            if (isDeleted &&
+                _activeProjectId.HasValue &&
+                _activeProjectId.Value == projectId)
+            {
+                throw new InvalidOperationException(
+                    "The active project cannot be deleted.");
+            }
+
+            #endregion
+
+
+            #region Handle Project Deletion
+
+            if (isDeleted)
+            {
+                // -------------------------------------------------------------
+                // CROSS-INSTANCE DELETE RULE
+                //
+                // Deletion requires an Exclusive application lock.
+                //
+                // Any running instance that has this project active holds a
+                // Shared lock on exactly the same SQL application-lock resource.
+                //
+                // Shared + Exclusive are incompatible. Therefore this operation
+                // cannot proceed while any application instance is actively
+                // using this project.
+                // -------------------------------------------------------------
+
+                #region Acquire Exclusive Project Lock
+
+                await using SqlConnection exclusiveLockConnection =
+                    await OpenExclusiveProjectLockConnectionAsync(
+                        projectId: projectId);
+
+                #endregion
+
+
+                #region Revalidate Project Under Exclusive Lock
+
+                const string validateProjectSql = """
+            SELECT
+                [ProjectName],
+                [IsDeleted]
+            FROM [dbo].[Project]
+            WHERE [Project_ID] = @Project_ID;
+            """;
+
+                string projectName;
+                bool projectAlreadyDeleted;
+
+                await using (SqlCommand validateProjectCommand =
+                    new(
+                        cmdText: validateProjectSql,
+                        connection: exclusiveLockConnection))
+                {
+                    validateProjectCommand.Parameters.AddWithValue(
+                        parameterName: "@Project_ID",
+                        value: projectId);
+
+                    await using SqlDataReader reader =
+                        await validateProjectCommand.ExecuteReaderAsync();
+
+                    if (!await reader.ReadAsync())
+                    {
+                        throw new InvalidOperationException(
+                            $"Project_ID {projectId} no longer exists.");
+                    }
+
+                    projectName =
+                        reader.GetString(
+                            i: 0);
+
+                    projectAlreadyDeleted =
+                        reader.GetBoolean(
+                            i: 1);
+                }
+
+                #endregion
+
+
+                #region Handle Already Deleted Project
+
+                if (projectAlreadyDeleted)
+                {
+                    throw new InvalidOperationException(
+                        $"Project '{projectName}' is already deleted.");
+                }
+
+                #endregion
+
+
+                #region Delete Project Under Exclusive Lock
+
+                const string deleteProjectSql = """
+            UPDATE [dbo].[Project]
+            SET
+                [IsDeleted] = 1
+            WHERE
+                [Project_ID] = @Project_ID
+                AND [IsDeleted] = 0;
+            """;
+
+                await using SqlCommand deleteProjectCommand =
+                    new(
+                        cmdText: deleteProjectSql,
+                        connection: exclusiveLockConnection);
+
+                deleteProjectCommand.Parameters.AddWithValue(
+                    parameterName: "@Project_ID",
+                    value: projectId);
+
+                int affectedRows =
+                    await deleteProjectCommand.ExecuteNonQueryAsync();
+
+                if (affectedRows != 1)
+                {
+                    throw new InvalidOperationException(
+                        $"Project '{projectName}' could not be deleted because " +
+                        "its database state changed before the operation completed.");
+                }
+
+                #endregion
+
+
+                #region Complete Exclusive Delete Operation
+
+                // ExecuteNonQueryAsync() has completed the SQL UPDATE before this
+                // point.
+                //
+                // The Exclusive lock remains held until exclusiveLockConnection
+                // is disposed when this scope exits.
+                //
+                // Only after that disposal may another instance acquire a Shared
+                // lock. Such an instance will then validate IsDeleted = 1 and
+                // reject the project as an active-project selection.
+
+                return;
+
+                #endregion
+            }
+
+            #endregion
+
+
+            #region Handle Project Restoration
+
+            // A deleted project cannot legitimately be active, therefore restoring
+            // it does not require the Exclusive active-project protection used
+            // during deletion.
+
+            #region Resolve Database Connection String
+
+            string databaseConnectionString =
+                GetTrackGeometryConnectionString();
+
+            #endregion
+
+
+            #region Restore Project
+
+            const string restoreProjectSql = """
+        UPDATE [dbo].[Project]
+        SET
+            [IsDeleted] = 0
+        WHERE
+            [Project_ID] = @Project_ID
+            AND [IsDeleted] = 1;
+        """;
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        databaseConnectionString);
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand restoreProjectCommand =
+                new(
+                    cmdText: restoreProjectSql,
+                    connection: databaseConnection);
+
+            restoreProjectCommand.Parameters.AddWithValue(
+                parameterName: "@Project_ID",
+                value: projectId);
+
+            int restoredRows =
+                await restoreProjectCommand.ExecuteNonQueryAsync();
+
+            if (restoredRows != 1)
+            {
+                throw new InvalidOperationException(
+                    $"Project_ID {projectId} could not be restored. " +
+                    "The project may already have been restored or its database " +
+                    "state may have changed.");
+            }
+
+            #endregion
+
+            #endregion
+        }
+
+        #endregion
+
+
+
+
+        private async Task LoadProjectsAsync()
+        {
+            #region Resolve Database Connection String
+
+            string databaseConnectionString =
+                GetTrackGeometryConnectionString();
+
+            #endregion
+
+
+            #region Define Project Query
+
+            const string loadProjectsSql = """
+                SELECT
+                    [Project_ID],
+                    [ProjectName],
+                    [IsDeleted]
+                FROM [dbo].[Project]
+                ORDER BY
+                    [ProjectName];
+                """;
+
+            #endregion
+
+
+            #region Clear Existing Project List
+
+            _projectItems.Clear();
+
+            #endregion
+
+
+            #region Load Projects From Database
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        databaseConnectionString);
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand loadProjectsCommand =
+                new(
+                    cmdText: loadProjectsSql,
+                    connection: databaseConnection);
+
+            await using SqlDataReader reader =
+                await loadProjectsCommand.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                int projectId =
+                    reader.GetInt32(
+                        i: 0);
+
+                string projectName =
+                    reader.GetString(
+                        i: 1);
+
+                bool isDeleted =
+                    reader.GetBoolean(
+                        i: 2);
+
+                ProjectConfigurationItem projectItem =
+                    new()
+                    {
+                        Project_ID = projectId,
+                        ProjectName = projectName,
+                        OriginalProjectName = projectName,
+                        IsDeleted = isDeleted,
+                        IsActive = false
+                    };
+
+                _projectItems.Add(
+                    item: projectItem);
+            }
+
+            #endregion
+
+
+            #region Apply Process-Local Active Project
+
+            ApplyActiveProjectStateToLoadedProjects();
+
+            #endregion
+        }
+
+
+        private void ApplyActiveProjectStateToLoadedProjects()
+        {
+            #region Reset DataGrid Active State
+
+            foreach (ProjectConfigurationItem projectItem in _projectItems)
+            {
+                projectItem.IsActive =
+                    false;
+            }
+
+            #endregion
+
+
+            #region Handle No Active Project
+
+            if (!_activeProjectId.HasValue)
+            {
+                _activeProjectName =
+                    string.Empty;
+
+                txtActiveProject.Text =
+                    "No active project";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Locate Active Project
+
+            ProjectConfigurationItem? activeProjectItem =
+                null;
+
+            foreach (ProjectConfigurationItem projectItem in _projectItems)
+            {
+                if (projectItem.Project_ID == _activeProjectId.Value)
+                {
+                    activeProjectItem =
+                        projectItem;
+
+                    break;
+                }
+            }
+
+            #endregion
+
+
+            #region Validate Active Project
+
+            if (activeProjectItem is null ||
+                activeProjectItem.IsDeleted)
+            {
+                // The startup default no longer represents an available
+                // project in the current database.
+                //
+                // Only this process's runtime state is cleared here.
+                //
+                // The Registry is not modified during normal reconciliation
+                // because another running instance may have changed the
+                // persisted startup default after this process started.
+
+                _activeProjectId =
+                    null;
+
+                _activeProjectName =
+                    string.Empty;
+
+                txtActiveProject.Text =
+                    "No active project";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Apply Active Project To This Process
+
+            activeProjectItem.IsActive =
+                true;
+
+            // Project_ID is authoritative.
+            // Refresh the process-local name from SQL in case the project
+            // name has been changed since this process started.
+
+            _activeProjectName =
+                activeProjectItem.ProjectName;
+
+            txtActiveProject.Text =
+                _activeProjectName;
+
+            #endregion
+        }
+        #endregion
+
+
         #region Reference Coordinate Import
+
+        #region CSV File Selection
+
+        private async void btnSelectReferenceCsv_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Select CSV File
+
+            OpenFileDialog openFileDialog =
+                new()
+                {
+                    Title = "Select Point / Reference Coordinate CSV",
+
+                    Filter =
+                        "CSV files (*.csv)|*.csv|" +
+                        "All files (*.*)|*.*",
+
+                    DefaultExt =
+                        ".csv",
+
+                    CheckFileExists =
+                        true,
+
+                    Multiselect =
+                        false
+                };
+
+            bool? fileSelected =
+                openFileDialog.ShowDialog(
+                    owner: this);
+
+            if (fileSelected != true)
+            {
+                txtReferenceImportStatus.Text =
+                    "CSV selection cancelled.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Validate Active Project
+
+            if (!_activeProjectId.HasValue)
+            {
+                txtReferenceImportStatus.Text =
+                    "Import cannot continue because no active project is available.";
+
+                MessageBox.Show(
+                    owner: this,
+                    messageBoxText:
+                        "No active project is currently available.\n\n" +
+                        "Select an active project using Manage Projects, " +
+                        "then select the CSV again.",
+                    caption: "Active Project Required",
+                    button: MessageBoxButton.OK,
+                    icon: MessageBoxImage.Warning);
+
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(
+                value: _activeProjectName))
+            {
+                txtReferenceImportStatus.Text =
+                    "Import cannot continue because the active project name is unavailable.";
+
+                MessageBox.Show(
+                    owner: this,
+                    messageBoxText:
+                        "The active project does not contain a valid project name.\n\n" +
+                        "Select the project again using Manage Projects.",
+                    caption: "Invalid Active Project",
+                    button: MessageBoxButton.OK,
+                    icon: MessageBoxImage.Warning);
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Capture Import Project Context
+
+            int importProjectId =
+                _activeProjectId.Value;
+
+            string importProjectName =
+                _activeProjectName;
+
+            _referenceImportProjectId =
+                importProjectId;
+
+            _referenceImportProjectName =
+                importProjectName;
+
+            #endregion
+
+
+            #region Store Selected CSV
+
+            _selectedReferenceCsvPath =
+                openFileDialog.FileName;
+
+            txtReferenceCsvPath.Text =
+                _selectedReferenceCsvPath;
+
+            #endregion
+
+
+            #region Parse And Validate CSV
+
+            await ParseAndValidateSelectedReferenceCsvAsync();
+
+            #endregion
+        }
+
+
+        private async void cmbReferenceCsvColumnOrder_SelectionChanged(
+            object sender,
+            SelectionChangedEventArgs e)
+        {
+            #region Handle Initial XAML Loading
+
+            if (string.IsNullOrWhiteSpace(
+                value: _selectedReferenceCsvPath) ||
+                !_referenceImportProjectId.HasValue)
+            {
+                return;
+            }
+
+            #endregion
+
+
+            #region Reparse Selected CSV
+
+            await ParseAndValidateSelectedReferenceCsvAsync();
+
+            #endregion
+        }
+
+
+        private void btnClearReferenceImport_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Clear Import State
+
+            ResetReferenceImportState(
+                statusMessage: "No CSV selected.");
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Import State Reset
+
+        private void ResetReferenceImportState(
+            string statusMessage)
+        {
+            #region Clear Captured Import Context
+
+            _referenceImportProjectId =
+                null;
+
+            _referenceImportProjectName =
+                string.Empty;
+
+            _selectedReferenceCsvPath =
+                string.Empty;
+
+            #endregion
+
+
+            #region Clear User Interface
+
+            txtReferenceCsvPath.Text =
+                string.Empty;
+
+            _referenceImportItems.Clear();
+
+            dgReferenceCoordinateImport.SelectedItem =
+                null;
+
+            btnCommitReferenceImport.IsEnabled =
+                false;
+
+            cmbReferenceCsvColumnOrder.IsEnabled =
+                true;
+
+            txtReferenceImportStatus.Text =
+                statusMessage;
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Import Preview Selection
+
+        private void dgReferenceCoordinateImport_SelectionChanged(
+            object sender,
+            SelectionChangedEventArgs e)
+        {
+            #region Display Selected Row Validation
+
+            if (dgReferenceCoordinateImport.SelectedItem
+                is not ReferenceCoordinateImportItem selectedItem)
+            {
+                return;
+            }
+
+            txtReferenceImportStatus.Text =
+                selectedItem.ValidationStatus;
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Parse And Validate Selected CSV
+
+        private async Task ParseAndValidateSelectedReferenceCsvAsync()
+        {
+            #region Validate Import Context
+
+            if (!_referenceImportProjectId.HasValue)
+            {
+                throw new InvalidOperationException(
+                    "The reference-coordinate import does not have a target Project_ID.");
+            }
+
+            if (string.IsNullOrWhiteSpace(_referenceImportProjectName))
+            {
+                throw new InvalidOperationException(
+                    "The reference-coordinate import does not have a target project name.");
+            }
+
+            if (string.IsNullOrWhiteSpace(_selectedReferenceCsvPath))
+            {
+                throw new InvalidOperationException(
+                    "No reference-coordinate CSV has been selected.");
+            }
+
+            if (!File.Exists(
+                path: _selectedReferenceCsvPath))
+            {
+                throw new FileNotFoundException(
+                    message: "The selected reference-coordinate CSV no longer exists.",
+                    fileName: _selectedReferenceCsvPath);
+            }
+
+            #endregion
+
+
+            #region Prepare User Interface
+
+            btnSelectReferenceCsv.IsEnabled =
+                false;
+
+            btnClearReferenceImport.IsEnabled =
+                false;
+
+            cmbReferenceCsvColumnOrder.IsEnabled =
+                false;
+
+            btnCommitReferenceImport.IsEnabled =
+                false;
+
+            txtReferenceImportStatus.Text =
+                $"Validating CSV for project '{_referenceImportProjectName}'...";
+
+            #endregion
+
+
+            try
+            {
+                #region Determine CSV Column Order
+
+                ReferenceCoordinateCsvOrder csvOrder =
+                    GetSelectedReferenceCsvOrder();
+
+                #endregion
+
+
+                #region Parse Source CSV
+
+                List<ReferenceCoordinateImportItem> importItems =
+                    ParseReferenceCoordinateCsv(
+                        csvPath: _selectedReferenceCsvPath,
+                        csvOrder: csvOrder);
+
+                #endregion
+
+
+                #region Load Existing Project Points
+
+                List<ExistingReferencePointState> existingPoints =
+                    await LoadExistingReferencePointStatesAsync(
+                        projectId: _referenceImportProjectId.Value);
+
+                #endregion
+
+
+                #region Validate Import
+
+                ValidateReferenceCoordinateImport(
+                    importItems: importItems,
+                    existingPoints: existingPoints);
+
+                #endregion
+
+
+                #region Populate Preview DataGrid
+
+                _referenceImportItems.Clear();
+
+                foreach (ReferenceCoordinateImportItem importItem in importItems)
+                {
+                    _referenceImportItems.Add(
+                        item: importItem);
+                }
+
+                #endregion
+
+
+                #region Determine Validation Result
+
+                int invalidRowCount =
+                    0;
+
+                foreach (ReferenceCoordinateImportItem importItem in importItems)
+                {
+                    if (!importItem.IsValid)
+                    {
+                        invalidRowCount++;
+                    }
+                }
+
+                if (importItems.Count == 0)
+                {
+                    btnCommitReferenceImport.IsEnabled =
+                        false;
+
+                    txtReferenceImportStatus.Text =
+                        $"Project '{_referenceImportProjectName}': " +
+                        "the selected CSV contains no records.";
+
+                    return;
+                }
+
+                if (invalidRowCount > 0)
+                {
+                    btnCommitReferenceImport.IsEnabled =
+                        false;
+
+                    txtReferenceImportStatus.Text =
+                        $"Project '{_referenceImportProjectName}': " +
+                        $"{invalidRowCount} of {importItems.Count} row(s) contain errors. " +
+                        "Import blocked. Correct the CSV and import the corrected file.";
+
+                    return;
+                }
+
+                #endregion
+
+
+                #region Report Successful Validation
+
+                // The button may now be enabled because the preview contains a
+                // completely valid import dataset.
+
+                btnCommitReferenceImport.IsEnabled =
+                    true;
+
+                txtReferenceImportStatus.Text =
+                    $"Project '{_referenceImportProjectName}': " +
+                    $"{importItems.Count} row(s) validated successfully. " +
+                    "No errors found.";
+
+                #endregion
+            }
+            catch (Exception ex)
+            {
+                #region Handle Validation Failure
+
+                _referenceImportItems.Clear();
+
+                btnCommitReferenceImport.IsEnabled =
+                    false;
+
+                txtReferenceImportStatus.Text =
+                    $"Unable to validate CSV: {ex.Message}";
+
+                #endregion
+            }
+            finally
+            {
+                #region Restore User Interface
+
+                btnSelectReferenceCsv.IsEnabled =
+                    true;
+
+                btnClearReferenceImport.IsEnabled =
+                    true;
+
+                cmbReferenceCsvColumnOrder.IsEnabled =
+                    true;
+
+                #endregion
+            }
+        }
+
+        #endregion
+
+
+        #region CSV Column Order
+
+        private ReferenceCoordinateCsvOrder GetSelectedReferenceCsvOrder()
+        {
+            #region Read Selected Format
+
+            return cmbReferenceCsvColumnOrder.SelectedIndex switch
+            {
+                0 => ReferenceCoordinateCsvOrder.PointName_E_N_Ht,
+
+                1 => ReferenceCoordinateCsvOrder.PointName_N_E_Ht,
+
+                _ => throw new InvalidOperationException(
+                    "Select a valid CSV column order.")
+            };
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region CSV Parsing
+
+        private static List<ReferenceCoordinateImportItem>
+            ParseReferenceCoordinateCsv(
+                string csvPath,
+                ReferenceCoordinateCsvOrder csvOrder)
+        {
+            #region Validate CSV Path
+
+            if (string.IsNullOrWhiteSpace(csvPath))
+            {
+                throw new ArgumentException(
+                    message: "CSV path cannot be empty.",
+                    paramName: nameof(csvPath));
+            }
+
+            #endregion
+
+
+            #region Read CSV Lines
+
+            string[] sourceLines =
+                File.ReadAllLines(
+                    path: csvPath);
+
+            List<ReferenceCoordinateImportItem> importItems =
+                new();
+
+            #endregion
+
+
+            #region Parse CSV Rows
+
+            for (int lineIndex = 0;
+                 lineIndex < sourceLines.Length;
+                 lineIndex++)
+            {
+                int sourceRow =
+                    lineIndex + 1;
+
+                string rawLine =
+                    sourceLines[lineIndex];
+
+                ReferenceCoordinateImportItem importItem =
+                    new()
+                    {
+                        SourceRow = sourceRow,
+                        RawLine = rawLine,
+                        IsValid = true,
+                        ValidationStatus = "Valid"
+                    };
+
+
+                #region Parse CSV Fields
+
+                if (!TryParseCsvLine(
+                    line: rawLine,
+                    fields: out List<string> fields,
+                    errorMessage: out string csvError))
+                {
+                    AppendValidationError(
+                        importItem: importItem,
+                        errorMessage: csvError);
+
+                    importItems.Add(
+                        item: importItem);
+
+                    continue;
+                }
+
+                #endregion
+
+
+                #region Validate Column Count
+
+                if (fields.Count != 4 &&
+                    fields.Count != 5)
+                {
+                    AppendValidationError(
+                        importItem: importItem,
+                        errorMessage:
+                            $"Expected 4 or 5 columns; found {fields.Count}.");
+
+                    importItems.Add(
+                        item: importItem);
+
+                    continue;
+                }
+
+                #endregion
+
+
+                #region Extract Point Names
+
+                importItem.PointName =
+                    fields[0].Trim();
+
+                string replacementName =
+                    fields.Count == 5
+                        ? fields[4].Trim()
+                        : string.Empty;
+
+                importItem.ReplacementName =
+                    string.IsNullOrWhiteSpace(replacementName)
+                        ? importItem.PointName
+                        : replacementName;
+
+                #endregion
+
+
+                #region Extract Coordinate Text
+
+                switch (csvOrder)
+                {
+                    case ReferenceCoordinateCsvOrder.PointName_E_N_Ht:
+
+                        importItem.EastingText =
+                            fields[1].Trim();
+
+                        importItem.NorthingText =
+                            fields[2].Trim();
+
+                        break;
+
+
+                    case ReferenceCoordinateCsvOrder.PointName_N_E_Ht:
+
+                        importItem.NorthingText =
+                            fields[1].Trim();
+
+                        importItem.EastingText =
+                            fields[2].Trim();
+
+                        break;
+
+
+                    default:
+
+                        throw new InvalidOperationException(
+                            "Unsupported reference-coordinate CSV column order.");
+                }
+
+                importItem.HeightText =
+                    fields[3].Trim();
+
+                #endregion
+
+
+                #region Validate Point Name
+
+                if (string.IsNullOrWhiteSpace(importItem.PointName))
+                {
+                    AppendValidationError(
+                        importItem: importItem,
+                        errorMessage: "Point Name is blank.");
+                }
+                else if (importItem.PointName.Length > 50)
+                {
+                    AppendValidationError(
+                        importItem: importItem,
+                        errorMessage:
+                            "Point Name exceeds the database limit of 50 characters.");
+                }
+
+                #endregion
+
+
+                #region Validate Replacement Name
+
+                if (string.IsNullOrWhiteSpace(importItem.ReplacementName))
+                {
+                    AppendValidationError(
+                        importItem: importItem,
+                        errorMessage: "Replacement Name is blank.");
+                }
+                else if (importItem.ReplacementName.Length > 50)
+                {
+                    AppendValidationError(
+                        importItem: importItem,
+                        errorMessage:
+                            "Replacement Name exceeds the database limit of 50 characters.");
+                }
+
+                #endregion
+
+
+                #region Parse Easting
+
+                if (decimal.TryParse(
+                    s: importItem.EastingText,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture,
+                    result: out decimal easting))
+                {
+                    importItem.Easting =
+                        easting;
+                }
+                else
+                {
+                    AppendValidationError(
+                        importItem: importItem,
+                        errorMessage:
+                            $"Invalid Easting '{importItem.EastingText}'.");
+                }
+
+                #endregion
+
+
+                #region Parse Northing
+
+                if (decimal.TryParse(
+                    s: importItem.NorthingText,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture,
+                    result: out decimal northing))
+                {
+                    importItem.Northing =
+                        northing;
+                }
+                else
+                {
+                    AppendValidationError(
+                        importItem: importItem,
+                        errorMessage:
+                            $"Invalid Northing '{importItem.NorthingText}'.");
+                }
+
+                #endregion
+
+
+                #region Parse Height
+
+                if (decimal.TryParse(
+                    s: importItem.HeightText,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture,
+                    result: out decimal height))
+                {
+                    importItem.Height =
+                        height;
+                }
+                else
+                {
+                    AppendValidationError(
+                        importItem: importItem,
+                        errorMessage:
+                            $"Invalid Height '{importItem.HeightText}'.");
+                }
+
+                #endregion
+
+
+                #region Add Parsed Row
+
+                importItems.Add(
+                    item: importItem);
+
+                #endregion
+            }
+
+            #endregion
+
+
+            #region Return Parsed CSV
+
+            return importItems;
+
+            #endregion
+        }
+
+
+        private static bool TryParseCsvLine(
+            string line,
+            out List<string> fields,
+            out string errorMessage)
+        {
+            #region Initialise Parser
+
+            fields =
+                new List<string>();
+
+            errorMessage =
+                string.Empty;
+
+            StringBuilder currentField =
+                new();
+
+            bool insideQuotes =
+                false;
+
+            #endregion
+
+
+            #region Parse Characters
+
+            for (int characterIndex = 0;
+                 characterIndex < line.Length;
+                 characterIndex++)
+            {
+                char currentCharacter =
+                    line[characterIndex];
+
+                if (currentCharacter == '"')
+                {
+                    if (insideQuotes &&
+                        characterIndex + 1 < line.Length &&
+                        line[characterIndex + 1] == '"')
+                    {
+                        currentField.Append(
+                            value: '"');
+
+                        characterIndex++;
+
+                        continue;
+                    }
+
+                    insideQuotes =
+                        !insideQuotes;
+
+                    continue;
+                }
+
+                if (currentCharacter == ',' &&
+                    !insideQuotes)
+                {
+                    fields.Add(
+                        item: currentField.ToString());
+
+                    currentField.Clear();
+
+                    continue;
+                }
+
+                currentField.Append(
+                    value: currentCharacter);
+            }
+
+            #endregion
+
+
+            #region Validate Quotation
+
+            if (insideQuotes)
+            {
+                errorMessage =
+                    "Malformed CSV row: unmatched quotation mark.";
+
+                return false;
+            }
+
+            #endregion
+
+
+            #region Add Final Field
+
+            fields.Add(
+                item: currentField.ToString());
+
+            return true;
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Load Existing Project Reference Points
+
+        private async Task<List<ExistingReferencePointState>>
+            LoadExistingReferencePointStatesAsync(
+                int projectId)
+        {
+            #region Validate Project ID
+
+            if (projectId <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    paramName: nameof(projectId),
+                    message: "Project_ID must be greater than zero.");
+            }
+
+            #endregion
+
+
+            #region Open Database Connection
+
+            string databaseConnectionString =
+                GetTrackGeometryConnectionString();
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString: databaseConnectionString);
+
+            await databaseConnection.OpenAsync();
+
+            #endregion
+
+
+            #region Load Reference Point State
+
+            return await LoadExistingReferencePointStatesAsync(
+                projectId: projectId,
+                databaseConnection: databaseConnection,
+                transaction: null,
+                applyCommitLocks: false);
+
+            #endregion
+        }
+
+
+        private static async Task<List<ExistingReferencePointState>>
+            LoadExistingReferencePointStatesAsync(
+                int projectId,
+                SqlConnection databaseConnection,
+                SqlTransaction? transaction,
+                bool applyCommitLocks)
+        {
+            #region Define Existing Point Query
+
+            string pointLockHint =
+                applyCommitLocks
+                    ? " WITH (UPDLOCK, HOLDLOCK)"
+                    : string.Empty;
+
+            string referenceLockHint =
+                applyCommitLocks
+                    ? " WITH (UPDLOCK, HOLDLOCK)"
+                    : string.Empty;
+
+            string existingPointsSql =
+                $"""
+                SELECT
+                    PN.[PointName_ID],
+                    PN.[Project_ID],
+                    PN.[PointName],
+                    PN.[ReplacementName],
+                    PN.[IsDeleted],
+                    CR.[Eref],
+                    CR.[Nref],
+                    CR.[Href]
+                FROM [dbo].[PointName] AS PN{pointLockHint}
+                LEFT JOIN [dbo].[CoordinatesReference] AS CR{referenceLockHint}
+                    ON CR.[PointName_ID] = PN.[PointName_ID]
+                    AND CR.[IsDeleted] = 0
+                WHERE
+                    PN.[Project_ID] = @Project_ID;
+                """;
+
+            #endregion
+
+
+            #region Load Existing Point State
+
+            List<ExistingReferencePointState> existingPoints =
+                new();
+
+            await using SqlCommand existingPointsCommand =
+                transaction is null
+                    ? new SqlCommand(
+                        cmdText: existingPointsSql,
+                        connection: databaseConnection)
+                    : new SqlCommand(
+                        cmdText: existingPointsSql,
+                        connection: databaseConnection,
+                        transaction: transaction);
+
+            existingPointsCommand.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    projectId;
+
+            await using SqlDataReader reader =
+                await existingPointsCommand.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                bool hasReference =
+                    !reader.IsDBNull(
+                        i: 5);
+
+                ExistingReferencePointState existingPoint =
+                    new()
+                    {
+                        PointName_ID =
+                            reader.GetInt32(
+                                i: 0),
+
+                        Project_ID =
+                            reader.GetInt32(
+                                i: 1),
+
+                        PointName =
+                            reader.GetString(
+                                i: 2),
+
+                        ReplacementName =
+                            reader.GetString(
+                                i: 3),
+
+                        IsDeleted =
+                            reader.GetBoolean(
+                                i: 4),
+
+                        HasReference =
+                            hasReference,
+
+                        Easting =
+                            hasReference
+                                ? reader.GetDecimal(
+                                    i: 5)
+                                : null,
+
+                        Northing =
+                            hasReference
+                                ? reader.GetDecimal(
+                                    i: 6)
+                                : null,
+
+                        Height =
+                            hasReference
+                                ? reader.GetDecimal(
+                                    i: 7)
+                                : null
+                    };
+
+                existingPoints.Add(
+                    item: existingPoint);
+            }
+
+            return existingPoints;
+
+            #endregion
+        }
+
+
+        private sealed class ExistingReferencePointState
+        {
+            public int PointName_ID { get; init; }
+
+            public int Project_ID { get; init; }
+
+            public string PointName { get; init; } =
+                string.Empty;
+
+            public string ReplacementName { get; init; } =
+                string.Empty;
+
+            public bool IsDeleted { get; init; }
+
+            public bool HasReference { get; init; }
+
+            public decimal? Easting { get; init; }
+
+            public decimal? Northing { get; init; }
+
+            public decimal? Height { get; init; }
+        }
+
+        #endregion
+
+
+        #region Complete Import Validation
+
+        private static void ValidateReferenceCoordinateImport(
+            List<ReferenceCoordinateImportItem> importItems,
+            List<ExistingReferencePointState> existingPoints)
+        {
+            #region Validate Arguments
+
+            ArgumentNullException.ThrowIfNull(
+                argument: importItems);
+
+            ArgumentNullException.ThrowIfNull(
+                argument: existingPoints);
+
+            #endregion
+
+
+            #region Validate Combined Names Within CSV
+
+            Dictionary<string,
+                (ReferenceCoordinateImportItem Item, string NameType)>
+                incomingNames =
+                    new(
+                        comparer: StringComparer.OrdinalIgnoreCase);
+
+            foreach (ReferenceCoordinateImportItem importItem in importItems)
+            {
+                RegisterIncomingName(
+                    name: importItem.PointName,
+                    nameType: "Point Name",
+                    importItem: importItem,
+                    incomingNames: incomingNames);
+
+                if (!string.Equals(
+                    a: importItem.PointName,
+                    b: importItem.ReplacementName,
+                    comparisonType: StringComparison.OrdinalIgnoreCase))
+                {
+                    RegisterIncomingName(
+                        name: importItem.ReplacementName,
+                        nameType: "Replacement Name",
+                        importItem: importItem,
+                        incomingNames: incomingNames);
+                }
+            }
+
+            #endregion
+
+
+            #region Build Existing Point Namespace
+
+            Dictionary<string, List<ExistingReferencePointState>> existingNames =
+                BuildExistingReferencePointNamespace(
+                    existingPoints: existingPoints);
+
+            #endregion
+
+
+            #region Validate Incoming Names Against Database
+
+            foreach (ReferenceCoordinateImportItem importItem in importItems)
+            {
+                ValidateIncomingPointAgainstExistingDatabase(
+                    importItem: importItem,
+                    existingNames: existingNames);
+            }
+
+            #endregion
+
+
+            #region Validate Horizontal Coordinate Duplicates
+
+            ValidateHorizontalCoordinateDuplicates(
+                importItems: importItems,
+                existingPoints: existingPoints);
+
+            #endregion
+
+
+            #region Finalise Validation Status
+
+            foreach (ReferenceCoordinateImportItem importItem in importItems)
+            {
+                if (importItem.IsValid)
+                {
+                    importItem.ValidationStatus =
+                        "Valid";
+                }
+            }
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Name Validation Helpers
+
+        private static void RegisterIncomingName(
+            string name,
+            string nameType,
+            ReferenceCoordinateImportItem importItem,
+            Dictionary<string,
+                (ReferenceCoordinateImportItem Item, string NameType)> incomingNames)
+        {
+            #region Ignore Invalid Blank Names
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return;
+            }
+
+            #endregion
+
+
+            #region Check Existing Incoming Name
+
+            if (incomingNames.TryGetValue(
+                key: name,
+                value: out
+                    (ReferenceCoordinateImportItem Item, string NameType)
+                    existingName))
+            {
+                AppendValidationError(
+                    importItem: importItem,
+                    errorMessage:
+                        $"{nameType} '{name}' duplicates CSV row " +
+                        $"{existingName.Item.SourceRow}.");
+
+                AppendValidationError(
+                    importItem: existingName.Item,
+                    errorMessage:
+                        $"'{name}' duplicates CSV row {importItem.SourceRow}.");
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Register Name
+
+            incomingNames.Add(
+                key: name,
+                value: (importItem, nameType));
+
+            #endregion
+        }
+
+
+        private static Dictionary<string, List<ExistingReferencePointState>>
+            BuildExistingReferencePointNamespace(
+                List<ExistingReferencePointState> existingPoints)
+        {
+            #region Build Existing Namespace
+
+            Dictionary<string, List<ExistingReferencePointState>> existingNames =
+                new(
+                    comparer: StringComparer.OrdinalIgnoreCase);
+
+            foreach (ExistingReferencePointState existingPoint in existingPoints)
+            {
+                RegisterExistingReferencePointName(
+                    name: existingPoint.PointName,
+                    existingPoint: existingPoint,
+                    existingNames: existingNames);
+
+                if (!string.Equals(
+                    a: existingPoint.PointName,
+                    b: existingPoint.ReplacementName,
+                    comparisonType: StringComparison.OrdinalIgnoreCase))
+                {
+                    RegisterExistingReferencePointName(
+                        name: existingPoint.ReplacementName,
+                        existingPoint: existingPoint,
+                        existingNames: existingNames);
+                }
+            }
+
+            return existingNames;
+
+            #endregion
+        }
+
+
+        private static void RegisterExistingReferencePointName(
+            string name,
+            ExistingReferencePointState existingPoint,
+            Dictionary<string, List<ExistingReferencePointState>> existingNames)
+        {
+            #region Register Existing Name
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return;
+            }
+
+            if (!existingNames.TryGetValue(
+                key: name,
+                value: out List<ExistingReferencePointState>? matches))
+            {
+                matches =
+                    new();
+
+                existingNames.Add(
+                    key: name,
+                    value: matches);
+            }
+
+            foreach (ExistingReferencePointState match in matches)
+            {
+                if (match.PointName_ID == existingPoint.PointName_ID)
+                {
+                    return;
+                }
+            }
+
+            matches.Add(
+                item: existingPoint);
+
+            #endregion
+        }
+
+
+        private static void ValidateIncomingPointAgainstExistingDatabase(
+            ReferenceCoordinateImportItem importItem,
+            Dictionary<string, List<ExistingReferencePointState>> existingNames)
+        {
+            #region Resolve Existing Database Point
+
+            Dictionary<int, ExistingReferencePointState> matchesByPointId =
+                new();
+
+            AddExistingReferenceMatches(
+                lookupName: importItem.PointName,
+                existingNames: existingNames,
+                matchesByPointId: matchesByPointId);
+
+            AddExistingReferenceMatches(
+                lookupName: importItem.ReplacementName,
+                existingNames: existingNames,
+                matchesByPointId: matchesByPointId);
+
+            if (matchesByPointId.Count > 1)
+            {
+                AppendValidationError(
+                    importItem: importItem,
+                    errorMessage: "Name collision in database.");
+
+                return;
+            }
+
+            ExistingReferencePointState? existingPoint =
+                null;
+
+            foreach (ExistingReferencePointState match
+                in matchesByPointId.Values)
+            {
+                existingPoint =
+                    match;
+
+                break;
+            }
+
+            if (existingPoint is null)
+            {
+                return;
+            }
+
+            #endregion
+
+
+            #region Validate Existing Mapping
+
+            if (existingPoint.IsDeleted)
+            {
+                AppendValidationError(
+                    importItem: importItem,
+                    errorMessage:
+                        $"'{importItem.PointName}': Point is deleted.");
+
+                return;
+            }
+
+            bool pointNameMatches =
+                string.Equals(
+                    a: existingPoint.PointName,
+                    b: importItem.PointName,
+                    comparisonType: StringComparison.OrdinalIgnoreCase);
+
+            bool replacementNameMatches =
+                string.Equals(
+                    a: existingPoint.ReplacementName,
+                    b: importItem.ReplacementName,
+                    comparisonType: StringComparison.OrdinalIgnoreCase);
+
+            if (!pointNameMatches ||
+                !replacementNameMatches)
+            {
+                AppendValidationError(
+                    importItem: importItem,
+                    errorMessage:
+                        $"'{importItem.PointName}': Name mapping differs.");
+
+                return;
+            }
+
+            if (existingPoint.HasReference)
+            {
+                AppendValidationError(
+                    importItem: importItem,
+                    errorMessage:
+                        $"'{importItem.PointName}': Reference coordinates already exist.");
+            }
+
+            #endregion
+        }
+
+
+        private static void AddExistingReferenceMatches(
+            string lookupName,
+            Dictionary<string, List<ExistingReferencePointState>> existingNames,
+            Dictionary<int, ExistingReferencePointState> matchesByPointId)
+        {
+            #region Add Existing Matches
+
+            if (string.IsNullOrWhiteSpace(lookupName) ||
+                !existingNames.TryGetValue(
+                    key: lookupName,
+                    value: out List<ExistingReferencePointState>? matches))
+            {
+                return;
+            }
+
+            foreach (ExistingReferencePointState match in matches)
+            {
+                matchesByPointId.TryAdd(
+                    key: match.PointName_ID,
+                    value: match);
+            }
+
+            #endregion
+        }
+        #endregion
+
+
+        #region Horizontal Coordinate Duplicate Validation
+
+        private static void ValidateHorizontalCoordinateDuplicates(
+            List<ReferenceCoordinateImportItem> importItems,
+            List<ExistingReferencePointState> existingPoints)
+        {
+            #region Build Existing Coordinate Buckets
+
+            Dictionary<(long EastingBucket, long NorthingBucket),
+                List<ExistingReferencePointState>>
+                existingCoordinateBuckets =
+                    new();
+
+            foreach (ExistingReferencePointState existingPoint in existingPoints)
+            {
+                if (!existingPoint.HasReference ||
+                    !existingPoint.Easting.HasValue ||
+                    !existingPoint.Northing.HasValue)
+                {
+                    continue;
+                }
+
+                (long EastingBucket, long NorthingBucket) bucket =
+                    GetReferenceCoordinateBucket(
+                        easting: existingPoint.Easting.Value,
+                        northing: existingPoint.Northing.Value);
+
+                if (!existingCoordinateBuckets.TryGetValue(
+                    key: bucket,
+                    value: out List<ExistingReferencePointState>? bucketPoints))
+                {
+                    bucketPoints =
+                        new List<ExistingReferencePointState>();
+
+                    existingCoordinateBuckets.Add(
+                        key: bucket,
+                        value: bucketPoints);
+                }
+
+                bucketPoints.Add(
+                    item: existingPoint);
+            }
+
+            #endregion
+
+
+            #region Prepare Incoming Coordinate Buckets
+
+            Dictionary<(long EastingBucket, long NorthingBucket),
+                List<ReferenceCoordinateImportItem>>
+                incomingCoordinateBuckets =
+                    new();
+
+            #endregion
+
+
+            #region Validate Each Incoming Coordinate
+
+            foreach (ReferenceCoordinateImportItem importItem in importItems)
+            {
+                if (!importItem.Easting.HasValue ||
+                    !importItem.Northing.HasValue)
+                {
+                    continue;
+                }
+
+                decimal easting =
+                    importItem.Easting.Value;
+
+                decimal northing =
+                    importItem.Northing.Value;
+
+                (long EastingBucket, long NorthingBucket) sourceBucket =
+                    GetReferenceCoordinateBucket(
+                        easting: easting,
+                        northing: northing);
+
+
+                #region Check Against Existing Database Points
+
+                for (long eastOffset = -1;
+                     eastOffset <= 1;
+                     eastOffset++)
+                {
+                    for (long northOffset = -1;
+                         northOffset <= 1;
+                         northOffset++)
+                    {
+                        (long EastingBucket, long NorthingBucket) neighbourBucket =
+                            (
+                                sourceBucket.EastingBucket + eastOffset,
+                                sourceBucket.NorthingBucket + northOffset
+                            );
+
+                        if (!existingCoordinateBuckets.TryGetValue(
+                            key: neighbourBucket,
+                            value: out
+                                List<ExistingReferencePointState>? existingBucketPoints))
+                        {
+                            continue;
+                        }
+
+                        foreach (ExistingReferencePointState existingPoint
+                            in existingBucketPoints)
+                        {
+                            decimal distanceSquared =
+                                GetHorizontalDistanceSquared(
+                                    easting1: easting,
+                                    northing1: northing,
+                                    easting2: existingPoint.Easting.Value,
+                                    northing2: existingPoint.Northing.Value);
+
+                            if (distanceSquared <
+                                ReferenceDuplicateCoordinateToleranceSquared)
+                            {
+                                double distance =
+                                    Math.Sqrt(
+                                        d: (double)distanceSquared);
+
+                                AppendValidationError(
+                                    importItem: importItem,
+                                    errorMessage:
+                                        $"Coordinates are {distance.ToString(
+                                            format: "0.000",
+                                            provider: CultureInfo.InvariantCulture)} m " +
+                                        $"from existing database point " +
+                                        $"'{existingPoint.PointName}'.");
+                            }
+                        }
+                    }
+                }
+
+                #endregion
+
+
+                #region Check Against Earlier CSV Points
+
+                for (long eastOffset = -1;
+                     eastOffset <= 1;
+                     eastOffset++)
+                {
+                    for (long northOffset = -1;
+                         northOffset <= 1;
+                         northOffset++)
+                    {
+                        (long EastingBucket, long NorthingBucket) neighbourBucket =
+                            (
+                                sourceBucket.EastingBucket + eastOffset,
+                                sourceBucket.NorthingBucket + northOffset
+                            );
+
+                        if (!incomingCoordinateBuckets.TryGetValue(
+                            key: neighbourBucket,
+                            value: out
+                                List<ReferenceCoordinateImportItem>?
+                                incomingBucketPoints))
+                        {
+                            continue;
+                        }
+
+                        foreach (ReferenceCoordinateImportItem previousItem
+                            in incomingBucketPoints)
+                        {
+                            if (!previousItem.Easting.HasValue ||
+                                !previousItem.Northing.HasValue)
+                            {
+                                continue;
+                            }
+
+                            decimal distanceSquared =
+                                GetHorizontalDistanceSquared(
+                                    easting1: easting,
+                                    northing1: northing,
+                                    easting2: previousItem.Easting.Value,
+                                    northing2: previousItem.Northing.Value);
+
+                            if (distanceSquared <
+                                ReferenceDuplicateCoordinateToleranceSquared)
+                            {
+                                double distance =
+                                    Math.Sqrt(
+                                        d: (double)distanceSquared);
+
+                                string formattedDistance =
+                                    distance.ToString(
+                                        format: "0.000",
+                                        provider: CultureInfo.InvariantCulture);
+
+                                AppendValidationError(
+                                    importItem: importItem,
+                                    errorMessage:
+                                        $"Coordinates are {formattedDistance} m " +
+                                        $"from CSV row {previousItem.SourceRow} " +
+                                        $"('{previousItem.PointName}').");
+
+                                AppendValidationError(
+                                    importItem: previousItem,
+                                    errorMessage:
+                                        $"Coordinates are {formattedDistance} m " +
+                                        $"from CSV row {importItem.SourceRow} " +
+                                        $"('{importItem.PointName}').");
+                            }
+                        }
+                    }
+                }
+
+                #endregion
+
+
+                #region Add Incoming Point To Spatial Bucket
+
+                if (!incomingCoordinateBuckets.TryGetValue(
+                    key: sourceBucket,
+                    value: out
+                        List<ReferenceCoordinateImportItem>? sourceBucketPoints))
+                {
+                    sourceBucketPoints =
+                        new List<ReferenceCoordinateImportItem>();
+
+                    incomingCoordinateBuckets.Add(
+                        key: sourceBucket,
+                        value: sourceBucketPoints);
+                }
+
+                sourceBucketPoints.Add(
+                    item: importItem);
+
+                #endregion
+            }
+
+            #endregion
+        }
+
+
+        private static (
+            long EastingBucket,
+            long NorthingBucket)
+            GetReferenceCoordinateBucket(
+                decimal easting,
+                decimal northing)
+        {
+            #region Calculate Spatial Bucket
+
+            long eastingBucket =
+                (long)decimal.Floor(
+                    d: easting /
+                       ReferenceDuplicateCoordinateTolerance);
+
+            long northingBucket =
+                (long)decimal.Floor(
+                    d: northing /
+                       ReferenceDuplicateCoordinateTolerance);
+
+            return
+                (
+                    EastingBucket: eastingBucket,
+                    NorthingBucket: northingBucket
+                );
+
+            #endregion
+        }
+
+
+        private static decimal GetHorizontalDistanceSquared(
+            decimal easting1,
+            decimal northing1,
+            decimal easting2,
+            decimal northing2)
+        {
+            #region Calculate Horizontal Distance Squared
+
+            decimal deltaEasting =
+                easting2 - easting1;
+
+            decimal deltaNorthing =
+                northing2 - northing1;
+
+            return
+                (deltaEasting * deltaEasting) +
+                (deltaNorthing * deltaNorthing);
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Validation Status Helper
+
+        private static void AppendValidationError(
+            ReferenceCoordinateImportItem importItem,
+            string errorMessage)
+        {
+            #region Validate Parameters
+
+            ArgumentNullException.ThrowIfNull(
+                argument: importItem);
+
+            if (string.IsNullOrWhiteSpace(errorMessage))
+            {
+                return;
+            }
+
+            #endregion
+
+
+            #region Append Error
+
+            importItem.IsValid =
+                false;
+
+            if (string.IsNullOrWhiteSpace(importItem.ValidationStatus) ||
+                string.Equals(
+                    a: importItem.ValidationStatus,
+                    b: "Valid",
+                    comparisonType: StringComparison.Ordinal))
+            {
+                importItem.ValidationStatus =
+                    errorMessage;
+            }
+            else
+            {
+                importItem.ValidationStatus =
+                    $"{importItem.ValidationStatus}; {errorMessage}";
+            }
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Commit Reference Coordinate Import
+
+        private async void btnCommitReferenceImport_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Validate Commit Context
+
+            if (!_referenceImportProjectId.HasValue)
+            {
+                btnCommitReferenceImport.IsEnabled =
+                    false;
+
+                txtReferenceImportStatus.Text =
+                    "Import blocked: no target project is associated with the preview.";
+
+                return;
+            }
+
+            if (!_activeProjectId.HasValue ||
+                _activeProjectId.Value != _referenceImportProjectId.Value)
+            {
+                btnCommitReferenceImport.IsEnabled =
+                    false;
+
+                txtReferenceImportStatus.Text =
+                    "Import blocked: the active project has changed. Select the CSV again.";
+
+                return;
+            }
+
+            if (_referenceImportItems.Count == 0)
+            {
+                btnCommitReferenceImport.IsEnabled =
+                    false;
+
+                txtReferenceImportStatus.Text =
+                    "Import blocked: there are no reference points to import.";
+
+                return;
+            }
+
+            foreach (ReferenceCoordinateImportItem importItem
+                in _referenceImportItems)
+            {
+                if (!importItem.IsValid)
+                {
+                    btnCommitReferenceImport.IsEnabled =
+                        false;
+
+                    txtReferenceImportStatus.Text =
+                        "Import blocked: the preview contains validation errors.";
+
+                    return;
+                }
+            }
+
+            #endregion
+
+
+            #region Confirm Import
+
+            txtReferenceImportStatus.Text =
+                $"Ready to import {_referenceImportItems.Count} point(s) " +
+                $"into project '{_referenceImportProjectName}'.";
+
+            string confirmationMessage =
+                $"Project: {_referenceImportProjectName}\n\n" +
+                $"Points to import: {_referenceImportItems.Count}\n" +
+                "Validation errors: 0\n\n" +
+                "Commit this import?";
+
+            MessageBoxResult confirmationResult =
+                MessageBox.Show(
+                    owner: this,
+                    messageBoxText: confirmationMessage,
+                    caption: "Confirm Reference Coordinate Import",
+                    button: MessageBoxButton.YesNo,
+                    icon: MessageBoxImage.Question);
+
+            if (confirmationResult != MessageBoxResult.Yes)
+            {
+                txtReferenceImportStatus.Text =
+                    "Import cancelled. No data was written to the database.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Prepare Commit
+
+            btnCommitReferenceImport.IsEnabled =
+                false;
+
+            btnSelectReferenceCsv.IsEnabled =
+                false;
+
+            btnClearReferenceImport.IsEnabled =
+                false;
+
+            cmbReferenceCsvColumnOrder.IsEnabled =
+                false;
+
+            txtReferenceImportStatus.Text =
+                $"Revalidating and importing {_referenceImportItems.Count} point(s) " +
+                $"into project '{_referenceImportProjectName}'...";
+
+            #endregion
+
+
+            try
+            {
+                #region Execute Atomic Import
+
+                int importedPointCount =
+                    await CommitReferenceCoordinateImportAsync(
+                        projectId: _referenceImportProjectId.Value,
+                        projectName: _referenceImportProjectName);
+
+                #endregion
+
+
+                #region Report Successful Import
+
+                btnCommitReferenceImport.IsEnabled =
+                    false;
+
+                cmbReferenceCsvColumnOrder.IsEnabled =
+                    false;
+
+                txtReferenceImportStatus.Text =
+                    $"{importedPointCount} point(s) imported successfully " +
+                    $"into project '{_referenceImportProjectName}'.";
+
+                #endregion
+            }
+            catch (Exception ex)
+            {
+                #region Report Failed Import
+
+                bool previewStillValid =
+                    true;
+
+                foreach (ReferenceCoordinateImportItem importItem
+                    in _referenceImportItems)
+                {
+                    if (!importItem.IsValid)
+                    {
+                        previewStillValid =
+                            false;
+
+                        break;
+                    }
+                }
+
+                btnCommitReferenceImport.IsEnabled =
+                    previewStillValid;
+
+                dgReferenceCoordinateImport.Items.Refresh();
+
+                txtReferenceImportStatus.Text =
+                    $"Import failed. No data committed. {ex.Message}";
+
+                #endregion
+            }
+            finally
+            {
+                #region Restore Import Controls
+
+                btnSelectReferenceCsv.IsEnabled =
+                    true;
+
+                btnClearReferenceImport.IsEnabled =
+                    true;
+
+                #endregion
+            }
+        }
+
+        #endregion
+
+
+        #region Atomic Reference Coordinate Database Import
+
+        private async Task<int> CommitReferenceCoordinateImportAsync(
+            int projectId,
+            string projectName)
+        {
+            #region Validate Parameters
+
+            if (projectId <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    paramName: nameof(projectId),
+                    message: "Project_ID must be greater than zero.");
+            }
+
+            if (string.IsNullOrWhiteSpace(projectName))
+            {
+                throw new ArgumentException(
+                    message: "Project name cannot be blank.",
+                    paramName: nameof(projectName));
+            }
+
+            #endregion
+
+
+            #region Capture Preview Dataset
+
+            List<ReferenceCoordinateImportItem> importItems =
+                new(
+                    collection: _referenceImportItems);
+
+            if (importItems.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "The reference-coordinate preview contains no records.");
+            }
+
+            #endregion
+
+
+            #region Resolve Database Connection String
+
+            string databaseConnectionString =
+                GetTrackGeometryConnectionString();
+
+            #endregion
+
+
+            #region Open Database Connection
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        databaseConnectionString);
+
+            await databaseConnection.OpenAsync();
+
+            #endregion
+
+
+            #region Begin Serializable Transaction
+
+            using SqlTransaction transaction =
+                databaseConnection.BeginTransaction(
+                    iso:
+                        System.Data.IsolationLevel.Serializable);
+
+            bool transactionCommitted =
+                false;
+
+            #endregion
+
+
+            try
+            {
+                #region Acquire Import Transaction Lock
+
+                await AcquireReferenceImportTransactionLockAsync(
+                    projectId: projectId,
+                    databaseConnection: databaseConnection,
+                    transaction: transaction);
+
+                #endregion
+
+
+                #region Revalidate Target Project
+
+                await ValidateImportTargetProjectAsync(
+                    projectId: projectId,
+                    expectedProjectName: projectName,
+                    databaseConnection: databaseConnection,
+                    transaction: transaction);
+
+                #endregion
+
+
+                #region Reset Preview Validation Status
+
+                foreach (ReferenceCoordinateImportItem importItem
+                    in importItems)
+                {
+                    importItem.IsValid =
+                        true;
+
+                    importItem.ValidationStatus =
+                        "Valid";
+                }
+
+                #endregion
+
+
+                #region Reload Current Database Reference Points
+
+                List<ExistingReferencePointState> existingPoints =
+                    await LoadExistingReferencePointStatesAsync(
+                        projectId: projectId,
+                        databaseConnection: databaseConnection,
+                        transaction: transaction,
+                        applyCommitLocks: true);
+
+                #endregion
+
+
+                #region Revalidate Import Against Current Database
+
+                ValidateReferenceCoordinateImport(
+                    importItems: importItems,
+                    existingPoints: existingPoints);
+
+                int invalidRowCount =
+                    0;
+
+                foreach (ReferenceCoordinateImportItem importItem
+                    in importItems)
+                {
+                    if (!importItem.IsValid)
+                    {
+                        invalidRowCount++;
+                    }
+                }
+
+                dgReferenceCoordinateImport.Items.Refresh();
+
+                if (invalidRowCount > 0)
+                {
+                    throw new InvalidOperationException(
+                        $"{invalidRowCount} row(s) failed final validation.");
+                }
+
+                #endregion
+
+
+                #region Insert Reference Points
+
+                foreach (ReferenceCoordinateImportItem importItem
+                    in importItems)
+                {
+                    int pointNameId =
+                        await ResolveOrInsertPointNameAsync(
+                            projectId: projectId,
+                            importItem: importItem,
+                            databaseConnection: databaseConnection,
+                            transaction: transaction);
+
+                    await InsertReferenceCoordinatesAsync(
+                        pointNameId: pointNameId,
+                        importItem: importItem,
+                        databaseConnection: databaseConnection,
+                        transaction: transaction);
+                }
+
+                #endregion
+
+
+                #region Commit Transaction
+
+                transaction.Commit();
+
+                transactionCommitted =
+                    true;
+
+                return importItems.Count;
+
+                #endregion
+            }
+            catch
+            {
+                #region Roll Back Transaction
+
+                if (!transactionCommitted)
+                {
+                    try
+                    {
+                        transaction.Rollback();
+                    }
+                    catch
+                    {
+                        // Preserve the original exception.
+                    }
+                }
+
+                throw;
+
+                #endregion
+            }
+        }
+
+        #endregion
+
+
+        #region Reference Import Transaction Lock
+
+        private static async Task AcquireReferenceImportTransactionLockAsync(
+            int projectId,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Define Import Lock
+
+            string lockResource =
+                $"GNA_DLRreport:ReferenceImport:{projectId}";
+
+            const string lockSql = """
+        DECLARE @LockResult int;
+
+        EXEC @LockResult = sys.sp_getapplock
+            @Resource = @Resource,
+            @LockMode = 'Exclusive',
+            @LockOwner = 'Transaction',
+            @LockTimeout = 0;
+
+        SELECT @LockResult;
+        """;
+
+            #endregion
+
+
+            #region Acquire Import Lock
+
+            await using SqlCommand lockCommand =
+                new(
+                    cmdText: lockSql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            lockCommand.Parameters.Add(
+                parameterName: "@Resource",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 255)
+                .Value =
+                    lockResource;
+
+            object? lockResultValue =
+                await lockCommand.ExecuteScalarAsync();
+
+            if (lockResultValue is null ||
+                lockResultValue == DBNull.Value)
+            {
+                throw new InvalidOperationException(
+                    "SQL Server did not return an import-lock result.");
+            }
+
+            int lockResult =
+                Convert.ToInt32(
+                    value: lockResultValue,
+                    provider: CultureInfo.InvariantCulture);
+
+            if (lockResult < 0)
+            {
+                throw new InvalidOperationException(
+                    "Another reference-coordinate import is currently active " +
+                    "for this project.");
+            }
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Resolve Or Insert Point Name
+
+        private static async Task<int> ResolveOrInsertPointNameAsync(
+            int projectId,
+            ReferenceCoordinateImportItem importItem,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Validate Import Item
+
+            if (string.IsNullOrWhiteSpace(importItem.PointName))
+            {
+                throw new InvalidOperationException(
+                    $"Row {importItem.SourceRow}: PointName blank.");
+            }
+
+            if (string.IsNullOrWhiteSpace(importItem.ReplacementName))
+            {
+                throw new InvalidOperationException(
+                    $"Row {importItem.SourceRow}: ReplacementName blank.");
+            }
+
+            #endregion
+
+
+            #region Search Existing Point Namespace
+
+            const string findPointSql = """
+        SELECT
+            PN.[PointName_ID],
+            PN.[PointName],
+            PN.[ReplacementName],
+            PN.[IsDeleted],
+            CASE
+                WHEN CR.[PointName_ID] IS NULL THEN 0
+                ELSE 1
+            END AS [HasReference]
+        FROM [dbo].[PointName] AS PN WITH (UPDLOCK, HOLDLOCK)
+        LEFT JOIN [dbo].[CoordinatesReference] AS CR WITH (HOLDLOCK)
+            ON CR.[PointName_ID] = PN.[PointName_ID]
+                    AND CR.[IsDeleted] = 0
+        WHERE
+            PN.[Project_ID] = @Project_ID
+            AND
+            (
+                UPPER(PN.[PointName]) = UPPER(@PointName)
+                OR UPPER(PN.[ReplacementName]) = UPPER(@PointName)
+                OR UPPER(PN.[PointName]) = UPPER(@ReplacementName)
+                OR UPPER(PN.[ReplacementName]) = UPPER(@ReplacementName)
+            );
+        """;
+
+            await using SqlCommand findPointCommand =
+                new(
+                    cmdText: findPointSql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            findPointCommand.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    projectId;
+
+            findPointCommand.Parameters.Add(
+                parameterName: "@PointName",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 50)
+                .Value =
+                    importItem.PointName;
+
+            findPointCommand.Parameters.Add(
+                parameterName: "@ReplacementName",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 50)
+                .Value =
+                    importItem.ReplacementName;
+
+            #endregion
+
+
+            #region Read Existing Point Match
+
+            int? existingPointId =
+                null;
+
+            string existingPointName =
+                string.Empty;
+
+            string existingReplacementName =
+                string.Empty;
+
+            bool existingPointIsDeleted =
+                false;
+
+            bool existingPointHasReference =
+                false;
+
+            int matchCount =
+                0;
+
+            await using (SqlDataReader reader =
+                await findPointCommand.ExecuteReaderAsync())
+            {
+                while (await reader.ReadAsync())
+                {
+                    matchCount++;
+
+                    existingPointId =
+                        reader.GetInt32(
+                            i: 0);
+
+                    existingPointName =
+                        reader.GetString(
+                            i: 1);
+
+                    existingReplacementName =
+                        reader.GetString(
+                            i: 2);
+
+                    existingPointIsDeleted =
+                        reader.GetBoolean(
+                            i: 3);
+
+                    existingPointHasReference =
+                        reader.GetInt32(
+                            i: 4) == 1;
+                }
+            }
+
+            #endregion
+
+
+            #region Handle Multiple Namespace Matches
+
+            if (matchCount > 1)
+            {
+                throw new InvalidOperationException(
+                    $"'{importItem.PointName}': Name collision.");
+            }
+
+            #endregion
+
+
+            #region Reuse Existing Point
+
+            if (matchCount == 1 &&
+                existingPointId.HasValue)
+            {
+                if (existingPointIsDeleted)
+                {
+                    throw new InvalidOperationException(
+                        $"'{importItem.PointName}': Point is deleted.");
+                }
+
+                bool pointNameMatches =
+                    string.Equals(
+                        a: existingPointName,
+                        b: importItem.PointName,
+                        comparisonType: StringComparison.OrdinalIgnoreCase);
+
+                bool replacementNameMatches =
+                    string.Equals(
+                        a: existingReplacementName,
+                        b: importItem.ReplacementName,
+                        comparisonType: StringComparison.OrdinalIgnoreCase);
+
+                if (!pointNameMatches ||
+                    !replacementNameMatches)
+                {
+                    throw new InvalidOperationException(
+                        $"'{importItem.PointName}': Name mapping differs.");
+                }
+
+                if (existingPointHasReference)
+                {
+                    throw new InvalidOperationException(
+                        $"'{importItem.PointName}': Reference coordinates already exist.");
+                }
+
+                return existingPointId.Value;
+            }
+
+            #endregion
+
+
+            #region Insert New Point
+
+            return await InsertPointNameAsync(
+                projectId: projectId,
+                importItem: importItem,
+                databaseConnection: databaseConnection,
+                transaction: transaction);
+
+            #endregion
+        }
+
+
+        private static async Task<int> InsertPointNameAsync(
+            int projectId,
+            ReferenceCoordinateImportItem importItem,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Define Point Name Insert
+
+            const string insertPointNameSql = """
+        INSERT INTO [dbo].[PointName]
+        (
+            [PointName],
+            [ReplacementName],
+            [Project_ID],
+            [IsDeleted]
+        )
+        VALUES
+        (
+            @PointName,
+            @ReplacementName,
+            @Project_ID,
+            0
+        );
+
+        SELECT CAST(SCOPE_IDENTITY() AS int);
+        """;
+
+            #endregion
+
+
+            #region Insert Point Name
+
+            await using SqlCommand insertPointNameCommand =
+                new(
+                    cmdText: insertPointNameSql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            insertPointNameCommand.Parameters.Add(
+                parameterName: "@PointName",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 50)
+                .Value =
+                    importItem.PointName;
+
+            insertPointNameCommand.Parameters.Add(
+                parameterName: "@ReplacementName",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 50)
+                .Value =
+                    importItem.ReplacementName;
+
+            insertPointNameCommand.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    projectId;
+
+            object? pointNameIdValue =
+                await insertPointNameCommand.ExecuteScalarAsync();
+
+            if (pointNameIdValue is null ||
+                pointNameIdValue == DBNull.Value)
+            {
+                throw new InvalidOperationException(
+                    $"'{importItem.PointName}': Point insert failed.");
+            }
+
+            return Convert.ToInt32(
+                value: pointNameIdValue,
+                provider: CultureInfo.InvariantCulture);
+
+            #endregion
+        }
+
+        #endregion
+
+
+
+        #region Insert Reference Coordinates
+
+        private static async Task InsertReferenceCoordinatesAsync(
+            int pointNameId,
+            ReferenceCoordinateImportItem importItem,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Validate Coordinates
+
+            if (!importItem.Easting.HasValue ||
+                !importItem.Northing.HasValue ||
+                !importItem.Height.HasValue)
+            {
+                throw new InvalidOperationException(
+                    $"CSV row {importItem.SourceRow} does not contain " +
+                    "complete valid reference coordinates.");
+            }
+
+            #endregion
+
+
+            #region Define Coordinate Insert
+
+            const string insertCoordinateSql = """
+        INSERT INTO [dbo].[CoordinatesReference]
+        (
+            [PointName_ID],
+            [Eref],
+            [Nref],
+            [Href]
+        )
+        VALUES
+        (
+            @PointName_ID,
+            @Eref,
+            @Nref,
+            @Href
+        );
+        """;
+
+            #endregion
+
+
+            #region Insert Coordinates
+
+            await using SqlCommand insertCoordinateCommand =
+                new(
+                    cmdText: insertCoordinateSql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            insertCoordinateCommand.Parameters.Add(
+                parameterName: "@PointName_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    pointNameId;
+
+
+            SqlParameter eastingParameter =
+                insertCoordinateCommand.Parameters.Add(
+                    parameterName: "@Eref",
+                    sqlDbType: System.Data.SqlDbType.Decimal);
+
+            eastingParameter.Precision =
+                18;
+
+            eastingParameter.Scale =
+                6;
+
+            eastingParameter.Value =
+                importItem.Easting.Value;
+
+
+            SqlParameter northingParameter =
+                insertCoordinateCommand.Parameters.Add(
+                    parameterName: "@Nref",
+                    sqlDbType: System.Data.SqlDbType.Decimal);
+
+            northingParameter.Precision =
+                18;
+
+            northingParameter.Scale =
+                6;
+
+            northingParameter.Value =
+                importItem.Northing.Value;
+
+
+            SqlParameter heightParameter =
+                insertCoordinateCommand.Parameters.Add(
+                    parameterName: "@Href",
+                    sqlDbType: System.Data.SqlDbType.Decimal);
+
+            heightParameter.Precision =
+                18;
+
+            heightParameter.Scale =
+                6;
+
+            heightParameter.Value =
+                importItem.Height.Value;
+
+
+            int rowsInserted =
+                await insertCoordinateCommand.ExecuteNonQueryAsync();
+
+            if (rowsInserted != 1)
+            {
+                throw new InvalidOperationException(
+                    $"Reference coordinates for '{importItem.PointName}' " +
+                    "were not inserted correctly.");
+            }
+
+            #endregion
+        }
+
+        #endregion
+
+
+
+        #endregion
+
+        #region Geotechnical Sensor Import
+
+        #region Geotechnical Sensor Import Models
+
+        private sealed class GeotechSensorImportItem
+        {
+            public int SourceRow { get; init; }
+
+            public string RawLine { get; init; } =
+                string.Empty;
+
+            public string SensorName { get; set; } =
+                string.Empty;
+
+            public string ReplacementName { get; set; } =
+                string.Empty;
+
+            public string SensorType { get; set; } =
+                string.Empty;
+
+            public string EastingText { get; set; } =
+                string.Empty;
+
+            public string NorthingText { get; set; } =
+                string.Empty;
+
+            public string HeightText { get; set; } =
+                string.Empty;
+
+            public double Easting { get; set; }
+
+            public double Northing { get; set; }
+
+            public double Height { get; set; }
+
+            public bool IsValid { get; set; }
+
+            public string ValidationStatus { get; set; } =
+                string.Empty;
+        }
+
+
+        private sealed class ExistingGeotechSensorState
+        {
+            public int SensorID { get; init; }
+
+            public int Project_ID { get; init; }
+
+            public string SensorName { get; init; } =
+                string.Empty;
+
+            public string ReplacementName { get; init; } =
+                string.Empty;
+
+            public string SensorType { get; init; } =
+                string.Empty;
+
+            public bool IsDeleted { get; init; }
+
+            public bool HasReference { get; init; }
+        }
+
+        #endregion
+
+
+        #region Geotech CSV File Selection
+
+        private async void btnSelectGeotechCsv_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Select CSV File
+
+            OpenFileDialog openFileDialog =
+                new()
+                {
+                    Title =
+                        "Select Geotechnical Sensor CSV",
+
+                    Filter =
+                        "CSV files (*.csv)|*.csv|" +
+                        "All files (*.*)|*.*",
+
+                    DefaultExt =
+                        ".csv",
+
+                    CheckFileExists =
+                        true,
+
+                    Multiselect =
+                        false
+                };
+
+            bool? fileSelected =
+                openFileDialog.ShowDialog(
+                    owner: this);
+
+            if (fileSelected != true)
+            {
+                txtGeotechImportStatus.Text =
+                    "CSV selection cancelled.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Validate Active Project
+
+            if (!_activeProjectId.HasValue ||
+                string.IsNullOrWhiteSpace(_activeProjectName))
+            {
+                txtGeotechImportStatus.Text =
+                    "Select an active project.";
+
+                MessageBox.Show(
+                    owner: this,
+                    messageBoxText:
+                        "Select an active project before importing geotechnical sensors.",
+                    caption:
+                        "Active Project Required",
+                    button:
+                        MessageBoxButton.OK,
+                    icon:
+                        MessageBoxImage.Warning);
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Capture Import Project Context
+
+            _geotechImportProjectId =
+                _activeProjectId.Value;
+
+            _geotechImportProjectName =
+                _activeProjectName;
+
+            #endregion
+
+
+            #region Store Selected CSV
+
+            _selectedGeotechCsvPath =
+                openFileDialog.FileName;
+
+            txtGeotechCsvPath.Text =
+                _selectedGeotechCsvPath;
+
+            #endregion
+
+
+            #region Parse And Validate CSV
+
+            await ParseAndValidateSelectedGeotechCsvAsync();
+
+            #endregion
+        }
+
+
+        private void btnClearGeotechImport_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Clear Geotech Import State
+
+            ResetGeotechImportState(
+                statusMessage:
+                    "No CSV selected.");
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Geotech Import State Reset
+
+        private void ResetGeotechImportState(
+            string statusMessage)
+        {
+            #region Clear Captured Import Context
+
+            _geotechImportProjectId =
+                null;
+
+            _geotechImportProjectName =
+                string.Empty;
+
+            _selectedGeotechCsvPath =
+                string.Empty;
+
+            #endregion
+
+
+            #region Clear User Interface
+
+            txtGeotechCsvPath.Text =
+                string.Empty;
+
+            _geotechImportItems.Clear();
+
+            dgGeotechSensorImport.SelectedItem =
+                null;
+
+            btnCommitGeotechImport.IsEnabled =
+                false;
+
+            txtGeotechImportStatus.Text =
+                statusMessage;
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Geotech Import Preview Selection
+
+        private void dgGeotechSensorImport_SelectionChanged(
+            object sender,
+            SelectionChangedEventArgs e)
+        {
+            #region Display Selected Row Validation
+
+            if (dgGeotechSensorImport.SelectedItem
+                is not GeotechSensorImportItem selectedItem)
+            {
+                return;
+            }
+
+            txtGeotechImportStatus.Text =
+                selectedItem.ValidationStatus;
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Parse And Validate Selected Geotech CSV
+
+        private async Task ParseAndValidateSelectedGeotechCsvAsync()
+        {
+            #region Validate Import Context
+
+            if (!_geotechImportProjectId.HasValue)
+            {
+                throw new InvalidOperationException(
+                    "The Geotech import does not have a target Project_ID.");
+            }
+
+            if (string.IsNullOrWhiteSpace(_geotechImportProjectName))
+            {
+                throw new InvalidOperationException(
+                    "The Geotech import does not have a target project name.");
+            }
+
+            if (string.IsNullOrWhiteSpace(_selectedGeotechCsvPath))
+            {
+                throw new InvalidOperationException(
+                    "No Geotech CSV has been selected.");
+            }
+
+            if (!File.Exists(
+                path: _selectedGeotechCsvPath))
+            {
+                throw new FileNotFoundException(
+                    message:
+                        "The selected Geotech CSV no longer exists.",
+                    fileName:
+                        _selectedGeotechCsvPath);
+            }
+
+            #endregion
+
+
+            #region Prepare User Interface
+
+            btnSelectGeotechCsv.IsEnabled =
+                false;
+
+            btnClearGeotechImport.IsEnabled =
+                false;
+
+            btnCommitGeotechImport.IsEnabled =
+                false;
+
+            txtGeotechImportStatus.Text =
+                $"Validating CSV for project '{_geotechImportProjectName}'...";
+
+            #endregion
+
+
+            try
+            {
+                #region Parse Source CSV
+
+                List<GeotechSensorImportItem> importItems =
+                    ParseGeotechSensorCsv(
+                        csvPath:
+                            _selectedGeotechCsvPath);
+
+                #endregion
+
+
+                #region Load Existing Geotechnical Sensors
+
+                List<ExistingGeotechSensorState> existingSensors =
+                    await LoadExistingGeotechSensorStatesAsync(
+                        projectId:
+                            _geotechImportProjectId.Value,
+                        databaseConnection:
+                            null,
+                        transaction:
+                            null,
+                        applyCommitLocks:
+                            false);
+
+                #endregion
+
+
+                #region Validate Import
+
+                ValidateGeotechSensorImport(
+                    importItems:
+                        importItems,
+                    existingSensors:
+                        existingSensors);
+
+                #endregion
+
+
+                #region Populate Preview DataGrid
+
+                _geotechImportItems.Clear();
+
+                foreach (GeotechSensorImportItem importItem
+                    in importItems)
+                {
+                    _geotechImportItems.Add(
+                        item:
+                            importItem);
+                }
+
+                #endregion
+
+
+                #region Determine Validation Result
+
+                int invalidRowCount =
+                    importItems.Count(
+                        predicate:
+                            item => !item.IsValid);
+
+                if (importItems.Count == 0)
+                {
+                    txtGeotechImportStatus.Text =
+                        $"Project '{_geotechImportProjectName}': " +
+                        "the selected CSV contains no records.";
+
+                    return;
+                }
+
+                if (invalidRowCount > 0)
+                {
+                    txtGeotechImportStatus.Text =
+                        $"Project '{_geotechImportProjectName}': " +
+                        $"{invalidRowCount} of {importItems.Count} row(s) contain errors. " +
+                        "Import blocked.";
+
+                    return;
+                }
+
+                btnCommitGeotechImport.IsEnabled =
+                    true;
+
+                txtGeotechImportStatus.Text =
+                    $"Project '{_geotechImportProjectName}': " +
+                    $"{importItems.Count} sensor(s) valid and ready to import.";
+
+                #endregion
+            }
+            catch (Exception ex)
+            {
+                #region Report Validation Failure
+
+                _geotechImportItems.Clear();
+
+                btnCommitGeotechImport.IsEnabled =
+                    false;
+
+                txtGeotechImportStatus.Text =
+                    $"CSV validation failed: {ex.Message}";
+
+                #endregion
+            }
+            finally
+            {
+                #region Restore Controls
+
+                btnSelectGeotechCsv.IsEnabled =
+                    true;
+
+                btnClearGeotechImport.IsEnabled =
+                    true;
+
+                #endregion
+            }
+        }
+
+        #endregion
+
+
+        #region Geotech CSV Parsing
+
+        private static List<GeotechSensorImportItem>
+            ParseGeotechSensorCsv(
+                string csvPath)
+        {
+            #region Validate CSV Path
+
+            if (string.IsNullOrWhiteSpace(csvPath))
+            {
+                throw new ArgumentException(
+                    message:
+                        "CSV path cannot be empty.",
+                    paramName:
+                        nameof(csvPath));
+            }
+
+            #endregion
+
+
+            #region Read CSV Lines
+
+            string[] sourceLines =
+                File.ReadAllLines(
+                    path:
+                        csvPath);
+
+            List<GeotechSensorImportItem> importItems =
+                new();
+
+            #endregion
+
+
+            #region Parse CSV Rows
+
+            for (int lineIndex = 0;
+                 lineIndex < sourceLines.Length;
+                 lineIndex++)
+            {
+                int sourceRow =
+                    lineIndex + 1;
+
+                string rawLine =
+                    sourceLines[lineIndex];
+
+                GeotechSensorImportItem importItem =
+                    new()
+                    {
+                        SourceRow = sourceRow,
+                        RawLine = rawLine,
+                        IsValid = true,
+                        ValidationStatus = "Valid"
+                    };
+
+
+                #region Parse CSV Fields
+
+                if (!TryParseCsvLine(
+                    line:
+                        rawLine,
+                    fields:
+                        out List<string> fields,
+                    errorMessage:
+                        out string csvError))
+                {
+                    AppendGeotechValidationError(
+                        importItem:
+                            importItem,
+                        errorMessage:
+                            csvError);
+
+                    importItems.Add(
+                        item:
+                            importItem);
+
+                    continue;
+                }
+
+                #endregion
+
+
+                #region Validate Column Count
+
+                if (fields.Count != 6)
+                {
+                    AppendGeotechValidationError(
+                        importItem:
+                            importItem,
+                        errorMessage:
+                            $"Expected 6 columns; found {fields.Count}.");
+
+                    importItems.Add(
+                        item:
+                            importItem);
+
+                    continue;
+                }
+
+                #endregion
+
+
+                #region Extract Sensor Fields
+
+                importItem.SensorName =
+                    fields[0].Trim();
+
+                importItem.EastingText =
+                    fields[1].Trim();
+
+                importItem.NorthingText =
+                    fields[2].Trim();
+
+                importItem.HeightText =
+                    fields[3].Trim();
+
+                string replacementName =
+                    fields[4].Trim();
+
+                importItem.ReplacementName =
+                    string.IsNullOrWhiteSpace(replacementName)
+                        ? importItem.SensorName
+                        : replacementName;
+
+                importItem.SensorType =
+                    fields[5].Trim();
+
+                #endregion
+
+
+                #region Validate Sensor Name
+
+                if (string.IsNullOrWhiteSpace(importItem.SensorName))
+                {
+                    AppendGeotechValidationError(
+                        importItem:
+                            importItem,
+                        errorMessage:
+                            "Sensor Name is blank.");
+                }
+                else if (importItem.SensorName.Length > 50)
+                {
+                    AppendGeotechValidationError(
+                        importItem:
+                            importItem,
+                        errorMessage:
+                            "Sensor Name exceeds 50 characters.");
+                }
+
+                #endregion
+
+
+                #region Validate Replacement Name
+
+                if (string.IsNullOrWhiteSpace(importItem.ReplacementName))
+                {
+                    AppendGeotechValidationError(
+                        importItem:
+                            importItem,
+                        errorMessage:
+                            "Replacement Name is blank.");
+                }
+                else if (importItem.ReplacementName.Length > 50)
+                {
+                    AppendGeotechValidationError(
+                        importItem:
+                            importItem,
+                        errorMessage:
+                            "Replacement Name exceeds 50 characters.");
+                }
+
+                #endregion
+
+
+                #region Validate Sensor Type
+
+                if (string.IsNullOrWhiteSpace(importItem.SensorType))
+                {
+                    AppendGeotechValidationError(
+                        importItem:
+                            importItem,
+                        errorMessage:
+                            "Sensor Type is blank.");
+                }
+                else if (importItem.SensorType.Length > 50)
+                {
+                    AppendGeotechValidationError(
+                        importItem:
+                            importItem,
+                        errorMessage:
+                            "Sensor Type exceeds 50 characters.");
+                }
+
+                #endregion
+
+
+                #region Parse Optional Reference Coordinates
+
+                bool eastingBlank =
+                    string.IsNullOrWhiteSpace(importItem.EastingText);
+
+                bool northingBlank =
+                    string.IsNullOrWhiteSpace(importItem.NorthingText);
+
+                bool heightBlank =
+                    string.IsNullOrWhiteSpace(importItem.HeightText);
+
+                if (eastingBlank &&
+                    northingBlank &&
+                    heightBlank)
+                {
+                    importItem.Easting =
+                        0.0;
+
+                    importItem.Northing =
+                        0.0;
+
+                    importItem.Height =
+                        0.0;
+
+                    importItem.EastingText =
+                        "0.000";
+
+                    importItem.NorthingText =
+                        "0.000";
+
+                    importItem.HeightText =
+                        "0.000";
+                }
+                else if (eastingBlank ||
+                         northingBlank ||
+                         heightBlank)
+                {
+                    AppendGeotechValidationError(
+                        importItem:
+                            importItem,
+                        errorMessage:
+                            "E, N and Ht must all be supplied or all blank.");
+                }
+                else
+                {
+                    ParseGeotechCoordinate(
+                        coordinateText:
+                            importItem.EastingText,
+                        coordinateName:
+                            "Easting",
+                        importItem:
+                            importItem,
+                        valueSetter:
+                            value => importItem.Easting = value);
+
+                    ParseGeotechCoordinate(
+                        coordinateText:
+                            importItem.NorthingText,
+                        coordinateName:
+                            "Northing",
+                        importItem:
+                            importItem,
+                        valueSetter:
+                            value => importItem.Northing = value);
+
+                    ParseGeotechCoordinate(
+                        coordinateText:
+                            importItem.HeightText,
+                        coordinateName:
+                            "Height",
+                        importItem:
+                            importItem,
+                        valueSetter:
+                            value => importItem.Height = value);
+
+                    if (importItem.IsValid)
+                    {
+                        importItem.Easting =
+                            Math.Round(
+                                value:
+                                    importItem.Easting,
+                                digits:
+                                    6,
+                                mode:
+                                    MidpointRounding.AwayFromZero);
+
+                        importItem.Northing =
+                            Math.Round(
+                                value:
+                                    importItem.Northing,
+                                digits:
+                                    6,
+                                mode:
+                                    MidpointRounding.AwayFromZero);
+
+                        importItem.Height =
+                            Math.Round(
+                                value:
+                                    importItem.Height,
+                                digits:
+                                    6,
+                                mode:
+                                    MidpointRounding.AwayFromZero);
+
+                        importItem.EastingText =
+                            importItem.Easting.ToString(
+                                format:
+                                    "F3",
+                                provider:
+                                    CultureInfo.InvariantCulture);
+
+                        importItem.NorthingText =
+                            importItem.Northing.ToString(
+                                format:
+                                    "F3",
+                                provider:
+                                    CultureInfo.InvariantCulture);
+
+                        importItem.HeightText =
+                            importItem.Height.ToString(
+                                format:
+                                    "F3",
+                                provider:
+                                    CultureInfo.InvariantCulture);
+                    }
+                }
+
+                #endregion
+
+
+                #region Add Parsed Row
+
+                importItems.Add(
+                    item:
+                        importItem);
+
+                #endregion
+            }
+
+            #endregion
+
+
+            #region Return Parsed CSV
+
+            return importItems;
+
+            #endregion
+        }
+
+
+        private static void ParseGeotechCoordinate(
+            string coordinateText,
+            string coordinateName,
+            GeotechSensorImportItem importItem,
+            Action<double> valueSetter)
+        {
+            #region Parse Coordinate
+
+            if (!double.TryParse(
+                s:
+                    coordinateText,
+                style:
+                    NumberStyles.Float,
+                provider:
+                    CultureInfo.InvariantCulture,
+                result:
+                    out double coordinateValue) ||
+                !double.IsFinite(coordinateValue))
+            {
+                AppendGeotechValidationError(
+                    importItem:
+                        importItem,
+                    errorMessage:
+                        $"Invalid {coordinateName} '{coordinateText}'.");
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Validate Decimal 18,6 Range
+
+            const double maximumCoordinateMagnitude =
+                999999999999.999999;
+
+            if (Math.Abs(coordinateValue) >
+                maximumCoordinateMagnitude)
+            {
+                AppendGeotechValidationError(
+                    importItem:
+                        importItem,
+                    errorMessage:
+                        $"{coordinateName} exceeds decimal(18,6) range.");
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Store Coordinate
+
+            valueSetter(
+                obj:
+                    coordinateValue);
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Load Existing Geotechnical Sensors
+
+        private async Task<List<ExistingGeotechSensorState>>
+            LoadExistingGeotechSensorStatesAsync(
+                int projectId,
+                SqlConnection? databaseConnection,
+                SqlTransaction? transaction,
+                bool applyCommitLocks)
+        {
+            #region Validate Project ID
+
+            if (projectId <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    paramName:
+                        nameof(projectId),
+                    message:
+                        "Project_ID must be greater than zero.");
+            }
+
+            #endregion
+
+
+            #region Open Connection When Required
+
+            bool ownsConnection =
+                databaseConnection is null;
+
+            SqlConnection connection =
+                databaseConnection
+                ?? new SqlConnection(
+                    connectionString:
+                        GetTrackGeometryConnectionString());
+
+            if (ownsConnection)
+            {
+                await connection.OpenAsync();
+            }
+
+            #endregion
+
+
+            try
+            {
+                #region Define Existing Sensor Query
+
+                string sensorLockHint =
+                    applyCommitLocks
+                        ? " WITH (UPDLOCK, HOLDLOCK)"
+                        : string.Empty;
+
+                string referenceLockHint =
+                    applyCommitLocks
+                        ? " WITH (UPDLOCK, HOLDLOCK)"
+                        : string.Empty;
+
+                string existingSensorSql =
+                    $"""
+                    SELECT
+                        GS.[SensorID],
+                        GS.[Project_ID],
+                        GS.[SensorName],
+                        GS.[ReplacementName],
+                        GS.[SensorType],
+                        GS.[IsDeleted],
+                        CASE
+                            WHEN CR.[Coordinate_ID] IS NULL THEN 0
+                            ELSE 1
+                        END AS [HasReference]
+                    FROM [dbo].[GeotecSensors] AS GS{sensorLockHint}
+                    LEFT JOIN [dbo].[CoordinatesReference] AS CR{referenceLockHint}
+                        ON CR.[SensorID] = GS.[SensorID]
+                        AND CR.[IsDeleted] = 0
+                    WHERE
+                        GS.[Project_ID] = @Project_ID;
+                    """;
+
+                #endregion
+
+
+                #region Execute Existing Sensor Query
+
+                List<ExistingGeotechSensorState> existingSensors =
+                    new();
+
+                await using SqlCommand sensorCommand =
+                    transaction is null
+                        ? new SqlCommand(
+                            cmdText:
+                                existingSensorSql,
+                            connection:
+                                connection)
+                        : new SqlCommand(
+                            cmdText:
+                                existingSensorSql,
+                            connection:
+                                connection,
+                            transaction:
+                                transaction);
+
+                sensorCommand.Parameters.Add(
+                    parameterName:
+                        "@Project_ID",
+                    sqlDbType:
+                        System.Data.SqlDbType.Int)
+                    .Value =
+                        projectId;
+
+                await using SqlDataReader reader =
+                    await sensorCommand.ExecuteReaderAsync();
+
+                while (await reader.ReadAsync())
+                {
+                    existingSensors.Add(
+                        item:
+                            new ExistingGeotechSensorState
+                            {
+                                SensorID =
+                                    reader.GetInt32(0),
+
+                                Project_ID =
+                                    reader.GetInt32(1),
+
+                                SensorName =
+                                    reader.GetString(2),
+
+                                ReplacementName =
+                                    reader.GetString(3),
+
+                                SensorType =
+                                    reader.GetString(4),
+
+                                IsDeleted =
+                                    reader.GetBoolean(5),
+
+                                HasReference =
+                                    reader.GetInt32(6) == 1
+                            });
+                }
+
+                return existingSensors;
+
+                #endregion
+            }
+            finally
+            {
+                #region Dispose Owned Connection
+
+                if (ownsConnection)
+                {
+                    await connection.DisposeAsync();
+                }
+
+                #endregion
+            }
+        }
+
+        #endregion
+
+
+        #region Geotech Import Validation
+
+        private static void ValidateGeotechSensorImport(
+            List<GeotechSensorImportItem> importItems,
+            List<ExistingGeotechSensorState> existingSensors)
+        {
+            #region Validate Arguments
+
+            ArgumentNullException.ThrowIfNull(
+                argument:
+                    importItems);
+
+            ArgumentNullException.ThrowIfNull(
+                argument:
+                    existingSensors);
+
+            #endregion
+
+
+            #region Validate Combined Names Within CSV
+
+            Dictionary<string, GeotechSensorImportItem> incomingNames =
+                new(
+                    comparer:
+                        StringComparer.OrdinalIgnoreCase);
+
+            foreach (GeotechSensorImportItem importItem
+                in importItems)
+            {
+                RegisterGeotechImportName(
+                    name:
+                        importItem.SensorName,
+                    importItem:
+                        importItem,
+                    incomingNames:
+                        incomingNames);
+
+                if (!string.Equals(
+                    a:
+                        importItem.SensorName,
+                    b:
+                        importItem.ReplacementName,
+                    comparisonType:
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    RegisterGeotechImportName(
+                        name:
+                            importItem.ReplacementName,
+                        importItem:
+                            importItem,
+                        incomingNames:
+                            incomingNames);
+                }
+            }
+
+            #endregion
+
+
+            #region Build Existing Sensor Namespace
+
+            Dictionary<string, List<ExistingGeotechSensorState>> existingNames =
+                new(
+                    comparer:
+                        StringComparer.OrdinalIgnoreCase);
+
+            foreach (ExistingGeotechSensorState existingSensor
+                in existingSensors)
+            {
+                AddExistingGeotechName(
+                    name:
+                        existingSensor.SensorName,
+                    sensor:
+                        existingSensor,
+                    existingNames:
+                        existingNames);
+
+                if (!string.Equals(
+                    a:
+                        existingSensor.SensorName,
+                    b:
+                        existingSensor.ReplacementName,
+                    comparisonType:
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    AddExistingGeotechName(
+                        name:
+                            existingSensor.ReplacementName,
+                        sensor:
+                            existingSensor,
+                        existingNames:
+                            existingNames);
+                }
+            }
+
+            #endregion
+
+
+            #region Validate Against Existing Database Sensors
+
+            foreach (GeotechSensorImportItem importItem
+                in importItems)
+            {
+                HashSet<int> matchedSensorIds =
+                    new();
+
+                AddGeotechExistingMatches(
+                    name:
+                        importItem.SensorName,
+                    existingNames:
+                        existingNames,
+                    matchedSensorIds:
+                        matchedSensorIds);
+
+                AddGeotechExistingMatches(
+                    name:
+                        importItem.ReplacementName,
+                    existingNames:
+                        existingNames,
+                    matchedSensorIds:
+                        matchedSensorIds);
+
+                if (matchedSensorIds.Count == 0)
+                {
+                    continue;
+                }
+
+                if (matchedSensorIds.Count > 1)
+                {
+                    AppendGeotechValidationError(
+                        importItem:
+                            importItem,
+                        errorMessage:
+                            "Sensor/Replacement Name conflicts with multiple database sensors.");
+
+                    continue;
+                }
+
+                int matchedSensorId =
+                    matchedSensorIds.Single();
+
+                ExistingGeotechSensorState existingSensor =
+                    existingSensors.Single(
+                        predicate:
+                            sensor => sensor.SensorID == matchedSensorId);
+
+                bool exactMapping =
+                    string.Equals(
+                        a:
+                            importItem.SensorName,
+                        b:
+                            existingSensor.SensorName,
+                        comparisonType:
+                            StringComparison.OrdinalIgnoreCase)
+                    &&
+                    string.Equals(
+                        a:
+                            importItem.ReplacementName,
+                        b:
+                            existingSensor.ReplacementName,
+                        comparisonType:
+                            StringComparison.OrdinalIgnoreCase)
+                    &&
+                    string.Equals(
+                        a:
+                            importItem.SensorType,
+                        b:
+                            existingSensor.SensorType,
+                        comparisonType:
+                            StringComparison.OrdinalIgnoreCase);
+
+                if (exactMapping &&
+                    !existingSensor.IsDeleted &&
+                    !existingSensor.HasReference)
+                {
+                    continue;
+                }
+
+                AppendGeotechValidationError(
+                    importItem:
+                        importItem,
+                    errorMessage:
+                        "Sensor or Replacement Name already exists in this project.");
+            }
+
+            #endregion
+        }
+
+
+        private static void RegisterGeotechImportName(
+            string name,
+            GeotechSensorImportItem importItem,
+            Dictionary<string, GeotechSensorImportItem> incomingNames)
+        {
+            #region Ignore Blank Names Already Reported
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return;
+            }
+
+            #endregion
+
+
+            #region Register Or Report Duplicate
+
+            if (incomingNames.TryGetValue(
+                key:
+                    name,
+                value:
+                    out GeotechSensorImportItem? existingItem))
+            {
+                if (!ReferenceEquals(
+                    objA:
+                        existingItem,
+                    objB:
+                        importItem))
+                {
+                    AppendGeotechValidationError(
+                        importItem:
+                            existingItem,
+                        errorMessage:
+                            $"Duplicate name '{name}' in CSV.");
+
+                    AppendGeotechValidationError(
+                        importItem:
+                            importItem,
+                        errorMessage:
+                            $"Duplicate name '{name}' in CSV.");
+                }
+
+                return;
+            }
+
+            incomingNames.Add(
+                key:
+                    name,
+                value:
+                    importItem);
+
+            #endregion
+        }
+
+
+        private static void AddExistingGeotechName(
+            string name,
+            ExistingGeotechSensorState sensor,
+            Dictionary<string, List<ExistingGeotechSensorState>> existingNames)
+        {
+            #region Register Existing Name
+
+            if (!existingNames.TryGetValue(
+                key:
+                    name,
+                value:
+                    out List<ExistingGeotechSensorState>? sensors))
+            {
+                sensors =
+                    new List<ExistingGeotechSensorState>();
+
+                existingNames.Add(
+                    key:
+                        name,
+                    value:
+                        sensors);
+            }
+
+            sensors.Add(
+                item:
+                    sensor);
+
+            #endregion
+        }
+
+
+        private static void AddGeotechExistingMatches(
+            string name,
+            Dictionary<string, List<ExistingGeotechSensorState>> existingNames,
+            HashSet<int> matchedSensorIds)
+        {
+            #region Add Matching Sensor IDs
+
+            if (string.IsNullOrWhiteSpace(name) ||
+                !existingNames.TryGetValue(
+                    key:
+                        name,
+                    value:
+                        out List<ExistingGeotechSensorState>? sensors))
+            {
+                return;
+            }
+
+            foreach (ExistingGeotechSensorState sensor
+                in sensors)
+            {
+                matchedSensorIds.Add(
+                    item:
+                        sensor.SensorID);
+            }
+
+            #endregion
+        }
+
+
+        private static void AppendGeotechValidationError(
+            GeotechSensorImportItem importItem,
+            string errorMessage)
+        {
+            #region Append Validation Error
+
+            importItem.IsValid =
+                false;
+
+            if (string.IsNullOrWhiteSpace(importItem.ValidationStatus) ||
+                string.Equals(
+                    a:
+                        importItem.ValidationStatus,
+                    b:
+                        "Valid",
+                    comparisonType:
+                        StringComparison.Ordinal))
+            {
+                importItem.ValidationStatus =
+                    errorMessage;
+
+                return;
+            }
+
+            if (!importItem.ValidationStatus.Contains(
+                value:
+                    errorMessage,
+                comparisonType:
+                    StringComparison.Ordinal))
+            {
+                importItem.ValidationStatus +=
+                    $" {errorMessage}";
+            }
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Commit Geotechnical Sensor Import
+
+        private async void btnCommitGeotechImport_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Validate Commit Context
+
+            if (!_geotechImportProjectId.HasValue)
+            {
+                btnCommitGeotechImport.IsEnabled =
+                    false;
+
+                txtGeotechImportStatus.Text =
+                    "Import blocked: no target project.";
+
+                return;
+            }
+
+            if (!_activeProjectId.HasValue ||
+                _activeProjectId.Value != _geotechImportProjectId.Value)
+            {
+                btnCommitGeotechImport.IsEnabled =
+                    false;
+
+                txtGeotechImportStatus.Text =
+                    "Import blocked: active project changed. Select the CSV again.";
+
+                return;
+            }
+
+            if (_geotechImportItems.Count == 0 ||
+                _geotechImportItems.Any(
+                    predicate:
+                        item => !item.IsValid))
+            {
+                btnCommitGeotechImport.IsEnabled =
+                    false;
+
+                txtGeotechImportStatus.Text =
+                    "Import blocked: preview contains validation errors or no sensors.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Confirm Import
+
+            MessageBoxResult confirmationResult =
+                MessageBox.Show(
+                    owner:
+                        this,
+                    messageBoxText:
+                        $"Project: {_geotechImportProjectName}\n\n" +
+                        $"Sensors to import: {_geotechImportItems.Count}\n" +
+                        "Validation errors: 0\n\n" +
+                        "Commit this import?",
+                    caption:
+                        "Confirm Geotechnical Sensor Import",
+                    button:
+                        MessageBoxButton.YesNo,
+                    icon:
+                        MessageBoxImage.Question);
+
+            if (confirmationResult != MessageBoxResult.Yes)
+            {
+                txtGeotechImportStatus.Text =
+                    "Import cancelled. No data was written to the database.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Prepare Commit
+
+            btnCommitGeotechImport.IsEnabled =
+                false;
+
+            btnSelectGeotechCsv.IsEnabled =
+                false;
+
+            btnClearGeotechImport.IsEnabled =
+                false;
+
+            txtGeotechImportStatus.Text =
+                $"Revalidating and importing {_geotechImportItems.Count} sensor(s)...";
+
+            #endregion
+
+
+            try
+            {
+                #region Execute Atomic Import
+
+                int importedSensorCount =
+                    await CommitGeotechSensorImportAsync(
+                        projectId:
+                            _geotechImportProjectId.Value,
+                        projectName:
+                            _geotechImportProjectName);
+
+                #endregion
+
+
+                #region Report Successful Import
+
+                btnCommitGeotechImport.IsEnabled =
+                    false;
+
+                txtGeotechImportStatus.Text =
+                    $"{importedSensorCount} sensor(s) imported successfully " +
+                    $"into project '{_geotechImportProjectName}'.";
+
+                #endregion
+            }
+            catch (Exception ex)
+            {
+                #region Report Failed Import
+
+                bool previewStillValid =
+                    !_geotechImportItems.Any(
+                        predicate:
+                            item => !item.IsValid);
+
+                btnCommitGeotechImport.IsEnabled =
+                    previewStillValid;
+
+                dgGeotechSensorImport.Items.Refresh();
+
+                txtGeotechImportStatus.Text =
+                    $"Import failed. No data committed. {ex.Message}";
+
+                #endregion
+            }
+            finally
+            {
+                #region Restore Import Controls
+
+                btnSelectGeotechCsv.IsEnabled =
+                    true;
+
+                btnClearGeotechImport.IsEnabled =
+                    true;
+
+                #endregion
+            }
+        }
+
+        #endregion
+
+
+        #region Atomic Geotechnical Sensor Database Import
+
+        private async Task<int> CommitGeotechSensorImportAsync(
+            int projectId,
+            string projectName)
+        {
+            #region Validate Parameters
+
+            if (projectId <= 0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    paramName:
+                        nameof(projectId),
+                    message:
+                        "Project_ID must be greater than zero.");
+            }
+
+            if (string.IsNullOrWhiteSpace(projectName))
+            {
+                throw new ArgumentException(
+                    message:
+                        "Project name cannot be blank.",
+                    paramName:
+                        nameof(projectName));
+            }
+
+            #endregion
+
+
+            #region Capture Preview Dataset
+
+            List<GeotechSensorImportItem> importItems =
+                new(
+                    collection:
+                        _geotechImportItems);
+
+            if (importItems.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "The Geotech preview contains no sensors.");
+            }
+
+            #endregion
+
+
+            #region Open Database Connection
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            #endregion
+
+
+            #region Begin Serializable Transaction
+
+            using SqlTransaction transaction =
+                databaseConnection.BeginTransaction(
+                    iso:
+                        System.Data.IsolationLevel.Serializable);
+
+            bool transactionCommitted =
+                false;
+
+            #endregion
+
+
+            try
+            {
+                #region Acquire Geotech Import Lock
+
+                await AcquireGeotechImportTransactionLockAsync(
+                    projectId:
+                        projectId,
+                    databaseConnection:
+                        databaseConnection,
+                    transaction:
+                        transaction);
+
+                #endregion
+
+
+                #region Revalidate Target Project
+
+                await ValidateImportTargetProjectAsync(
+                    projectId:
+                        projectId,
+                    expectedProjectName:
+                        projectName,
+                    databaseConnection:
+                        databaseConnection,
+                    transaction:
+                        transaction);
+
+                #endregion
+
+
+                #region Reset Preview Validation Status
+
+                foreach (GeotechSensorImportItem importItem
+                    in importItems)
+                {
+                    importItem.IsValid =
+                        true;
+
+                    importItem.ValidationStatus =
+                        "Valid";
+                }
+
+                #endregion
+
+
+                #region Reload Current Database Sensors
+
+                List<ExistingGeotechSensorState> existingSensors =
+                    await LoadExistingGeotechSensorStatesAsync(
+                        projectId:
+                            projectId,
+                        databaseConnection:
+                            databaseConnection,
+                        transaction:
+                            transaction,
+                        applyCommitLocks:
+                            true);
+
+                #endregion
+
+
+                #region Revalidate Import Against Database
+
+                ValidateGeotechSensorImport(
+                    importItems:
+                        importItems,
+                    existingSensors:
+                        existingSensors);
+
+                dgGeotechSensorImport.Items.Refresh();
+
+                int invalidRowCount =
+                    importItems.Count(
+                        predicate:
+                            item => !item.IsValid);
+
+                if (invalidRowCount > 0)
+                {
+                    throw new InvalidOperationException(
+                        $"{invalidRowCount} row(s) failed final validation.");
+                }
+
+                #endregion
+
+
+                #region Insert Sensors And Reference Coordinates
+
+                foreach (GeotechSensorImportItem importItem
+                    in importItems)
+                {
+                    int sensorId =
+                        await ResolveOrInsertGeotechSensorAsync(
+                            projectId:
+                                projectId,
+                            importItem:
+                                importItem,
+                            databaseConnection:
+                                databaseConnection,
+                            transaction:
+                                transaction);
+
+                    await InsertGeotechReferenceCoordinatesAsync(
+                        sensorId:
+                            sensorId,
+                        importItem:
+                            importItem,
+                        databaseConnection:
+                            databaseConnection,
+                        transaction:
+                            transaction);
+                }
+
+                #endregion
+
+
+                #region Commit Transaction
+
+                transaction.Commit();
+
+                transactionCommitted =
+                    true;
+
+                return importItems.Count;
+
+                #endregion
+            }
+            catch
+            {
+                #region Roll Back Transaction
+
+                if (!transactionCommitted)
+                {
+                    try
+                    {
+                        transaction.Rollback();
+                    }
+                    catch
+                    {
+                        // Preserve the original exception.
+                    }
+                }
+
+                throw;
+
+                #endregion
+            }
+        }
+
+        #endregion
+
+
+        #region Geotech Import Transaction Lock
+
+        private static async Task AcquireGeotechImportTransactionLockAsync(
+            int projectId,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Define Geotech Import Lock
+
+            string lockResource =
+                $"GNA_DLRreport:GeotechImport:{projectId}";
+
+            const string lockSql = """
+                DECLARE @LockResult int;
+
+                EXEC @LockResult = sys.sp_getapplock
+                    @Resource = @Resource,
+                    @LockMode = 'Exclusive',
+                    @LockOwner = 'Transaction',
+                    @LockTimeout = 0;
+
+                SELECT @LockResult;
+                """;
+
+            #endregion
+
+
+            #region Acquire Geotech Import Lock
+
+            await using SqlCommand lockCommand =
+                new(
+                    cmdText:
+                        lockSql,
+                    connection:
+                        databaseConnection,
+                    transaction:
+                        transaction);
+
+            lockCommand.Parameters.Add(
+                parameterName:
+                    "@Resource",
+                sqlDbType:
+                    System.Data.SqlDbType.NVarChar,
+                size:
+                    255)
+                .Value =
+                    lockResource;
+
+            object? lockResultValue =
+                await lockCommand.ExecuteScalarAsync();
+
+            if (lockResultValue is null ||
+                lockResultValue == DBNull.Value)
+            {
+                throw new InvalidOperationException(
+                    "SQL Server returned no Geotech import-lock result.");
+            }
+
+            int lockResult =
+                Convert.ToInt32(
+                    value:
+                        lockResultValue,
+                    provider:
+                        CultureInfo.InvariantCulture);
+
+            if (lockResult < 0)
+            {
+                throw new InvalidOperationException(
+                    "Another Geotech import is currently active for this project.");
+            }
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Resolve Or Insert Geotechnical Sensor
+
+        private static async Task<int> ResolveOrInsertGeotechSensorAsync(
+            int projectId,
+            GeotechSensorImportItem importItem,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Search Existing Sensor Namespace
+
+            const string findSensorSql = """
+                SELECT
+                    GS.[SensorID],
+                    GS.[SensorName],
+                    GS.[ReplacementName],
+                    GS.[SensorType],
+                    GS.[IsDeleted],
+                    CASE
+                        WHEN CR.[Coordinate_ID] IS NULL THEN 0
+                        ELSE 1
+                    END AS [HasReference]
+                FROM [dbo].[GeotecSensors] AS GS WITH (UPDLOCK, HOLDLOCK)
+                LEFT JOIN [dbo].[CoordinatesReference] AS CR WITH (UPDLOCK, HOLDLOCK)
+                    ON CR.[SensorID] = GS.[SensorID]
+                    AND CR.[IsDeleted] = 0
+                WHERE
+                    GS.[Project_ID] = @Project_ID
+                    AND
+                    (
+                        UPPER(GS.[SensorName]) = UPPER(@SensorName)
+                        OR UPPER(GS.[ReplacementName]) = UPPER(@SensorName)
+                        OR UPPER(GS.[SensorName]) = UPPER(@ReplacementName)
+                        OR UPPER(GS.[ReplacementName]) = UPPER(@ReplacementName)
+                    );
+                """;
+
+            await using SqlCommand findSensorCommand =
+                new(
+                    cmdText:
+                        findSensorSql,
+                    connection:
+                        databaseConnection,
+                    transaction:
+                        transaction);
+
+            findSensorCommand.Parameters.Add(
+                parameterName:
+                    "@Project_ID",
+                sqlDbType:
+                    System.Data.SqlDbType.Int)
+                .Value =
+                    projectId;
+
+            findSensorCommand.Parameters.Add(
+                parameterName:
+                    "@SensorName",
+                sqlDbType:
+                    System.Data.SqlDbType.NVarChar,
+                size:
+                    50)
+                .Value =
+                    importItem.SensorName;
+
+            findSensorCommand.Parameters.Add(
+                parameterName:
+                    "@ReplacementName",
+                sqlDbType:
+                    System.Data.SqlDbType.NVarChar,
+                size:
+                    50)
+                .Value =
+                    importItem.ReplacementName;
+
+            int? matchingSensorId =
+                null;
+
+            string matchingSensorName =
+                string.Empty;
+
+            string matchingReplacementName =
+                string.Empty;
+
+            string matchingSensorType =
+                string.Empty;
+
+            bool matchingIsDeleted =
+                false;
+
+            bool matchingHasReference =
+                false;
+
+            int matchCount =
+                0;
+
+            await using (SqlDataReader reader =
+                await findSensorCommand.ExecuteReaderAsync())
+            {
+                while (await reader.ReadAsync())
+                {
+                    matchCount++;
+
+                    if (matchCount == 1)
+                    {
+                        matchingSensorId =
+                            reader.GetInt32(0);
+
+                        matchingSensorName =
+                            reader.GetString(1);
+
+                        matchingReplacementName =
+                            reader.GetString(2);
+
+                        matchingSensorType =
+                            reader.GetString(3);
+
+                        matchingIsDeleted =
+                            reader.GetBoolean(4);
+
+                        matchingHasReference =
+                            reader.GetInt32(5) == 1;
+                    }
+                }
+            }
+
+            #endregion
+
+
+            #region Reuse Exact Sensor Without Reference Coordinates
+
+            if (matchCount == 1 &&
+                matchingSensorId.HasValue &&
+                !matchingIsDeleted &&
+                !matchingHasReference &&
+                string.Equals(
+                    a:
+                        matchingSensorName,
+                    b:
+                        importItem.SensorName,
+                    comparisonType:
+                        StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(
+                    a:
+                        matchingReplacementName,
+                    b:
+                        importItem.ReplacementName,
+                    comparisonType:
+                        StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(
+                    a:
+                        matchingSensorType,
+                    b:
+                        importItem.SensorType,
+                    comparisonType:
+                        StringComparison.OrdinalIgnoreCase))
+            {
+                return matchingSensorId.Value;
+            }
+
+            if (matchCount > 0)
+            {
+                throw new InvalidOperationException(
+                    $"Sensor '{importItem.SensorName}' conflicts with an existing sensor.");
+            }
+
+            #endregion
+
+
+            #region Insert New Geotechnical Sensor
+
+            const string insertSensorSql = """
+                INSERT INTO [dbo].[GeotecSensors]
+                (
+                    [SensorName],
+                    [ReplacementName],
+                    [SensorType],
+                    [Project_ID]
+                )
+                OUTPUT INSERTED.[SensorID]
+                VALUES
+                (
+                    @SensorName,
+                    @ReplacementName,
+                    @SensorType,
+                    @Project_ID
+                );
+                """;
+
+            await using SqlCommand insertSensorCommand =
+                new(
+                    cmdText:
+                        insertSensorSql,
+                    connection:
+                        databaseConnection,
+                    transaction:
+                        transaction);
+
+            insertSensorCommand.Parameters.Add(
+                parameterName:
+                    "@SensorName",
+                sqlDbType:
+                    System.Data.SqlDbType.NVarChar,
+                size:
+                    50)
+                .Value =
+                    importItem.SensorName;
+
+            insertSensorCommand.Parameters.Add(
+                parameterName:
+                    "@ReplacementName",
+                sqlDbType:
+                    System.Data.SqlDbType.NVarChar,
+                size:
+                    50)
+                .Value =
+                    importItem.ReplacementName;
+
+            insertSensorCommand.Parameters.Add(
+                parameterName:
+                    "@SensorType",
+                sqlDbType:
+                    System.Data.SqlDbType.NVarChar,
+                size:
+                    50)
+                .Value =
+                    importItem.SensorType;
+
+            insertSensorCommand.Parameters.Add(
+                parameterName:
+                    "@Project_ID",
+                sqlDbType:
+                    System.Data.SqlDbType.Int)
+                .Value =
+                    projectId;
+
+            object? sensorIdValue =
+                await insertSensorCommand.ExecuteScalarAsync();
+
+            if (sensorIdValue is null ||
+                sensorIdValue == DBNull.Value)
+            {
+                throw new InvalidOperationException(
+                    $"Sensor '{importItem.SensorName}' insert failed.");
+            }
+
+            return Convert.ToInt32(
+                value:
+                    sensorIdValue,
+                provider:
+                    CultureInfo.InvariantCulture);
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Insert Geotechnical Reference Coordinates
+
+        private static async Task InsertGeotechReferenceCoordinatesAsync(
+            int sensorId,
+            GeotechSensorImportItem importItem,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Define Coordinate Insert
+
+            const string insertCoordinateSql = """
+                INSERT INTO [dbo].[CoordinatesReference]
+                (
+                    [SensorID],
+                    [Eref],
+                    [Nref],
+                    [Href]
+                )
+                VALUES
+                (
+                    @SensorID,
+                    @Eref,
+                    @Nref,
+                    @Href
+                );
+                """;
+
+            #endregion
+
+
+            #region Insert Coordinates
+
+            await using SqlCommand insertCoordinateCommand =
+                new(
+                    cmdText:
+                        insertCoordinateSql,
+                    connection:
+                        databaseConnection,
+                    transaction:
+                        transaction);
+
+            insertCoordinateCommand.Parameters.Add(
+                parameterName:
+                    "@SensorID",
+                sqlDbType:
+                    System.Data.SqlDbType.Int)
+                .Value =
+                    sensorId;
+
+            SqlParameter eastingParameter =
+                insertCoordinateCommand.Parameters.Add(
+                    parameterName:
+                        "@Eref",
+                    sqlDbType:
+                        System.Data.SqlDbType.Decimal);
+
+            eastingParameter.Precision =
+                18;
+
+            eastingParameter.Scale =
+                6;
+
+            eastingParameter.Value =
+                Convert.ToDecimal(
+                    value:
+                        importItem.Easting,
+                    provider:
+                        CultureInfo.InvariantCulture);
+
+            SqlParameter northingParameter =
+                insertCoordinateCommand.Parameters.Add(
+                    parameterName:
+                        "@Nref",
+                    sqlDbType:
+                        System.Data.SqlDbType.Decimal);
+
+            northingParameter.Precision =
+                18;
+
+            northingParameter.Scale =
+                6;
+
+            northingParameter.Value =
+                Convert.ToDecimal(
+                    value:
+                        importItem.Northing,
+                    provider:
+                        CultureInfo.InvariantCulture);
+
+            SqlParameter heightParameter =
+                insertCoordinateCommand.Parameters.Add(
+                    parameterName:
+                        "@Href",
+                    sqlDbType:
+                        System.Data.SqlDbType.Decimal);
+
+            heightParameter.Precision =
+                18;
+
+            heightParameter.Scale =
+                6;
+
+            heightParameter.Value =
+                Convert.ToDecimal(
+                    value:
+                        importItem.Height,
+                    provider:
+                        CultureInfo.InvariantCulture);
+
+            int rowsInserted =
+                await insertCoordinateCommand.ExecuteNonQueryAsync();
+
+            if (rowsInserted != 1)
+            {
+                throw new InvalidOperationException(
+                    $"Reference coordinates for '{importItem.SensorName}' were not inserted.");
+            }
+
+            #endregion
+        }
+
+        #endregion
+
+        #endregion
+
 
         #region Prism Pair Import UI
 
@@ -1250,35 +13591,10 @@ namespace GNA_DLRreport
             #endregion
 
 
-            #region Read Prism Pair Database Connection String
+            #region Resolve Prism Pair Database Connection String
 
-            string connectionString =
-                txtDbConnectionString.Text?.Trim()
-                ?? throw new InvalidOperationException(
-                    "Database connection string control returned null.");
-
-            if (string.IsNullOrWhiteSpace(connectionString))
-            {
-                throw new InvalidOperationException(
-                    "Database connection string has not been configured.");
-            }
-
-            SqlConnectionStringBuilder databaseConnectionBuilder =
-                new(
-                    connectionString: connectionString)
-                {
-                    InitialCatalog =
-                        TrackGeometryDatabaseName
-                };
-
-            #endregion
-
-
-            #region Ensure Track And Prism Pair Database Schema
-
-            await EnsureTrackAndPrismPairSchemaAsync(
-                connectionString:
-                    databaseConnectionBuilder.ConnectionString);
+            string databaseConnectionString =
+                GetTrackGeometryConnectionString();
 
             #endregion
 
@@ -1290,7 +13606,7 @@ namespace GNA_DLRreport
             await using SqlConnection databaseConnection =
                 new(
                     connectionString:
-                        databaseConnectionBuilder.ConnectionString);
+                        databaseConnectionString);
 
             await databaseConnection.OpenAsync();
 
@@ -1324,7 +13640,7 @@ namespace GNA_DLRreport
 
                 #region Revalidate Prism Pair Target Project
 
-                await ValidatePrismPairImportTargetProjectAsync(
+                await ValidateImportTargetProjectAsync(
                     projectId: projectId,
                     expectedProjectName: projectName,
                     databaseConnection: databaseConnection,
@@ -1553,77 +13869,6 @@ namespace GNA_DLRreport
         }
 
 
-        private static async Task ValidatePrismPairImportTargetProjectAsync(
-            int projectId,
-            string expectedProjectName,
-            SqlConnection databaseConnection,
-            SqlTransaction transaction)
-        {
-            #region Define Prism Pair Project Validation Query
-
-            const string projectSql = """
-        SELECT
-            [ProjectName]
-        FROM [dbo].[Project] WITH (UPDLOCK, HOLDLOCK)
-        WHERE
-            [Project_ID] = @Project_ID
-            AND [IsDeleted] = 0;
-        """;
-
-            #endregion
-
-
-            #region Read Prism Pair Target Project
-
-            await using SqlCommand projectCommand =
-                new(
-                    cmdText: projectSql,
-                    connection: databaseConnection,
-                    transaction: transaction);
-
-            projectCommand.Parameters.Add(
-                parameterName: "@Project_ID",
-                sqlDbType: System.Data.SqlDbType.Int)
-                .Value =
-                    projectId;
-
-            object? projectNameValue =
-                await projectCommand.ExecuteScalarAsync();
-
-            if (projectNameValue is null ||
-                projectNameValue == DBNull.Value)
-            {
-                throw new InvalidOperationException(
-                    "The target project no longer exists or has been deleted.");
-            }
-
-            string databaseProjectName =
-                Convert.ToString(
-                    value: projectNameValue,
-                    provider: CultureInfo.InvariantCulture)
-                ?? throw new InvalidOperationException(
-                    "The target project name could not be read.");
-
-            #endregion
-
-
-            #region Verify Prism Pair Project Name
-
-            if (!string.Equals(
-                a: databaseProjectName,
-                b: expectedProjectName,
-                comparisonType: StringComparison.Ordinal))
-            {
-                throw new InvalidOperationException(
-                    $"The target project name has changed from " +
-                    $"'{expectedProjectName}' to '{databaseProjectName}'. " +
-                    "Select the workbook again.");
-            }
-
-            #endregion
-        }
-
-
         #region Prism Pair Point Name Lookup
 
         private static async Task<Dictionary<string, int>>
@@ -1652,6 +13897,7 @@ namespace GNA_DLRreport
         FROM [dbo].[PointName] AS PN WITH (UPDLOCK, HOLDLOCK)
         INNER JOIN [dbo].[CoordinatesReference] AS CR WITH (HOLDLOCK)
             ON CR.[PointName_ID] = PN.[PointName_ID]
+                    AND CR.[IsDeleted] = 0
         WHERE
             PN.[Project_ID] = @Project_ID
             AND PN.[IsDeleted] = 0;
@@ -3334,7020 +15580,56 @@ namespace GNA_DLRreport
 
 
         #endregion
+    }
 
+    #region Prism Pair Import Item
 
-        #region CSV File Selection
+    public sealed class PrismPairImportItem
+    {
+        #region Worksheet Source
 
-        private async void btnSelectReferenceCsv_Click(
-            object sender,
-            RoutedEventArgs e)
-        {
-            #region Select CSV File
+        public int SourceRow { get; init; }
 
-            OpenFileDialog openFileDialog =
-                new()
-                {
-                    Title = "Select Point / Reference Coordinate CSV",
+        public int RailSection { get; init; }
 
-                    Filter =
-                        "CSV files (*.csv)|*.csv|" +
-                        "All files (*.*)|*.*",
+        public int PairOrder { get; init; }
 
-                    DefaultExt =
-                        ".csv",
+        public string TrackName { get; init; } =
+            string.Empty;
 
-                    CheckFileExists =
-                        true,
+        public string SourceColumn1Value { get; init; } =
+            string.Empty;
 
-                    Multiselect =
-                        false
-                };
+        public string SourceColumn2Value { get; init; } =
+            string.Empty;
 
-            bool? fileSelected =
-                openFileDialog.ShowDialog(
-                    owner: this);
-
-            if (fileSelected != true)
-            {
-                txtReferenceImportStatus.Text =
-                    "CSV selection cancelled.";
-
-                return;
-            }
-
-            #endregion
-
-
-            #region Validate Active Project
-
-            if (!_activeProjectId.HasValue)
-            {
-                txtReferenceImportStatus.Text =
-                    "Import cannot continue because no active project is available.";
-
-                MessageBox.Show(
-                    owner: this,
-                    messageBoxText:
-                        "No active project is currently available.\n\n" +
-                        "Select an active project using Manage Projects, " +
-                        "then select the CSV again.",
-                    caption: "Active Project Required",
-                    button: MessageBoxButton.OK,
-                    icon: MessageBoxImage.Warning);
-
-                return;
-            }
-
-            if (string.IsNullOrWhiteSpace(
-                value: _activeProjectName))
-            {
-                txtReferenceImportStatus.Text =
-                    "Import cannot continue because the active project name is unavailable.";
-
-                MessageBox.Show(
-                    owner: this,
-                    messageBoxText:
-                        "The active project does not contain a valid project name.\n\n" +
-                        "Select the project again using Manage Projects.",
-                    caption: "Invalid Active Project",
-                    button: MessageBoxButton.OK,
-                    icon: MessageBoxImage.Warning);
-
-                return;
-            }
-
-            #endregion
-
-
-            #region Capture Import Project Context
-
-            int importProjectId =
-                _activeProjectId.Value;
-
-            string importProjectName =
-                _activeProjectName;
-
-            _referenceImportProjectId =
-                importProjectId;
-
-            _referenceImportProjectName =
-                importProjectName;
-
-            #endregion
-
-
-            #region Store Selected CSV
-
-            _selectedReferenceCsvPath =
-                openFileDialog.FileName;
-
-            txtReferenceCsvPath.Text =
-                _selectedReferenceCsvPath;
-
-            #endregion
-
-
-            #region Parse And Validate CSV
-
-            await ParseAndValidateSelectedReferenceCsvAsync();
-
-            #endregion
-        }
-
-
-        private async void cmbReferenceCsvColumnOrder_SelectionChanged(
-            object sender,
-            SelectionChangedEventArgs e)
-        {
-            #region Handle Initial XAML Loading
-
-            if (string.IsNullOrWhiteSpace(
-                value: _selectedReferenceCsvPath) ||
-                !_referenceImportProjectId.HasValue)
-            {
-                return;
-            }
-
-            #endregion
-
-
-            #region Reparse Selected CSV
-
-            await ParseAndValidateSelectedReferenceCsvAsync();
-
-            #endregion
-        }
-
-
-        private void btnClearReferenceImport_Click(
-            object sender,
-            RoutedEventArgs e)
-        {
-            #region Clear Import State
-
-            ResetReferenceImportState(
-                statusMessage: "No CSV selected.");
-
-            #endregion
-        }
+        public string SourceColumn3Value { get; init; } =
+            string.Empty;
 
         #endregion
 
 
-        #region Import State Reset
+        #region Pair Definition
 
-        private void ResetReferenceImportState(
-            string statusMessage)
-        {
-            #region Clear Captured Import Context
+        public string LeftPointName { get; init; } =
+            string.Empty;
 
-            _referenceImportProjectId =
-                null;
-
-            _referenceImportProjectName =
-                string.Empty;
-
-            _selectedReferenceCsvPath =
-                string.Empty;
-
-            #endregion
-
-
-            #region Clear User Interface
-
-            txtReferenceCsvPath.Text =
-                string.Empty;
-
-            _referenceImportItems.Clear();
-
-            dgReferenceCoordinateImport.SelectedItem =
-                null;
-
-            btnCommitReferenceImport.IsEnabled =
-                false;
-
-            cmbReferenceCsvColumnOrder.IsEnabled =
-                true;
-
-            txtReferenceImportStatus.Text =
-                statusMessage;
-
-            #endregion
-        }
+        public string RightPointName { get; init; } =
+            string.Empty;
 
         #endregion
 
 
-        #region Import Preview Selection
+        #region Validation
 
-        private void dgReferenceCoordinateImport_SelectionChanged(
-            object sender,
-            SelectionChangedEventArgs e)
-        {
-            #region Display Selected Row Validation
+        public bool IsValid { get; set; }
 
-            if (dgReferenceCoordinateImport.SelectedItem
-                is not ReferenceCoordinateImportItem selectedItem)
-            {
-                return;
-            }
-
-            txtReferenceImportStatus.Text =
-                selectedItem.ValidationStatus;
-
-            #endregion
-        }
-
-        #endregion
-
-
-        #region Parse And Validate Selected CSV
-
-        private async Task ParseAndValidateSelectedReferenceCsvAsync()
-        {
-            #region Validate Import Context
-
-            if (!_referenceImportProjectId.HasValue)
-            {
-                throw new InvalidOperationException(
-                    "The reference-coordinate import does not have a target Project_ID.");
-            }
-
-            if (string.IsNullOrWhiteSpace(_referenceImportProjectName))
-            {
-                throw new InvalidOperationException(
-                    "The reference-coordinate import does not have a target project name.");
-            }
-
-            if (string.IsNullOrWhiteSpace(_selectedReferenceCsvPath))
-            {
-                throw new InvalidOperationException(
-                    "No reference-coordinate CSV has been selected.");
-            }
-
-            if (!File.Exists(
-                path: _selectedReferenceCsvPath))
-            {
-                throw new FileNotFoundException(
-                    message: "The selected reference-coordinate CSV no longer exists.",
-                    fileName: _selectedReferenceCsvPath);
-            }
-
-            #endregion
-
-
-            #region Prepare User Interface
-
-            btnSelectReferenceCsv.IsEnabled =
-                false;
-
-            btnClearReferenceImport.IsEnabled =
-                false;
-
-            cmbReferenceCsvColumnOrder.IsEnabled =
-                false;
-
-            btnCommitReferenceImport.IsEnabled =
-                false;
-
-            txtReferenceImportStatus.Text =
-                $"Validating CSV for project '{_referenceImportProjectName}'...";
-
-            #endregion
-
-
-            try
-            {
-                #region Determine CSV Column Order
-
-                ReferenceCoordinateCsvOrder csvOrder =
-                    GetSelectedReferenceCsvOrder();
-
-                #endregion
-
-
-                #region Parse Source CSV
-
-                List<ReferenceCoordinateImportItem> importItems =
-                    ParseReferenceCoordinateCsv(
-                        csvPath: _selectedReferenceCsvPath,
-                        csvOrder: csvOrder);
-
-                #endregion
-
-
-                #region Load Existing Project Points
-
-                List<ExistingReferencePoint> existingPoints =
-                    await LoadExistingReferencePointsAsync(
-                        projectId: _referenceImportProjectId.Value);
-
-                #endregion
-
-
-                #region Validate Import
-
-                ValidateReferenceCoordinateImport(
-                    importItems: importItems,
-                    existingPoints: existingPoints);
-
-                #endregion
-
-
-                #region Populate Preview DataGrid
-
-                _referenceImportItems.Clear();
-
-                foreach (ReferenceCoordinateImportItem importItem in importItems)
-                {
-                    _referenceImportItems.Add(
-                        item: importItem);
-                }
-
-                #endregion
-
-
-                #region Determine Validation Result
-
-                int invalidRowCount =
-                    0;
-
-                foreach (ReferenceCoordinateImportItem importItem in importItems)
-                {
-                    if (!importItem.IsValid)
-                    {
-                        invalidRowCount++;
-                    }
-                }
-
-                if (importItems.Count == 0)
-                {
-                    btnCommitReferenceImport.IsEnabled =
-                        false;
-
-                    txtReferenceImportStatus.Text =
-                        $"Project '{_referenceImportProjectName}': " +
-                        "the selected CSV contains no records.";
-
-                    return;
-                }
-
-                if (invalidRowCount > 0)
-                {
-                    btnCommitReferenceImport.IsEnabled =
-                        false;
-
-                    txtReferenceImportStatus.Text =
-                        $"Project '{_referenceImportProjectName}': " +
-                        $"{invalidRowCount} of {importItems.Count} row(s) contain errors. " +
-                        "Import blocked. Correct the CSV and import the corrected file.";
-
-                    return;
-                }
-
-                #endregion
-
-
-                #region Report Successful Validation
-
-                // Block 3 will attach the actual database commit operation.
-                //
-                // The button may now be enabled because the preview contains a
-                // completely valid import dataset.
-
-                btnCommitReferenceImport.IsEnabled =
-                    true;
-
-                txtReferenceImportStatus.Text =
-                    $"Project '{_referenceImportProjectName}': " +
-                    $"{importItems.Count} row(s) validated successfully. " +
-                    "No errors found.";
-
-                #endregion
-            }
-            catch (Exception ex)
-            {
-                #region Handle Validation Failure
-
-                _referenceImportItems.Clear();
-
-                btnCommitReferenceImport.IsEnabled =
-                    false;
-
-                txtReferenceImportStatus.Text =
-                    $"Unable to validate CSV: {ex.Message}";
-
-                #endregion
-            }
-            finally
-            {
-                #region Restore User Interface
-
-                btnSelectReferenceCsv.IsEnabled =
-                    true;
-
-                btnClearReferenceImport.IsEnabled =
-                    true;
-
-                cmbReferenceCsvColumnOrder.IsEnabled =
-                    true;
-
-                #endregion
-            }
-        }
-
-        #endregion
-
-
-        #region CSV Column Order
-
-        private ReferenceCoordinateCsvOrder GetSelectedReferenceCsvOrder()
-        {
-            #region Read Selected Format
-
-            return cmbReferenceCsvColumnOrder.SelectedIndex switch
-            {
-                0 => ReferenceCoordinateCsvOrder.PointName_E_N_Ht,
-
-                1 => ReferenceCoordinateCsvOrder.PointName_N_E_Ht,
-
-                _ => throw new InvalidOperationException(
-                    "Select a valid CSV column order.")
-            };
-
-            #endregion
-        }
-
-        #endregion
-
-
-        #region CSV Parsing
-
-        private static List<ReferenceCoordinateImportItem>
-            ParseReferenceCoordinateCsv(
-                string csvPath,
-                ReferenceCoordinateCsvOrder csvOrder)
-        {
-            #region Validate CSV Path
-
-            if (string.IsNullOrWhiteSpace(csvPath))
-            {
-                throw new ArgumentException(
-                    message: "CSV path cannot be empty.",
-                    paramName: nameof(csvPath));
-            }
-
-            #endregion
-
-
-            #region Read CSV Lines
-
-            string[] sourceLines =
-                File.ReadAllLines(
-                    path: csvPath);
-
-            List<ReferenceCoordinateImportItem> importItems =
-                new();
-
-            #endregion
-
-
-            #region Parse CSV Rows
-
-            for (int lineIndex = 0;
-                 lineIndex < sourceLines.Length;
-                 lineIndex++)
-            {
-                int sourceRow =
-                    lineIndex + 1;
-
-                string rawLine =
-                    sourceLines[lineIndex];
-
-                ReferenceCoordinateImportItem importItem =
-                    new()
-                    {
-                        SourceRow = sourceRow,
-                        RawLine = rawLine,
-                        IsValid = true,
-                        ValidationStatus = "Valid"
-                    };
-
-
-                #region Parse CSV Fields
-
-                if (!TryParseCsvLine(
-                    line: rawLine,
-                    fields: out List<string> fields,
-                    errorMessage: out string csvError))
-                {
-                    AppendValidationError(
-                        importItem: importItem,
-                        errorMessage: csvError);
-
-                    importItems.Add(
-                        item: importItem);
-
-                    continue;
-                }
-
-                #endregion
-
-
-                #region Validate Column Count
-
-                if (fields.Count != 4 &&
-                    fields.Count != 5)
-                {
-                    AppendValidationError(
-                        importItem: importItem,
-                        errorMessage:
-                            $"Expected 4 or 5 columns; found {fields.Count}.");
-
-                    importItems.Add(
-                        item: importItem);
-
-                    continue;
-                }
-
-                #endregion
-
-
-                #region Extract Point Names
-
-                importItem.PointName =
-                    fields[0].Trim();
-
-                string replacementName =
-                    fields.Count == 5
-                        ? fields[4].Trim()
-                        : string.Empty;
-
-                importItem.ReplacementName =
-                    string.IsNullOrWhiteSpace(replacementName)
-                        ? importItem.PointName
-                        : replacementName;
-
-                #endregion
-
-
-                #region Extract Coordinate Text
-
-                switch (csvOrder)
-                {
-                    case ReferenceCoordinateCsvOrder.PointName_E_N_Ht:
-
-                        importItem.EastingText =
-                            fields[1].Trim();
-
-                        importItem.NorthingText =
-                            fields[2].Trim();
-
-                        break;
-
-
-                    case ReferenceCoordinateCsvOrder.PointName_N_E_Ht:
-
-                        importItem.NorthingText =
-                            fields[1].Trim();
-
-                        importItem.EastingText =
-                            fields[2].Trim();
-
-                        break;
-
-
-                    default:
-
-                        throw new InvalidOperationException(
-                            "Unsupported reference-coordinate CSV column order.");
-                }
-
-                importItem.HeightText =
-                    fields[3].Trim();
-
-                #endregion
-
-
-                #region Validate Point Name
-
-                if (string.IsNullOrWhiteSpace(importItem.PointName))
-                {
-                    AppendValidationError(
-                        importItem: importItem,
-                        errorMessage: "Point Name is blank.");
-                }
-                else if (importItem.PointName.Length > 50)
-                {
-                    AppendValidationError(
-                        importItem: importItem,
-                        errorMessage:
-                            "Point Name exceeds the database limit of 50 characters.");
-                }
-
-                #endregion
-
-
-                #region Validate Replacement Name
-
-                if (string.IsNullOrWhiteSpace(importItem.ReplacementName))
-                {
-                    AppendValidationError(
-                        importItem: importItem,
-                        errorMessage: "Replacement Name is blank.");
-                }
-                else if (importItem.ReplacementName.Length > 50)
-                {
-                    AppendValidationError(
-                        importItem: importItem,
-                        errorMessage:
-                            "Replacement Name exceeds the database limit of 50 characters.");
-                }
-
-                #endregion
-
-
-                #region Parse Easting
-
-                if (decimal.TryParse(
-                    s: importItem.EastingText,
-                    style: NumberStyles.Float,
-                    provider: CultureInfo.InvariantCulture,
-                    result: out decimal easting))
-                {
-                    importItem.Easting =
-                        easting;
-                }
-                else
-                {
-                    AppendValidationError(
-                        importItem: importItem,
-                        errorMessage:
-                            $"Invalid Easting '{importItem.EastingText}'.");
-                }
-
-                #endregion
-
-
-                #region Parse Northing
-
-                if (decimal.TryParse(
-                    s: importItem.NorthingText,
-                    style: NumberStyles.Float,
-                    provider: CultureInfo.InvariantCulture,
-                    result: out decimal northing))
-                {
-                    importItem.Northing =
-                        northing;
-                }
-                else
-                {
-                    AppendValidationError(
-                        importItem: importItem,
-                        errorMessage:
-                            $"Invalid Northing '{importItem.NorthingText}'.");
-                }
-
-                #endregion
-
-
-                #region Parse Height
-
-                if (decimal.TryParse(
-                    s: importItem.HeightText,
-                    style: NumberStyles.Float,
-                    provider: CultureInfo.InvariantCulture,
-                    result: out decimal height))
-                {
-                    importItem.Height =
-                        height;
-                }
-                else
-                {
-                    AppendValidationError(
-                        importItem: importItem,
-                        errorMessage:
-                            $"Invalid Height '{importItem.HeightText}'.");
-                }
-
-                #endregion
-
-
-                #region Add Parsed Row
-
-                importItems.Add(
-                    item: importItem);
-
-                #endregion
-            }
-
-            #endregion
-
-
-            #region Return Parsed CSV
-
-            return importItems;
-
-            #endregion
-        }
-
-
-        private static bool TryParseCsvLine(
-            string line,
-            out List<string> fields,
-            out string errorMessage)
-        {
-            #region Initialise Parser
-
-            fields =
-                new List<string>();
-
-            errorMessage =
-                string.Empty;
-
-            StringBuilder currentField =
-                new();
-
-            bool insideQuotes =
-                false;
-
-            #endregion
-
-
-            #region Parse Characters
-
-            for (int characterIndex = 0;
-                 characterIndex < line.Length;
-                 characterIndex++)
-            {
-                char currentCharacter =
-                    line[characterIndex];
-
-                if (currentCharacter == '"')
-                {
-                    if (insideQuotes &&
-                        characterIndex + 1 < line.Length &&
-                        line[characterIndex + 1] == '"')
-                    {
-                        currentField.Append(
-                            value: '"');
-
-                        characterIndex++;
-
-                        continue;
-                    }
-
-                    insideQuotes =
-                        !insideQuotes;
-
-                    continue;
-                }
-
-                if (currentCharacter == ',' &&
-                    !insideQuotes)
-                {
-                    fields.Add(
-                        item: currentField.ToString());
-
-                    currentField.Clear();
-
-                    continue;
-                }
-
-                currentField.Append(
-                    value: currentCharacter);
-            }
-
-            #endregion
-
-
-            #region Validate Quotation
-
-            if (insideQuotes)
-            {
-                errorMessage =
-                    "Malformed CSV row: unmatched quotation mark.";
-
-                return false;
-            }
-
-            #endregion
-
-
-            #region Add Final Field
-
-            fields.Add(
-                item: currentField.ToString());
-
-            return true;
-
-            #endregion
-        }
-
-        #endregion
-
-
-        #region Load Existing Project Reference Points
-
-        private async Task<List<ExistingReferencePoint>>
-            LoadExistingReferencePointsAsync(
-                int projectId)
-        {
-            #region Validate Project ID
-
-            if (projectId <= 0)
-            {
-                throw new ArgumentOutOfRangeException(
-                    paramName: nameof(projectId),
-                    message: "Project_ID must be greater than zero.");
-            }
-
-            #endregion
-
-
-            #region Read Database Connection String
-
-            string connectionString =
-                txtDbConnectionString.Text?.Trim()
-                ?? throw new InvalidOperationException(
-                    "Database connection string control returned null.");
-
-            if (string.IsNullOrWhiteSpace(connectionString))
-            {
-                throw new InvalidOperationException(
-                    "Database connection string has not been configured.");
-            }
-
-            #endregion
-
-
-            #region Build Database Connection String
-
-            SqlConnectionStringBuilder databaseConnectionBuilder =
-                new(
-                    connectionString: connectionString)
-                {
-                    InitialCatalog = TrackGeometryDatabaseName
-                };
-
-            #endregion
-
-
-            #region Define Existing Point Query
-
-            // Deliberately include soft-deleted PointName records.
-            //
-            // They still exist within the project namespace and their PointName
-            // remains subject to the database uniqueness constraint.
-
-            const string existingPointsSql = """
-        SELECT
-            PN.[PointName_ID],
-            PN.[Project_ID],
-            PN.[PointName],
-            PN.[ReplacementName],
-            CR.[Eref],
-            CR.[Nref],
-            CR.[Href]
-        FROM [dbo].[PointName] AS PN
-        INNER JOIN [dbo].[CoordinatesReference] AS CR
-            ON CR.[PointName_ID] = PN.[PointName_ID]
-        WHERE
-            PN.[Project_ID] = @Project_ID;
-        """;
-
-            #endregion
-
-
-            #region Load Existing Points
-
-            List<ExistingReferencePoint> existingPoints =
-                new();
-
-            await using SqlConnection databaseConnection =
-                new(
-                    connectionString:
-                        databaseConnectionBuilder.ConnectionString);
-
-            await databaseConnection.OpenAsync();
-
-            await using SqlCommand existingPointsCommand =
-                new(
-                    cmdText: existingPointsSql,
-                    connection: databaseConnection);
-
-            existingPointsCommand.Parameters.AddWithValue(
-                parameterName: "@Project_ID",
-                value: projectId);
-
-            await using SqlDataReader reader =
-                await existingPointsCommand.ExecuteReaderAsync();
-
-            while (await reader.ReadAsync())
-            {
-                ExistingReferencePoint existingPoint =
-                    new()
-                    {
-                        PointName_ID =
-                            reader.GetInt32(
-                                i: 0),
-
-                        Project_ID =
-                            reader.GetInt32(
-                                i: 1),
-
-                        PointName =
-                            reader.GetString(
-                                i: 2),
-
-                        ReplacementName =
-                            reader.GetString(
-                                i: 3),
-
-                        Easting =
-                            reader.GetDecimal(
-                                i: 4),
-
-                        Northing =
-                            reader.GetDecimal(
-                                i: 5),
-
-                        Height =
-                            reader.GetDecimal(
-                                i: 6)
-                    };
-
-                existingPoints.Add(
-                    item: existingPoint);
-            }
-
-            #endregion
-
-
-            #region Return Existing Points
-
-            return existingPoints;
-
-            #endregion
-        }
-
-        #endregion
-
-
-        #region Complete Import Validation
-
-        private static void ValidateReferenceCoordinateImport(
-            List<ReferenceCoordinateImportItem> importItems,
-            List<ExistingReferencePoint> existingPoints)
-        {
-            #region Validate Arguments
-
-            ArgumentNullException.ThrowIfNull(
-                argument: importItems);
-
-            ArgumentNullException.ThrowIfNull(
-                argument: existingPoints);
-
-            #endregion
-
-
-            #region Validate Combined Names Within CSV
-
-            Dictionary<string,
-                (ReferenceCoordinateImportItem Item, string NameType)>
-                incomingNames =
-                    new(
-                        comparer: StringComparer.OrdinalIgnoreCase);
-
-            foreach (ReferenceCoordinateImportItem importItem in importItems)
-            {
-                RegisterIncomingName(
-                    name: importItem.PointName,
-                    nameType: "Point Name",
-                    importItem: importItem,
-                    incomingNames: incomingNames);
-
-                // PointName == ReplacementName on the SAME record is permitted.
-                // This is the normal condition when no ReplacementName was supplied.
-
-                if (!string.Equals(
-                    a: importItem.PointName,
-                    b: importItem.ReplacementName,
-                    comparisonType: StringComparison.OrdinalIgnoreCase))
-                {
-                    RegisterIncomingName(
-                        name: importItem.ReplacementName,
-                        nameType: "Replacement Name",
-                        importItem: importItem,
-                        incomingNames: incomingNames);
-                }
-            }
-
-            #endregion
-
-
-            #region Build Existing Combined Name Namespace
-
-            Dictionary<string,
-                (ExistingReferencePoint Point, string NameType)>
-                existingNames =
-                    new(
-                        comparer: StringComparer.OrdinalIgnoreCase);
-
-            foreach (ExistingReferencePoint existingPoint in existingPoints)
-            {
-                RegisterExistingName(
-                    name: existingPoint.PointName,
-                    nameType: "Point Name",
-                    existingPoint: existingPoint,
-                    existingNames: existingNames);
-
-                if (!string.Equals(
-                    a: existingPoint.PointName,
-                    b: existingPoint.ReplacementName,
-                    comparisonType: StringComparison.OrdinalIgnoreCase))
-                {
-                    RegisterExistingName(
-                        name: existingPoint.ReplacementName,
-                        nameType: "Replacement Name",
-                        existingPoint: existingPoint,
-                        existingNames: existingNames);
-                }
-            }
-
-            #endregion
-
-
-            #region Validate Incoming Names Against Database
-
-            foreach (ReferenceCoordinateImportItem importItem in importItems)
-            {
-                ValidateNameAgainstExistingDatabase(
-                    name: importItem.PointName,
-                    nameType: "Point Name",
-                    importItem: importItem,
-                    existingNames: existingNames);
-
-                if (!string.Equals(
-                    a: importItem.PointName,
-                    b: importItem.ReplacementName,
-                    comparisonType: StringComparison.OrdinalIgnoreCase))
-                {
-                    ValidateNameAgainstExistingDatabase(
-                        name: importItem.ReplacementName,
-                        nameType: "Replacement Name",
-                        importItem: importItem,
-                        existingNames: existingNames);
-                }
-            }
-
-            #endregion
-
-
-            #region Validate Horizontal Coordinate Duplicates
-
-            ValidateHorizontalCoordinateDuplicates(
-                importItems: importItems,
-                existingPoints: existingPoints);
-
-            #endregion
-
-
-            #region Finalise Validation Status
-
-            foreach (ReferenceCoordinateImportItem importItem in importItems)
-            {
-                if (importItem.IsValid)
-                {
-                    importItem.ValidationStatus =
-                        "Valid";
-                }
-            }
-
-            #endregion
-        }
-
-        #endregion
-
-
-        #region Name Validation Helpers
-
-        private static void RegisterIncomingName(
-            string name,
-            string nameType,
-            ReferenceCoordinateImportItem importItem,
-            Dictionary<string,
-                (ReferenceCoordinateImportItem Item, string NameType)> incomingNames)
-        {
-            #region Ignore Invalid Blank Names
-
-            if (string.IsNullOrWhiteSpace(name))
-            {
-                return;
-            }
-
-            #endregion
-
-
-            #region Check Existing Incoming Name
-
-            if (incomingNames.TryGetValue(
-                key: name,
-                value: out
-                    (ReferenceCoordinateImportItem Item, string NameType)
-                    existingName))
-            {
-                AppendValidationError(
-                    importItem: importItem,
-                    errorMessage:
-                        $"{nameType} '{name}' duplicates " +
-                        $"{existingName.NameType} on CSV row " +
-                        $"{existingName.Item.SourceRow}.");
-
-                AppendValidationError(
-                    importItem: existingName.Item,
-                    errorMessage:
-                        $"{existingName.NameType} '{name}' duplicates " +
-                        $"{nameType} on CSV row {importItem.SourceRow}.");
-
-                return;
-            }
-
-            #endregion
-
-
-            #region Register Name
-
-            incomingNames.Add(
-                key: name,
-                value: (importItem, nameType));
-
-            #endregion
-        }
-
-
-        private static void RegisterExistingName(
-            string name,
-            string nameType,
-            ExistingReferencePoint existingPoint,
-            Dictionary<string,
-                (ExistingReferencePoint Point, string NameType)> existingNames)
-        {
-            #region Ignore Blank Existing Names
-
-            if (string.IsNullOrWhiteSpace(name))
-            {
-                return;
-            }
-
-            #endregion
-
-
-            #region Register Existing Name
-
-            // If inconsistent historic database data already contains a combined
-            // namespace collision, retaining the first record is sufficient for
-            // import validation. Any incoming use of the same name is blocked.
-
-            if (!existingNames.ContainsKey(
-                key: name))
-            {
-                existingNames.Add(
-                    key: name,
-                    value: (existingPoint, nameType));
-            }
-
-            #endregion
-        }
-
-
-        private static void ValidateNameAgainstExistingDatabase(
-            string name,
-            string nameType,
-            ReferenceCoordinateImportItem importItem,
-            Dictionary<string,
-                (ExistingReferencePoint Point, string NameType)> existingNames)
-        {
-            #region Ignore Invalid Blank Names
-
-            if (string.IsNullOrWhiteSpace(name))
-            {
-                return;
-            }
-
-            #endregion
-
-
-            #region Check Existing Database Namespace
-
-            if (existingNames.TryGetValue(
-                key: name,
-                value: out
-                    (ExistingReferencePoint Point, string NameType)
-                    existingName))
-            {
-                AppendValidationError(
-                    importItem: importItem,
-                    errorMessage:
-                        $"{nameType} '{name}' duplicates existing " +
-                        $"{existingName.NameType} on database point " +
-                        $"'{existingName.Point.PointName}'.");
-            }
-
-            #endregion
-        }
-
-        #endregion
-
-
-        #region Horizontal Coordinate Duplicate Validation
-
-        private static void ValidateHorizontalCoordinateDuplicates(
-            List<ReferenceCoordinateImportItem> importItems,
-            List<ExistingReferencePoint> existingPoints)
-        {
-            #region Build Existing Coordinate Buckets
-
-            Dictionary<(long EastingBucket, long NorthingBucket),
-                List<ExistingReferencePoint>>
-                existingCoordinateBuckets =
-                    new();
-
-            foreach (ExistingReferencePoint existingPoint in existingPoints)
-            {
-                (long EastingBucket, long NorthingBucket) bucket =
-                    GetReferenceCoordinateBucket(
-                        easting: existingPoint.Easting,
-                        northing: existingPoint.Northing);
-
-                if (!existingCoordinateBuckets.TryGetValue(
-                    key: bucket,
-                    value: out List<ExistingReferencePoint>? bucketPoints))
-                {
-                    bucketPoints =
-                        new List<ExistingReferencePoint>();
-
-                    existingCoordinateBuckets.Add(
-                        key: bucket,
-                        value: bucketPoints);
-                }
-
-                bucketPoints.Add(
-                    item: existingPoint);
-            }
-
-            #endregion
-
-
-            #region Prepare Incoming Coordinate Buckets
-
-            Dictionary<(long EastingBucket, long NorthingBucket),
-                List<ReferenceCoordinateImportItem>>
-                incomingCoordinateBuckets =
-                    new();
-
-            #endregion
-
-
-            #region Validate Each Incoming Coordinate
-
-            foreach (ReferenceCoordinateImportItem importItem in importItems)
-            {
-                if (!importItem.Easting.HasValue ||
-                    !importItem.Northing.HasValue)
-                {
-                    continue;
-                }
-
-                decimal easting =
-                    importItem.Easting.Value;
-
-                decimal northing =
-                    importItem.Northing.Value;
-
-                (long EastingBucket, long NorthingBucket) sourceBucket =
-                    GetReferenceCoordinateBucket(
-                        easting: easting,
-                        northing: northing);
-
-
-                #region Check Against Existing Database Points
-
-                for (long eastOffset = -1;
-                     eastOffset <= 1;
-                     eastOffset++)
-                {
-                    for (long northOffset = -1;
-                         northOffset <= 1;
-                         northOffset++)
-                    {
-                        (long EastingBucket, long NorthingBucket) neighbourBucket =
-                            (
-                                sourceBucket.EastingBucket + eastOffset,
-                                sourceBucket.NorthingBucket + northOffset
-                            );
-
-                        if (!existingCoordinateBuckets.TryGetValue(
-                            key: neighbourBucket,
-                            value: out
-                                List<ExistingReferencePoint>? existingBucketPoints))
-                        {
-                            continue;
-                        }
-
-                        foreach (ExistingReferencePoint existingPoint
-                            in existingBucketPoints)
-                        {
-                            decimal distanceSquared =
-                                GetHorizontalDistanceSquared(
-                                    easting1: easting,
-                                    northing1: northing,
-                                    easting2: existingPoint.Easting,
-                                    northing2: existingPoint.Northing);
-
-                            if (distanceSquared <
-                                ReferenceDuplicateCoordinateToleranceSquared)
-                            {
-                                double distance =
-                                    Math.Sqrt(
-                                        d: (double)distanceSquared);
-
-                                AppendValidationError(
-                                    importItem: importItem,
-                                    errorMessage:
-                                        $"Coordinates are {distance.ToString(
-                                            format: "0.000",
-                                            provider: CultureInfo.InvariantCulture)} m " +
-                                        $"from existing database point " +
-                                        $"'{existingPoint.PointName}'.");
-                            }
-                        }
-                    }
-                }
-
-                #endregion
-
-
-                #region Check Against Earlier CSV Points
-
-                for (long eastOffset = -1;
-                     eastOffset <= 1;
-                     eastOffset++)
-                {
-                    for (long northOffset = -1;
-                         northOffset <= 1;
-                         northOffset++)
-                    {
-                        (long EastingBucket, long NorthingBucket) neighbourBucket =
-                            (
-                                sourceBucket.EastingBucket + eastOffset,
-                                sourceBucket.NorthingBucket + northOffset
-                            );
-
-                        if (!incomingCoordinateBuckets.TryGetValue(
-                            key: neighbourBucket,
-                            value: out
-                                List<ReferenceCoordinateImportItem>?
-                                incomingBucketPoints))
-                        {
-                            continue;
-                        }
-
-                        foreach (ReferenceCoordinateImportItem previousItem
-                            in incomingBucketPoints)
-                        {
-                            if (!previousItem.Easting.HasValue ||
-                                !previousItem.Northing.HasValue)
-                            {
-                                continue;
-                            }
-
-                            decimal distanceSquared =
-                                GetHorizontalDistanceSquared(
-                                    easting1: easting,
-                                    northing1: northing,
-                                    easting2: previousItem.Easting.Value,
-                                    northing2: previousItem.Northing.Value);
-
-                            if (distanceSquared <
-                                ReferenceDuplicateCoordinateToleranceSquared)
-                            {
-                                double distance =
-                                    Math.Sqrt(
-                                        d: (double)distanceSquared);
-
-                                string formattedDistance =
-                                    distance.ToString(
-                                        format: "0.000",
-                                        provider: CultureInfo.InvariantCulture);
-
-                                AppendValidationError(
-                                    importItem: importItem,
-                                    errorMessage:
-                                        $"Coordinates are {formattedDistance} m " +
-                                        $"from CSV row {previousItem.SourceRow} " +
-                                        $"('{previousItem.PointName}').");
-
-                                AppendValidationError(
-                                    importItem: previousItem,
-                                    errorMessage:
-                                        $"Coordinates are {formattedDistance} m " +
-                                        $"from CSV row {importItem.SourceRow} " +
-                                        $"('{importItem.PointName}').");
-                            }
-                        }
-                    }
-                }
-
-                #endregion
-
-
-                #region Add Incoming Point To Spatial Bucket
-
-                if (!incomingCoordinateBuckets.TryGetValue(
-                    key: sourceBucket,
-                    value: out
-                        List<ReferenceCoordinateImportItem>? sourceBucketPoints))
-                {
-                    sourceBucketPoints =
-                        new List<ReferenceCoordinateImportItem>();
-
-                    incomingCoordinateBuckets.Add(
-                        key: sourceBucket,
-                        value: sourceBucketPoints);
-                }
-
-                sourceBucketPoints.Add(
-                    item: importItem);
-
-                #endregion
-            }
-
-            #endregion
-        }
-
-
-        private static (
-            long EastingBucket,
-            long NorthingBucket)
-            GetReferenceCoordinateBucket(
-                decimal easting,
-                decimal northing)
-        {
-            #region Calculate Spatial Bucket
-
-            long eastingBucket =
-                (long)decimal.Floor(
-                    d: easting /
-                       ReferenceDuplicateCoordinateTolerance);
-
-            long northingBucket =
-                (long)decimal.Floor(
-                    d: northing /
-                       ReferenceDuplicateCoordinateTolerance);
-
-            return
-                (
-                    EastingBucket: eastingBucket,
-                    NorthingBucket: northingBucket
-                );
-
-            #endregion
-        }
-
-
-        private static decimal GetHorizontalDistanceSquared(
-            decimal easting1,
-            decimal northing1,
-            decimal easting2,
-            decimal northing2)
-        {
-            #region Calculate Horizontal Distance Squared
-
-            decimal deltaEasting =
-                easting2 - easting1;
-
-            decimal deltaNorthing =
-                northing2 - northing1;
-
-            return
-                (deltaEasting * deltaEasting) +
-                (deltaNorthing * deltaNorthing);
-
-            #endregion
-        }
-
-        #endregion
-
-
-        #region Validation Status Helper
-
-        private static void AppendValidationError(
-            ReferenceCoordinateImportItem importItem,
-            string errorMessage)
-        {
-            #region Validate Parameters
-
-            ArgumentNullException.ThrowIfNull(
-                argument: importItem);
-
-            if (string.IsNullOrWhiteSpace(errorMessage))
-            {
-                return;
-            }
-
-            #endregion
-
-
-            #region Append Error
-
-            importItem.IsValid =
-                false;
-
-            if (string.IsNullOrWhiteSpace(importItem.ValidationStatus) ||
-                string.Equals(
-                    a: importItem.ValidationStatus,
-                    b: "Valid",
-                    comparisonType: StringComparison.Ordinal))
-            {
-                importItem.ValidationStatus =
-                    errorMessage;
-            }
-            else
-            {
-                importItem.ValidationStatus =
-                    $"{importItem.ValidationStatus}; {errorMessage}";
-            }
-
-            #endregion
-        }
-
-        #endregion
-
-
-        #region Commit Reference Coordinate Import
-
-        private async void btnCommitReferenceImport_Click(
-            object sender,
-            RoutedEventArgs e)
-        {
-            #region Validate Commit Context
-
-            if (!_referenceImportProjectId.HasValue)
-            {
-                btnCommitReferenceImport.IsEnabled =
-                    false;
-
-                txtReferenceImportStatus.Text =
-                    "Import blocked: no target project is associated with the preview.";
-
-                return;
-            }
-
-            if (!_activeProjectId.HasValue ||
-                _activeProjectId.Value != _referenceImportProjectId.Value)
-            {
-                btnCommitReferenceImport.IsEnabled =
-                    false;
-
-                txtReferenceImportStatus.Text =
-                    "Import blocked: the active project has changed. Select the CSV again.";
-
-                return;
-            }
-
-            if (_referenceImportItems.Count == 0)
-            {
-                btnCommitReferenceImport.IsEnabled =
-                    false;
-
-                txtReferenceImportStatus.Text =
-                    "Import blocked: there are no reference points to import.";
-
-                return;
-            }
-
-            foreach (ReferenceCoordinateImportItem importItem
-                in _referenceImportItems)
-            {
-                if (!importItem.IsValid)
-                {
-                    btnCommitReferenceImport.IsEnabled =
-                        false;
-
-                    txtReferenceImportStatus.Text =
-                        "Import blocked: the preview contains validation errors.";
-
-                    return;
-                }
-            }
-
-            #endregion
-
-
-            #region Confirm Import
-
-            txtReferenceImportStatus.Text =
-                $"Ready to import {_referenceImportItems.Count} point(s) " +
-                $"into project '{_referenceImportProjectName}'.";
-
-            string confirmationMessage =
-                $"Project: {_referenceImportProjectName}\n\n" +
-                $"Points to import: {_referenceImportItems.Count}\n" +
-                "Validation errors: 0\n\n" +
-                "Commit this import?";
-
-            MessageBoxResult confirmationResult =
-                MessageBox.Show(
-                    owner: this,
-                    messageBoxText: confirmationMessage,
-                    caption: "Confirm Reference Coordinate Import",
-                    button: MessageBoxButton.YesNo,
-                    icon: MessageBoxImage.Question);
-
-            if (confirmationResult != MessageBoxResult.Yes)
-            {
-                txtReferenceImportStatus.Text =
-                    "Import cancelled. No data was written to the database.";
-
-                return;
-            }
-
-            #endregion
-
-
-            #region Prepare Commit
-
-            btnCommitReferenceImport.IsEnabled =
-                false;
-
-            btnSelectReferenceCsv.IsEnabled =
-                false;
-
-            btnClearReferenceImport.IsEnabled =
-                false;
-
-            cmbReferenceCsvColumnOrder.IsEnabled =
-                false;
-
-            txtReferenceImportStatus.Text =
-                $"Revalidating and importing {_referenceImportItems.Count} point(s) " +
-                $"into project '{_referenceImportProjectName}'...";
-
-            #endregion
-
-
-            try
-            {
-                #region Execute Atomic Import
-
-                int importedPointCount =
-                    await CommitReferenceCoordinateImportAsync(
-                        projectId: _referenceImportProjectId.Value,
-                        projectName: _referenceImportProjectName);
-
-                #endregion
-
-
-                #region Report Successful Import
-
-                btnCommitReferenceImport.IsEnabled =
-                    false;
-
-                cmbReferenceCsvColumnOrder.IsEnabled =
-                    false;
-
-                txtReferenceImportStatus.Text =
-                    $"{importedPointCount} point(s) imported successfully " +
-                    $"into project '{_referenceImportProjectName}'.";
-
-                #endregion
-            }
-            catch (Exception ex)
-            {
-                #region Report Failed Import
-
-                bool previewStillValid =
-                    true;
-
-                foreach (ReferenceCoordinateImportItem importItem
-                    in _referenceImportItems)
-                {
-                    if (!importItem.IsValid)
-                    {
-                        previewStillValid =
-                            false;
-
-                        break;
-                    }
-                }
-
-                btnCommitReferenceImport.IsEnabled =
-                    previewStillValid;
-
-                dgReferenceCoordinateImport.Items.Refresh();
-
-                txtReferenceImportStatus.Text =
-                    $"Import failed. No data committed. {ex.Message}";
-
-                #endregion
-            }
-            finally
-            {
-                #region Restore Import Controls
-
-                btnSelectReferenceCsv.IsEnabled =
-                    true;
-
-                btnClearReferenceImport.IsEnabled =
-                    true;
-
-                #endregion
-            }
-        }
-
-        #endregion
-
-
-        #region Atomic Reference Coordinate Database Import
-
-        private async Task<int> CommitReferenceCoordinateImportAsync(
-            int projectId,
-            string projectName)
-        {
-            #region Validate Parameters
-
-            if (projectId <= 0)
-            {
-                throw new ArgumentOutOfRangeException(
-                    paramName: nameof(projectId),
-                    message: "Project_ID must be greater than zero.");
-            }
-
-            if (string.IsNullOrWhiteSpace(projectName))
-            {
-                throw new ArgumentException(
-                    message: "Project name cannot be blank.",
-                    paramName: nameof(projectName));
-            }
-
-            #endregion
-
-
-            #region Capture Preview Dataset
-
-            List<ReferenceCoordinateImportItem> importItems =
-                new(
-                    collection: _referenceImportItems);
-
-            if (importItems.Count == 0)
-            {
-                throw new InvalidOperationException(
-                    "The reference-coordinate preview contains no records.");
-            }
-
-            #endregion
-
-
-            #region Read Database Connection String
-
-            string connectionString =
-                txtDbConnectionString.Text?.Trim()
-                ?? throw new InvalidOperationException(
-                    "Database connection string control returned null.");
-
-            if (string.IsNullOrWhiteSpace(connectionString))
-            {
-                throw new InvalidOperationException(
-                    "Database connection string has not been configured.");
-            }
-
-            SqlConnectionStringBuilder databaseConnectionBuilder =
-                new(
-                    connectionString: connectionString)
-                {
-                    InitialCatalog = TrackGeometryDatabaseName
-                };
-
-            #endregion
-
-
-            #region Open Database Connection
-
-            await using SqlConnection databaseConnection =
-                new(
-                    connectionString:
-                        databaseConnectionBuilder.ConnectionString);
-
-            await databaseConnection.OpenAsync();
-
-            #endregion
-
-
-            #region Begin Serializable Transaction
-
-            using SqlTransaction transaction =
-                databaseConnection.BeginTransaction(
-                    iso:
-                        System.Data.IsolationLevel.Serializable);
-
-            bool transactionCommitted =
-                false;
-
-            #endregion
-
-
-            try
-            {
-                #region Acquire Import Transaction Lock
-
-                await AcquireReferenceImportTransactionLockAsync(
-                    projectId: projectId,
-                    databaseConnection: databaseConnection,
-                    transaction: transaction);
-
-                #endregion
-
-
-                #region Revalidate Target Project
-
-                await ValidateReferenceImportTargetProjectAsync(
-                    projectId: projectId,
-                    expectedProjectName: projectName,
-                    databaseConnection: databaseConnection,
-                    transaction: transaction);
-
-                #endregion
-
-
-                #region Reset Preview Validation Status
-
-                foreach (ReferenceCoordinateImportItem importItem
-                    in importItems)
-                {
-                    importItem.IsValid =
-                        true;
-
-                    importItem.ValidationStatus =
-                        "Valid";
-                }
-
-                #endregion
-
-
-                #region Reload Current Database Reference Points
-
-                List<ExistingReferencePoint> existingPoints =
-                    await LoadExistingReferencePointsForCommitAsync(
-                        projectId: projectId,
-                        databaseConnection: databaseConnection,
-                        transaction: transaction);
-
-                #endregion
-
-
-                #region Revalidate Import Against Current Database
-
-                ValidateReferenceCoordinateImport(
-                    importItems: importItems,
-                    existingPoints: existingPoints);
-
-                int invalidRowCount =
-                    0;
-
-                foreach (ReferenceCoordinateImportItem importItem
-                    in importItems)
-                {
-                    if (!importItem.IsValid)
-                    {
-                        invalidRowCount++;
-                    }
-                }
-
-                dgReferenceCoordinateImport.Items.Refresh();
-
-                if (invalidRowCount > 0)
-                {
-                    throw new InvalidOperationException(
-                        $"{invalidRowCount} row(s) failed final validation. " +
-                        "The database may have changed since the preview was created.");
-                }
-
-                #endregion
-
-
-                #region Insert Reference Points
-
-                foreach (ReferenceCoordinateImportItem importItem
-                    in importItems)
-                {
-                    int pointNameId =
-                        await ResolveOrInsertPointNameAsync(
-                            projectId: projectId,
-                            importItem: importItem,
-                            databaseConnection: databaseConnection,
-                            transaction: transaction);
-
-                    await InsertReferenceCoordinatesAsync(
-                        pointNameId: pointNameId,
-                        importItem: importItem,
-                        databaseConnection: databaseConnection,
-                        transaction: transaction);
-                }
-
-                #endregion
-
-
-                #region Commit Transaction
-
-                transaction.Commit();
-
-                transactionCommitted =
-                    true;
-
-                return importItems.Count;
-
-                #endregion
-            }
-            catch
-            {
-                #region Roll Back Transaction
-
-                if (!transactionCommitted)
-                {
-                    try
-                    {
-                        transaction.Rollback();
-                    }
-                    catch
-                    {
-                        // Preserve the original exception.
-                    }
-                }
-
-                throw;
-
-                #endregion
-            }
-        }
-
-        #endregion
-
-
-        #region Reference Import Transaction Lock
-
-        private static async Task AcquireReferenceImportTransactionLockAsync(
-            int projectId,
-            SqlConnection databaseConnection,
-            SqlTransaction transaction)
-        {
-            #region Define Import Lock
-
-            string lockResource =
-                $"GNA_DLRreport:ReferenceImport:{projectId}";
-
-            const string lockSql = """
-        DECLARE @LockResult int;
-
-        EXEC @LockResult = sys.sp_getapplock
-            @Resource = @Resource,
-            @LockMode = 'Exclusive',
-            @LockOwner = 'Transaction',
-            @LockTimeout = 0;
-
-        SELECT @LockResult;
-        """;
-
-            #endregion
-
-
-            #region Acquire Import Lock
-
-            await using SqlCommand lockCommand =
-                new(
-                    cmdText: lockSql,
-                    connection: databaseConnection,
-                    transaction: transaction);
-
-            lockCommand.Parameters.Add(
-                parameterName: "@Resource",
-                sqlDbType: System.Data.SqlDbType.NVarChar,
-                size: 255)
-                .Value =
-                    lockResource;
-
-            object? lockResultValue =
-                await lockCommand.ExecuteScalarAsync();
-
-            if (lockResultValue is null ||
-                lockResultValue == DBNull.Value)
-            {
-                throw new InvalidOperationException(
-                    "SQL Server did not return an import-lock result.");
-            }
-
-            int lockResult =
-                Convert.ToInt32(
-                    value: lockResultValue,
-                    provider: CultureInfo.InvariantCulture);
-
-            if (lockResult < 0)
-            {
-                throw new InvalidOperationException(
-                    "Another reference-coordinate import is currently active " +
-                    "for this project.");
-            }
-
-            #endregion
-        }
-
-        #endregion
-
-
-        #region Reference Import Project Revalidation
-
-        private static async Task ValidateReferenceImportTargetProjectAsync(
-            int projectId,
-            string expectedProjectName,
-            SqlConnection databaseConnection,
-            SqlTransaction transaction)
-        {
-            #region Define Project Validation Query
-
-            const string projectSql = """
-        SELECT
-            [ProjectName]
-        FROM [dbo].[Project] WITH (UPDLOCK, HOLDLOCK)
-        WHERE
-            [Project_ID] = @Project_ID
-            AND [IsDeleted] = 0;
-        """;
-
-            #endregion
-
-
-            #region Read Current Project
-
-            await using SqlCommand projectCommand =
-                new(
-                    cmdText: projectSql,
-                    connection: databaseConnection,
-                    transaction: transaction);
-
-            projectCommand.Parameters.Add(
-                parameterName: "@Project_ID",
-                sqlDbType: System.Data.SqlDbType.Int)
-                .Value =
-                    projectId;
-
-            object? projectNameValue =
-                await projectCommand.ExecuteScalarAsync();
-
-            if (projectNameValue is null ||
-                projectNameValue == DBNull.Value)
-            {
-                throw new InvalidOperationException(
-                    "The target project no longer exists or has been deleted.");
-            }
-
-            string databaseProjectName =
-                Convert.ToString(
-                    value: projectNameValue,
-                    provider: CultureInfo.InvariantCulture)
-                ?? throw new InvalidOperationException(
-                    "The target project name could not be read from SQL Server.");
-
-            #endregion
-
-
-            #region Verify Captured Project Name
-
-            if (!string.Equals(
-                a: databaseProjectName,
-                b: expectedProjectName,
-                comparisonType: StringComparison.Ordinal))
-            {
-                throw new InvalidOperationException(
-                    $"The target project name has changed from " +
-                    $"'{expectedProjectName}' to '{databaseProjectName}'. " +
-                    "Select the CSV again before importing.");
-            }
-
-            #endregion
-        }
-
-        #endregion
-
-
-        #region Load Existing Reference Points For Commit
-
-        private static async Task<List<ExistingReferencePoint>>
-            LoadExistingReferencePointsForCommitAsync(
-                int projectId,
-                SqlConnection databaseConnection,
-                SqlTransaction transaction)
-        {
-            #region Define Locked Existing Point Query
-
-            const string existingPointsSql = """
-        SELECT
-            PN.[PointName_ID],
-            PN.[Project_ID],
-            PN.[PointName],
-            PN.[ReplacementName],
-            CR.[Eref],
-            CR.[Nref],
-            CR.[Href]
-        FROM [dbo].[PointName] AS PN WITH (UPDLOCK, HOLDLOCK)
-        INNER JOIN [dbo].[CoordinatesReference] AS CR WITH (UPDLOCK, HOLDLOCK)
-            ON CR.[PointName_ID] = PN.[PointName_ID]
-        WHERE
-            PN.[Project_ID] = @Project_ID;
-        """;
-
-            #endregion
-
-
-            #region Load Existing Points
-
-            List<ExistingReferencePoint> existingPoints =
-                new();
-
-            await using SqlCommand existingPointsCommand =
-                new(
-                    cmdText: existingPointsSql,
-                    connection: databaseConnection,
-                    transaction: transaction);
-
-            existingPointsCommand.Parameters.Add(
-                parameterName: "@Project_ID",
-                sqlDbType: System.Data.SqlDbType.Int)
-                .Value =
-                    projectId;
-
-            await using SqlDataReader reader =
-                await existingPointsCommand.ExecuteReaderAsync();
-
-            while (await reader.ReadAsync())
-            {
-                ExistingReferencePoint existingPoint =
-                    new()
-                    {
-                        PointName_ID =
-                            reader.GetInt32(
-                                i: 0),
-
-                        Project_ID =
-                            reader.GetInt32(
-                                i: 1),
-
-                        PointName =
-                            reader.GetString(
-                                i: 2),
-
-                        ReplacementName =
-                            reader.GetString(
-                                i: 3),
-
-                        Easting =
-                            reader.GetDecimal(
-                                i: 4),
-
-                        Northing =
-                            reader.GetDecimal(
-                                i: 5),
-
-                        Height =
-                            reader.GetDecimal(
-                                i: 6)
-                    };
-
-                existingPoints.Add(
-                    item: existingPoint);
-            }
-
-            #endregion
-
-
-            #region Return Existing Points
-
-            return existingPoints;
-
-            #endregion
-        }
-
-        #endregion
-
-
-        #region Resolve Or Insert Point Name
-
-        private static async Task<int> ResolveOrInsertPointNameAsync(
-            int projectId,
-            ReferenceCoordinateImportItem importItem,
-            SqlConnection databaseConnection,
-            SqlTransaction transaction)
-        {
-            #region Validate Import Item
-
-            if (string.IsNullOrWhiteSpace(importItem.PointName))
-            {
-                throw new InvalidOperationException(
-                    $"Row {importItem.SourceRow}: PointName blank.");
-            }
-
-            if (string.IsNullOrWhiteSpace(importItem.ReplacementName))
-            {
-                throw new InvalidOperationException(
-                    $"Row {importItem.SourceRow}: ReplacementName blank.");
-            }
-
-            #endregion
-
-
-            #region Search Existing Point Namespace
-
-            const string findPointSql = """
-        SELECT
-            PN.[PointName_ID],
-            PN.[PointName],
-            PN.[ReplacementName],
-            PN.[IsDeleted],
-            CASE
-                WHEN CR.[PointName_ID] IS NULL THEN 0
-                ELSE 1
-            END AS [HasReference]
-        FROM [dbo].[PointName] AS PN WITH (UPDLOCK, HOLDLOCK)
-        LEFT JOIN [dbo].[CoordinatesReference] AS CR WITH (HOLDLOCK)
-            ON CR.[PointName_ID] = PN.[PointName_ID]
-        WHERE
-            PN.[Project_ID] = @Project_ID
-            AND
-            (
-                UPPER(PN.[PointName]) = UPPER(@PointName)
-                OR UPPER(PN.[ReplacementName]) = UPPER(@PointName)
-                OR UPPER(PN.[PointName]) = UPPER(@ReplacementName)
-                OR UPPER(PN.[ReplacementName]) = UPPER(@ReplacementName)
-            );
-        """;
-
-            await using SqlCommand findPointCommand =
-                new(
-                    cmdText: findPointSql,
-                    connection: databaseConnection,
-                    transaction: transaction);
-
-            findPointCommand.Parameters.Add(
-                parameterName: "@Project_ID",
-                sqlDbType: System.Data.SqlDbType.Int)
-                .Value =
-                    projectId;
-
-            findPointCommand.Parameters.Add(
-                parameterName: "@PointName",
-                sqlDbType: System.Data.SqlDbType.NVarChar,
-                size: 50)
-                .Value =
-                    importItem.PointName;
-
-            findPointCommand.Parameters.Add(
-                parameterName: "@ReplacementName",
-                sqlDbType: System.Data.SqlDbType.NVarChar,
-                size: 50)
-                .Value =
-                    importItem.ReplacementName;
-
-            #endregion
-
-
-            #region Read Existing Point Match
-
-            int? existingPointId =
-                null;
-
-            string existingPointName =
-                string.Empty;
-
-            string existingReplacementName =
-                string.Empty;
-
-            bool existingPointIsDeleted =
-                false;
-
-            bool existingPointHasReference =
-                false;
-
-            int matchCount =
-                0;
-
-            await using (SqlDataReader reader =
-                await findPointCommand.ExecuteReaderAsync())
-            {
-                while (await reader.ReadAsync())
-                {
-                    matchCount++;
-
-                    existingPointId =
-                        reader.GetInt32(
-                            i: 0);
-
-                    existingPointName =
-                        reader.GetString(
-                            i: 1);
-
-                    existingReplacementName =
-                        reader.GetString(
-                            i: 2);
-
-                    existingPointIsDeleted =
-                        reader.GetBoolean(
-                            i: 3);
-
-                    existingPointHasReference =
-                        reader.GetInt32(
-                            i: 4) == 1;
-                }
-            }
-
-            #endregion
-
-
-            #region Handle Multiple Namespace Matches
-
-            if (matchCount > 1)
-            {
-                throw new InvalidOperationException(
-                    $"'{importItem.PointName}': Name collision.");
-            }
-
-            #endregion
-
-
-            #region Reuse Existing Point
-
-            if (matchCount == 1 &&
-                existingPointId.HasValue)
-            {
-                if (existingPointIsDeleted)
-                {
-                    throw new InvalidOperationException(
-                        $"'{importItem.PointName}': Point is deleted.");
-                }
-
-                bool pointNameMatches =
-                    string.Equals(
-                        a: existingPointName,
-                        b: importItem.PointName,
-                        comparisonType: StringComparison.OrdinalIgnoreCase);
-
-                bool replacementNameMatches =
-                    string.Equals(
-                        a: existingReplacementName,
-                        b: importItem.ReplacementName,
-                        comparisonType: StringComparison.OrdinalIgnoreCase);
-
-                if (!pointNameMatches ||
-                    !replacementNameMatches)
-                {
-                    throw new InvalidOperationException(
-                        $"'{importItem.PointName}': Name mapping differs.");
-                }
-
-                if (existingPointHasReference)
-                {
-                    throw new InvalidOperationException(
-                        $"'{importItem.PointName}': Reference coordinates already exist.");
-                }
-
-                return existingPointId.Value;
-            }
-
-            #endregion
-
-
-            #region Insert New Point
-
-            return await InsertPointNameAsync(
-                projectId: projectId,
-                importItem: importItem,
-                databaseConnection: databaseConnection,
-                transaction: transaction);
-
-            #endregion
-        }
-
-
-        private static async Task<int> InsertPointNameAsync(
-            int projectId,
-            ReferenceCoordinateImportItem importItem,
-            SqlConnection databaseConnection,
-            SqlTransaction transaction)
-        {
-            #region Define Point Name Insert
-
-            const string insertPointNameSql = """
-        INSERT INTO [dbo].[PointName]
-        (
-            [PointName],
-            [ReplacementName],
-            [Project_ID],
-            [IsDeleted]
-        )
-        VALUES
-        (
-            @PointName,
-            @ReplacementName,
-            @Project_ID,
-            0
-        );
-
-        SELECT CAST(SCOPE_IDENTITY() AS int);
-        """;
-
-            #endregion
-
-
-            #region Insert Point Name
-
-            await using SqlCommand insertPointNameCommand =
-                new(
-                    cmdText: insertPointNameSql,
-                    connection: databaseConnection,
-                    transaction: transaction);
-
-            insertPointNameCommand.Parameters.Add(
-                parameterName: "@PointName",
-                sqlDbType: System.Data.SqlDbType.NVarChar,
-                size: 50)
-                .Value =
-                    importItem.PointName;
-
-            insertPointNameCommand.Parameters.Add(
-                parameterName: "@ReplacementName",
-                sqlDbType: System.Data.SqlDbType.NVarChar,
-                size: 50)
-                .Value =
-                    importItem.ReplacementName;
-
-            insertPointNameCommand.Parameters.Add(
-                parameterName: "@Project_ID",
-                sqlDbType: System.Data.SqlDbType.Int)
-                .Value =
-                    projectId;
-
-            object? pointNameIdValue =
-                await insertPointNameCommand.ExecuteScalarAsync();
-
-            if (pointNameIdValue is null ||
-                pointNameIdValue == DBNull.Value)
-            {
-                throw new InvalidOperationException(
-                    $"'{importItem.PointName}': Point insert failed.");
-            }
-
-            return Convert.ToInt32(
-                value: pointNameIdValue,
-                provider: CultureInfo.InvariantCulture);
-
-            #endregion
-        }
-
-        #endregion
-
-
-
-        #region Insert Reference Coordinates
-
-        private static async Task InsertReferenceCoordinatesAsync(
-            int pointNameId,
-            ReferenceCoordinateImportItem importItem,
-            SqlConnection databaseConnection,
-            SqlTransaction transaction)
-        {
-            #region Validate Coordinates
-
-            if (!importItem.Easting.HasValue ||
-                !importItem.Northing.HasValue ||
-                !importItem.Height.HasValue)
-            {
-                throw new InvalidOperationException(
-                    $"CSV row {importItem.SourceRow} does not contain " +
-                    "complete valid reference coordinates.");
-            }
-
-            #endregion
-
-
-            #region Define Coordinate Insert
-
-            const string insertCoordinateSql = """
-        INSERT INTO [dbo].[CoordinatesReference]
-        (
-            [PointName_ID],
-            [Eref],
-            [Nref],
-            [Href]
-        )
-        VALUES
-        (
-            @PointName_ID,
-            @Eref,
-            @Nref,
-            @Href
-        );
-        """;
-
-            #endregion
-
-
-            #region Insert Coordinates
-
-            await using SqlCommand insertCoordinateCommand =
-                new(
-                    cmdText: insertCoordinateSql,
-                    connection: databaseConnection,
-                    transaction: transaction);
-
-            insertCoordinateCommand.Parameters.Add(
-                parameterName: "@PointName_ID",
-                sqlDbType: System.Data.SqlDbType.Int)
-                .Value =
-                    pointNameId;
-
-
-            SqlParameter eastingParameter =
-                insertCoordinateCommand.Parameters.Add(
-                    parameterName: "@Eref",
-                    sqlDbType: System.Data.SqlDbType.Decimal);
-
-            eastingParameter.Precision =
-                18;
-
-            eastingParameter.Scale =
-                4;
-
-            eastingParameter.Value =
-                importItem.Easting.Value;
-
-
-            SqlParameter northingParameter =
-                insertCoordinateCommand.Parameters.Add(
-                    parameterName: "@Nref",
-                    sqlDbType: System.Data.SqlDbType.Decimal);
-
-            northingParameter.Precision =
-                18;
-
-            northingParameter.Scale =
-                4;
-
-            northingParameter.Value =
-                importItem.Northing.Value;
-
-
-            SqlParameter heightParameter =
-                insertCoordinateCommand.Parameters.Add(
-                    parameterName: "@Href",
-                    sqlDbType: System.Data.SqlDbType.Decimal);
-
-            heightParameter.Precision =
-                18;
-
-            heightParameter.Scale =
-                4;
-
-            heightParameter.Value =
-                importItem.Height.Value;
-
-
-            int rowsInserted =
-                await insertCoordinateCommand.ExecuteNonQueryAsync();
-
-            if (rowsInserted != 1)
-            {
-                throw new InvalidOperationException(
-                    $"Reference coordinates for '{importItem.PointName}' " +
-                    "were not inserted correctly.");
-            }
-
-            #endregion
-        }
-
-        #endregion
-
-
-        #endregion
-
-
-        #region Constructor
-
-        public MainWindow()
-        {
-            #region Initialise Window Components
-
-            InitializeComponent();
-
-            #endregion
-
-
-            #region EPPlus License
-
-            gnaT.epplusLicense();
-
-            #endregion
-
-
-            #region Initialise Project DataGrid
-
-            dgProjects.ItemsSource =
-                _projectItems;
-
-            #endregion
-
-
-            #region Initialise Reference Coordinate Import DataGrid
-
-            dgReferenceCoordinateImport.ItemsSource =
-                _referenceImportItems;
-
-            #endregion
-
-
-            #region Register Window Events
-
-            Loaded +=
-                MainWindow_Loaded;
-
-            Closed +=
-                MainWindow_Closed;
-
-            #endregion
-        }
-
-        #endregion
-
-
-        #region Window Initialisation
-
-        #region Application Startup
-
-        private async void MainWindow_Loaded(
-            object sender,
-            RoutedEventArgs e)
-        {
-            #region Load Persisted Startup Configuration
-
-            // Registry values are startup defaults only.
-            // They are read once when this process starts.
-
-            LoadDatabaseConnectionString();
-
-            LoadActiveProjectFromRegistry();
-
-            #endregion
-
-
-            #region Initialise Process-Local Active Project
-
-            // A persisted Project_ID does not become operational merely because
-            // it exists in the Registry.
-            //
-            // The project must first be validated against SQL Server and this
-            // application instance must acquire its Shared project lock.
-
-            await InitialiseStartupActiveProjectAsync();
-
-            #endregion
-        }
-
-        #endregion
-
-
-
-        private void MainWindow_Closed(
-            object? sender,
-            EventArgs e)
-        {
-            #region Release Cross-Instance Project Lock
-
-            ReleaseActiveProjectLockConnection();
-
-            #endregion
-        }
-
-
-
-
-
-        #endregion
-
-
-        #region Registry Persistence
-
-        #region Database Connection String Persistence
-
-        private void LoadDatabaseConnectionString()
-        {
-            #region Initialise Connection String
-
-            string connectionString =
-                string.Empty;
-
-            #endregion
-
-
-            #region Read Connection String From Registry
-
-            using RegistryKey? registryKey =
-                Registry.CurrentUser.OpenSubKey(
-                    name: RegistryPath,
-                    writable: false);
-
-            if (registryKey is not null)
-            {
-                connectionString =
-                    registryKey.GetValue(
-                        name: RegistryDatabaseConnectionString,
-                        defaultValue: string.Empty)?.ToString()
-                    ?? string.Empty;
-            }
-
-            #endregion
-
-
-            #region Populate Connection String Control
-
-            txtDbConnectionString.Text =
-                connectionString;
-
-            #endregion
-        }
-
-
-        private static void SaveDatabaseConnectionString(
-            string connectionString)
-        {
-            #region Validate Connection String
-
-            if (string.IsNullOrWhiteSpace(connectionString))
-            {
-                throw new ArgumentException(
-                    message: "Database connection string cannot be empty.",
-                    paramName: nameof(connectionString));
-            }
-
-            #endregion
-
-
-            #region Write Connection String To Registry
-
-            using RegistryKey registryKey =
-                Registry.CurrentUser.CreateSubKey(
-                    subkey: RegistryPath,
-                    writable: true)
-                ?? throw new InvalidOperationException(
-                    $"Unable to create or open registry key " +
-                    $"'HKEY_CURRENT_USER\\{RegistryPath}'.");
-
-            registryKey.SetValue(
-                name: RegistryDatabaseConnectionString,
-                value: connectionString,
-                valueKind: RegistryValueKind.String);
-
-            #endregion
-        }
-
-        #endregion
-
-
-        #region Active Project Persistence
-
-        private void LoadActiveProjectFromRegistry()
-        {
-            #region Initialise Process-Local Active Project
-
-            _activeProjectId = null;
-
-            _activeProjectName =
-                string.Empty;
-
-            #endregion
-
-
-            #region Read Persisted Startup Default
-
-            using RegistryKey? registryKey =
-                Registry.CurrentUser.OpenSubKey(
-                    name: RegistryPath,
-                    writable: false);
-
-            object? activeProjectIdValue =
-                registryKey?.GetValue(
-                    name: RegistryActiveProjectId,
-                    defaultValue: null);
-
-            string activeProjectName =
-                registryKey?.GetValue(
-                    name: RegistryActiveProjectName,
-                    defaultValue: string.Empty)?.ToString()
-                ?? string.Empty;
-
-            #endregion
-
-
-            #region Populate Process-Local Runtime State
-
-            if (activeProjectIdValue is int activeProjectId &&
-                activeProjectId > 0)
-            {
-                _activeProjectId =
-                    activeProjectId;
-
-                _activeProjectName =
-                    activeProjectName.Trim();
-            }
-
-            #endregion
-
-
-            #region Update Active Project Display
-
-            txtActiveProject.Text =
-                _activeProjectId.HasValue &&
-                !string.IsNullOrWhiteSpace(_activeProjectName)
-                    ? _activeProjectName
-                    : "No active project";
-
-            #endregion
-        }
-
-
-        private static void SaveActiveProjectToRegistry(
-            int projectId,
-            string projectName)
-        {
-            #region Validate Active Project
-
-            if (projectId <= 0)
-            {
-                throw new ArgumentOutOfRangeException(
-                    paramName: nameof(projectId),
-                    message: "Active Project_ID must be greater than zero.");
-            }
-
-            string validatedProjectName =
-                projectName?.Trim()
-                ?? throw new ArgumentNullException(
-                    paramName: nameof(projectName));
-
-            if (string.IsNullOrWhiteSpace(validatedProjectName))
-            {
-                throw new ArgumentException(
-                    message: "Active project name cannot be empty.",
-                    paramName: nameof(projectName));
-            }
-
-            #endregion
-
-
-            #region Persist Startup Default
-
-            using RegistryKey registryKey =
-                Registry.CurrentUser.CreateSubKey(
-                    subkey: RegistryPath,
-                    writable: true)
-                ?? throw new InvalidOperationException(
-                    $"Unable to create or open registry key " +
-                    $"'HKEY_CURRENT_USER\\{RegistryPath}'.");
-
-            registryKey.SetValue(
-                name: RegistryActiveProjectId,
-                value: projectId,
-                valueKind: RegistryValueKind.DWord);
-
-            registryKey.SetValue(
-                name: RegistryActiveProjectName,
-                value: validatedProjectName,
-                valueKind: RegistryValueKind.String);
-
-            #endregion
-        }
-
-
-        private static void ClearActiveProjectFromRegistry()
-        {
-            #region Open Registry Configuration
-
-            using RegistryKey? registryKey =
-                Registry.CurrentUser.OpenSubKey(
-                    name: RegistryPath,
-                    writable: true);
-
-            if (registryKey is null)
-            {
-                return;
-            }
-
-            #endregion
-
-
-            #region Remove Persisted Startup Default
-
-            registryKey.DeleteValue(
-                name: RegistryActiveProjectId,
-                throwOnMissingValue: false);
-
-            registryKey.DeleteValue(
-                name: RegistryActiveProjectName,
-                throwOnMissingValue: false);
-
-            #endregion
-        }
-
-        #endregion
-
-        #endregion
-
-
-        #region Database Connection Test
-
-        private async void btnTestDbConnection_Click(
-            object sender,
-            RoutedEventArgs e)
-        {
-            #region Validate Connection String
-
-            string connectionString =
-                txtDbConnectionString.Text?.Trim()
-                ?? throw new InvalidOperationException(
-                    "Database connection string control returned null.");
-
-            if (string.IsNullOrWhiteSpace(connectionString))
-            {
-                txtDbConnectionStatus.Text =
-                    "Enter a database connection string.";
-
-                return;
-            }
-
-            #endregion
-
-
-            #region Prepare Connection Test
-
-            btnTestDbConnection.IsEnabled =
-                false;
-
-            txtDbConnectionStatus.Text =
-                "Testing database connection...";
-
-            #endregion
-
-
-            #region Test SQL Database Connection
-
-            try
-            {
-                using SqlConnection sqlConnection =
-                    new(
-                        connectionString: connectionString);
-
-                await sqlConnection.OpenAsync();
-
-                SaveDatabaseConnectionString(
-                    connectionString: connectionString);
-
-                txtDbConnectionStatus.Text =
-                    $"Connection successful. " +
-                    $"Server: {sqlConnection.DataSource}; " +
-                    $"Database: {sqlConnection.Database}";
-            }
-
-            #endregion
-
-
-            #region Handle Connection Errors
-
-            catch (SqlException ex)
-            {
-                txtDbConnectionStatus.Text =
-                    $"SQL connection failed: {ex.Message}";
-            }
-            catch (InvalidOperationException ex)
-            {
-                txtDbConnectionStatus.Text =
-                    $"Invalid connection configuration: {ex.Message}";
-            }
-            catch (Exception ex)
-            {
-                txtDbConnectionStatus.Text =
-                    $"Connection test failed: {ex.Message}";
-            }
-
-            #endregion
-
-
-            #region Restore User Interface
-
-            finally
-            {
-                btnTestDbConnection.IsEnabled =
-                    true;
-            }
-
-            #endregion
-        }
-
-        #endregion
-
-
-        #region Clear Selected Database Table
-
-        private async void btnClearTables_Click(
-            object sender,
-            RoutedEventArgs e)
-        {
-            #region Validate Table Selection
-
-            if (cmbClearTables.SelectedItem
-                is not ComboBoxItem selectedItem)
-            {
-                txtDbConnectionStatus.Text =
-                    "Select a table.";
-
-                return;
-            }
-
-            string selectedTable =
-                selectedItem.Content?.ToString()?.Trim()
-                ?? string.Empty;
-
-            if (cmbClearTables.SelectedIndex == 0 ||
-                string.IsNullOrWhiteSpace(selectedTable))
-            {
-                txtDbConnectionStatus.Text =
-                    "Select a table.";
-
-                return;
-            }
-
-            #endregion
-
-
-            #region Confirm Clear Operation
-
-            string confirmationMessage =
-                $"Clear table '{selectedTable}'?\n\nThis cannot be undone.";
-
-            MessageBoxResult confirmation =
-                MessageBox.Show(
-                    owner: this,
-                    messageBoxText: confirmationMessage,
-                    caption: "Confirm Clear Table",
-                    button: MessageBoxButton.YesNo,
-                    icon: MessageBoxImage.Warning,
-                    defaultResult: MessageBoxResult.No);
-
-            if (confirmation != MessageBoxResult.Yes)
-            {
-                txtDbConnectionStatus.Text =
-                    "Clear cancelled.";
-
-                return;
-            }
-
-            #endregion
-
-
-            #region Prepare User Interface
-
-            btnClearTables.IsEnabled =
-                false;
-
-            cmbClearTables.IsEnabled =
-                false;
-
-            txtDbConnectionStatus.Text =
-                $"Clearing '{selectedTable}'...";
-
-            #endregion
-
-
-            try
-            {
-                #region Clear Selected Table
-
-                await ClearDatabaseTableAsync(
-                    tableName: selectedTable);
-
-                #endregion
-
-
-                #region Reset Application State
-
-                if (selectedTable == "Project")
-                {
-                    ReleaseActiveProjectLockConnection();
-
-                    _activeProjectId =
-                        null;
-
-                    _activeProjectName =
-                        string.Empty;
-
-                    txtActiveProject.Text =
-                        "No active project";
-
-                    ClearActiveProjectFromRegistry();
-
-                    _projectItems.Clear();
-
-                    ResetReferenceImportState(
-                        statusMessage: "No CSV selected.");
-
-                    ResetPrismPairImportState(
-                        statusMessage: "No workbook selected.");
-                }
-                else if (selectedTable == "PointName" ||
-                         selectedTable == "CoordinatesReference")
-                {
-                    ResetReferenceImportState(
-                        statusMessage: "No CSV selected.");
-
-                    ResetPrismPairImportState(
-                        statusMessage: "No workbook selected.");
-                }
-                else if (selectedTable == "Track" ||
-                         selectedTable == "PrismPairs")
-                {
-                    ResetPrismPairImportState(
-                        statusMessage: "No workbook selected.");
-                }
-
-                #endregion
-
-
-                #region Report Success
-
-
-                txtDbConnectionStatus.Text =
-    $"'{selectedTable}' cleared.";
-
-                cmbClearTables.SelectedIndex =
-                    0;
-
-                #endregion
-            }
-            catch (SqlException ex)
-                when (ex.Number == 547)
-            {
-                #region Report Foreign Key Failure
-
-                txtDbConnectionStatus.Text =
-                    $"'{selectedTable}': Related records exist.";
-
-                #endregion
-            }
-            catch (SqlException ex)
-            {
-                #region Report SQL Failure
-
-                txtDbConnectionStatus.Text =
-                    $"Clear failed: {ex.Message}";
-
-                #endregion
-            }
-            catch (Exception ex)
-            {
-                #region Report Clear Failure
-
-                txtDbConnectionStatus.Text =
-                    $"Clear failed: {ex.Message}";
-
-                #endregion
-            }
-            finally
-            {
-                #region Restore User Interface
-
-                btnClearTables.IsEnabled =
-                    true;
-
-                cmbClearTables.IsEnabled =
-                    true;
-
-                #endregion
-            }
-        }
-
-
-        private async Task ClearDatabaseTableAsync(
-            string tableName)
-        {
-
-
-            #region Validate Table Name
-
-            string clearSql =
-                tableName switch
-                {
-                    "CoordinatesReference" =>
-                        "DELETE FROM [dbo].[CoordinatesReference];",
-
-                    "PrismPairs" =>
-                        """
-    SET XACT_ABORT ON;
-
-    BEGIN TRY
-
-        BEGIN TRANSACTION;
-
-        DELETE FROM [dbo].[PrismPairs];
-        DELETE FROM [dbo].[Track];
-
-        COMMIT TRANSACTION;
-
-    END TRY
-
-    BEGIN CATCH
-
-        IF @@TRANCOUNT > 0
-            ROLLBACK TRANSACTION;
-
-        THROW;
-
-    END CATCH;
-    """,
-
-                    _ =>
-                        throw new InvalidOperationException(
-                            "Invalid table selection.")
-                };
-
-            #endregion
-
-
-            #region Read Database Connection String
-
-            string connectionString =
-                txtDbConnectionString.Text?.Trim()
-                ?? throw new InvalidOperationException(
-                    "Database connection string unavailable.");
-
-            if (string.IsNullOrWhiteSpace(connectionString))
-            {
-                throw new InvalidOperationException(
-                    "Database connection string not configured.");
-            }
-
-            #endregion
-
-
-            #region Build Database Connection
-
-            SqlConnectionStringBuilder databaseConnectionBuilder =
-                new(
-                    connectionString: connectionString)
-                {
-                    InitialCatalog =
-                        TrackGeometryDatabaseName
-                };
-
-            #endregion
-
-
-            #region Execute Clear Operation
-
-            await using SqlConnection databaseConnection =
-                new(
-                    connectionString:
-                        databaseConnectionBuilder.ConnectionString);
-
-            await databaseConnection.OpenAsync();
-
-            await using SqlCommand clearCommand =
-                new(
-                    cmdText: clearSql,
-                    connection: databaseConnection);
-
-            await clearCommand.ExecuteNonQueryAsync();
-
-            #endregion
-        }
-
-        #endregion
-
-
-
-        #region Database Creation
-
-        private async void btnCreateDb_Click(
-            object sender,
-            RoutedEventArgs e)
-        {
-            #region Validate Connection String
-
-            string connectionString =
-                txtDbConnectionString.Text?.Trim()
-                ?? throw new InvalidOperationException(
-                    "Database connection string control returned null.");
-
-            if (string.IsNullOrWhiteSpace(connectionString))
-            {
-                txtDbConnectionStatus.Text =
-                    "Enter and test the database connection string first.";
-
-                return;
-            }
-
-            #endregion
-
-
-            #region Prepare User Interface
-
-            btnCreateDb.IsEnabled =
-                false;
-
-            btnTestDbConnection.IsEnabled =
-                false;
-
-            txtDbConnectionStatus.Text =
-                $"Checking database '{TrackGeometryDatabaseName}'...";
-
-            #endregion
-
-
-            try
-            {
-                #region Check Whether Database Exists
-
-                bool databaseExists =
-                    await DatabaseExistsAsync(
-                        connectionString: connectionString);
-
-                #endregion
-
-
-                #region Confirm Existing Database Recreation
-
-                bool recreateExistingDatabase =
-                    false;
-
-                if (databaseExists)
-                {
-                    #region First Recreation Warning
-
-                    MessageBoxResult confirmation =
-                        MessageBox.Show(
-                            messageBoxText:
-                                $"Database '{TrackGeometryDatabaseName}' already exists.\n\n" +
-                                "Recreating the database will permanently delete ALL " +
-                                "existing data and completely recreate the database and " +
-                                "all table structures.\n\n" +
-                                "THIS OPERATION CANNOT BE UNDONE.\n\n" +
-                                "Do you want to permanently delete and recreate the database?",
-                            caption: "Recreate Database Warning",
-                            button: MessageBoxButton.YesNo,
-                            icon: MessageBoxImage.Warning,
-                            defaultResult: MessageBoxResult.No);
-
-                    if (confirmation != MessageBoxResult.Yes)
-                    {
-                        txtDbConnectionStatus.Text =
-                            $"Database '{TrackGeometryDatabaseName}' was not changed.";
-
-                        return;
-                    }
-
-                    #endregion
-
-
-                    #region Final Recreation Warning
-
-                    ConfirmDatabaseRecreationWindow finalConfirmation =
-                        new()
-                        {
-                            Owner = this
-                        };
-
-                    bool? proceedWithRecreation =
-                        finalConfirmation.ShowDialog();
-
-                    if (proceedWithRecreation != true)
-                    {
-                        txtDbConnectionStatus.Text =
-                            $"Database '{TrackGeometryDatabaseName}' recreation was aborted.";
-
-                        return;
-                    }
-
-                    #endregion
-
-
-                    #region Set Recreation Mode
-
-                    recreateExistingDatabase =
-                        true;
-
-                    #endregion
-                }
-
-                #endregion
-
-
-                #region Create Or Recreate Database
-
-                txtDbConnectionStatus.Text =
-                    recreateExistingDatabase
-                        ? $"Recreating database '{TrackGeometryDatabaseName}'..."
-                        : $"Creating database '{TrackGeometryDatabaseName}'...";
-
-                await CreateDatabaseAndTablesAsync(
-                    connectionString: connectionString,
-                    recreateExistingDatabase: recreateExistingDatabase);
-
-                #endregion
-
-
-                #region Reset Process Project State After Recreation
-
-                if (recreateExistingDatabase)
-                {
-                    // The database has been completely recreated.
-                    // Any previously held Project_ID is therefore invalid
-                    // for this running process.
-
-                    _activeProjectId =
-                        null;
-
-                    _activeProjectName =
-                        string.Empty;
-
-                    txtActiveProject.Text =
-                        "No active project";
-
-                    _projectItems.Clear();
-
-                    // The persisted active project also belongs to the
-                    // destroyed database and is no longer valid.
-
-                    ClearActiveProjectFromRegistry();
-                }
-
-                #endregion
-
-
-                #region Report Successful Completion
-
-                txtDbConnectionStatus.Text =
-                    recreateExistingDatabase
-                        ? $"Database '{TrackGeometryDatabaseName}' was recreated successfully. " +
-                          $"All tables are empty."
-                        : $"Database '{TrackGeometryDatabaseName}' and all required tables " +
-                          $"were created successfully.";
-
-                #endregion
-            }
-
-            #region Handle Database Errors
-
-            catch (SqlException ex)
-            {
-                txtDbConnectionStatus.Text =
-                    $"Database operation failed: {ex.Message}";
-            }
-            catch (ArgumentException ex)
-            {
-                txtDbConnectionStatus.Text =
-                    $"Invalid database configuration: {ex.Message}";
-            }
-            catch (InvalidOperationException ex)
-            {
-                txtDbConnectionStatus.Text =
-                    $"Database operation failed: {ex.Message}";
-            }
-            catch (Exception ex)
-            {
-                txtDbConnectionStatus.Text =
-                    $"Database operation failed: {ex.Message}";
-            }
-
-            #endregion
-
-
-            #region Restore User Interface
-
-            finally
-            {
-                btnCreateDb.IsEnabled =
-                    true;
-
-                btnTestDbConnection.IsEnabled =
-                    true;
-            }
-
-            #endregion
-        }
-
-
-        private static async Task<bool> DatabaseExistsAsync(
-            string connectionString)
-        {
-            #region Validate Connection String
-
-            if (string.IsNullOrWhiteSpace(connectionString))
-            {
-                throw new ArgumentException(
-                    message: "Database connection string cannot be empty.",
-                    paramName: nameof(connectionString));
-            }
-
-            #endregion
-
-
-            #region Build Master Database Connection String
-
-            SqlConnectionStringBuilder masterConnectionBuilder =
-                new(
-                    connectionString: connectionString)
-                {
-                    InitialCatalog = "master"
-                };
-
-            #endregion
-
-
-            #region Check Database Existence
-
-            const string databaseExistsSql = """
-                SELECT
-                    CASE
-                        WHEN DB_ID(N'DBTrackGeometry') IS NULL THEN 0
-                        ELSE 1
-                    END;
-                """;
-
-            await using SqlConnection masterConnection =
-                new(
-                    connectionString: masterConnectionBuilder.ConnectionString);
-
-            await masterConnection.OpenAsync();
-
-            await using SqlCommand databaseExistsCommand =
-                new(
-                    cmdText: databaseExistsSql,
-                    connection: masterConnection);
-
-            object databaseExistsResult =
-                await databaseExistsCommand.ExecuteScalarAsync()
-                ?? throw new InvalidOperationException(
-                    "SQL Server returned no result when checking database existence.");
-
-            return Convert.ToInt32(
-                value: databaseExistsResult) == 1;
-
-            #endregion
-        }
-
-
-        private static async Task CreateDatabaseAndTablesAsync(
-            string connectionString,
-            bool recreateExistingDatabase)
-        {
-            #region Validate Connection String
-
-            if (string.IsNullOrWhiteSpace(connectionString))
-            {
-                throw new ArgumentException(
-                    message: "Database connection string cannot be empty.",
-                    paramName: nameof(connectionString));
-            }
-
-            #endregion
-
-
-            #region Build Master Database Connection String
-
-            SqlConnectionStringBuilder masterConnectionBuilder =
-                new(
-                    connectionString: connectionString)
-                {
-                    InitialCatalog = "master"
-                };
-
-            #endregion
-
-
-            #region Create Or Recreate Database
-
-            await using (SqlConnection masterConnection =
-                new(
-                    connectionString: masterConnectionBuilder.ConnectionString))
-            {
-                await masterConnection.OpenAsync();
-
-                string databaseCreationSql;
-
-                if (recreateExistingDatabase)
-                {
-                    databaseCreationSql = """
-                        IF DB_ID(N'DBTrackGeometry') IS NOT NULL
-                        BEGIN
-                            ALTER DATABASE [DBTrackGeometry]
-                            SET SINGLE_USER
-                            WITH ROLLBACK IMMEDIATE;
-
-                            DROP DATABASE [DBTrackGeometry];
-                        END;
-
-                        CREATE DATABASE [DBTrackGeometry];
-                        """;
-                }
-                else
-                {
-                    databaseCreationSql = """
-                        IF DB_ID(N'DBTrackGeometry') IS NULL
-                        BEGIN
-                            CREATE DATABASE [DBTrackGeometry];
-                        END;
-                        """;
-                }
-
-                await using SqlCommand createDatabaseCommand =
-                    new(
-                        cmdText: databaseCreationSql,
-                        connection: masterConnection);
-
-                await createDatabaseCommand.ExecuteNonQueryAsync();
-            }
-
-            #endregion
-
-
-            #region Build Track Geometry Database Connection String
-
-            SqlConnectionStringBuilder databaseConnectionBuilder =
-                new(
-                    connectionString: connectionString)
-                {
-                    InitialCatalog = TrackGeometryDatabaseName
-                };
-
-            #endregion
-
-
-            #region Define Database Table Structure
-
-            const string createTablesSql = """
-                SET XACT_ABORT ON;
-
-                BEGIN TRY
-
-                    BEGIN TRANSACTION;
-
-
-                    /* =============================================================
-                       PROJECT
-                       Soft deletion:
-                           IsDeleted = 0 -> Active
-                           IsDeleted = 1 -> Deleted / retired
-                       ============================================================= */
-
-                    IF OBJECT_ID(N'dbo.Project', N'U') IS NULL
-                    BEGIN
-
-                        CREATE TABLE [dbo].[Project]
-                        (
-                            [Project_ID] int IDENTITY(1,1) NOT NULL,
-                            [ProjectName] nvarchar(200) NOT NULL,
-                            [IsDeleted] bit NOT NULL
-                                CONSTRAINT [DF_Project_IsDeleted]
-                                DEFAULT (0),
-
-                            CONSTRAINT [PK_Project]
-                                PRIMARY KEY CLUSTERED ([Project_ID]),
-
-                            CONSTRAINT [UQ_Project_ProjectName]
-                                UNIQUE ([ProjectName])
-                        );
-
-                    END;
-
-
-                    /* =============================================================
-                       POINT NAME
-                       ReplacementName must be populated by the application.
-                       If no replacement name exists:
-                           ReplacementName = PointName
-
-                       Soft deletion:
-                           IsDeleted = 0 -> Active
-                           IsDeleted = 1 -> Deleted / retired
-                       ============================================================= */
-
-                    IF OBJECT_ID(N'dbo.PointName', N'U') IS NULL
-                    BEGIN
-
-                        CREATE TABLE [dbo].[PointName]
-                        (
-                            [PointName_ID] int IDENTITY(1,1) NOT NULL,
-                            [PointName] nvarchar(50) NOT NULL,
-                            [ReplacementName] nvarchar(50) NOT NULL,
-                            [Project_ID] int NOT NULL,
-                            [IsDeleted] bit NOT NULL
-                                CONSTRAINT [DF_PointName_IsDeleted]
-                                DEFAULT (0),
-
-                            CONSTRAINT [PK_PointName]
-                                PRIMARY KEY CLUSTERED ([PointName_ID]),
-
-                            CONSTRAINT [UQ_PointName_Project_PointName]
-                                UNIQUE ([Project_ID], [PointName]),
-
-                            CONSTRAINT [FK_PointName_Project]
-                                FOREIGN KEY ([Project_ID])
-                                REFERENCES [dbo].[Project] ([Project_ID])
-                                ON DELETE NO ACTION
-                                ON UPDATE NO ACTION
-                        );
-
-                    END;
-
-
-                    /* =============================================================
-                       COORDINATES REFERENCE
-                       One reference coordinate set per point.
-                       Coordinates stored in metres.
-                       ============================================================= */
-
-                    IF OBJECT_ID(N'dbo.CoordinatesReference', N'U') IS NULL
-                    BEGIN
-
-                        CREATE TABLE [dbo].[CoordinatesReference]
-                        (
-                            [PointName_ID] int NOT NULL,
-                            [Eref] decimal(18,4) NOT NULL,
-                            [Nref] decimal(18,4) NOT NULL,
-                            [Href] decimal(18,4) NOT NULL,
-
-                            CONSTRAINT [PK_CoordinatesReference]
-                                PRIMARY KEY CLUSTERED ([PointName_ID]),
-
-                            CONSTRAINT [FK_CoordinatesReference_PointName]
-                                FOREIGN KEY ([PointName_ID])
-                                REFERENCES [dbo].[PointName] ([PointName_ID])
-                                ON DELETE NO ACTION
-                                ON UPDATE NO ACTION
-                        );
-
-                    END;
-
-
-                    /* =============================================================
-                       COORDINATES CURRENT
-                       One current coordinate set per point.
-                       Coordinates stored in metres.
-                       ============================================================= */
-
-                    IF OBJECT_ID(N'dbo.CoordinatesCurrent', N'U') IS NULL
-                    BEGIN
-
-                        CREATE TABLE [dbo].[CoordinatesCurrent]
-                        (
-                            [PointName_ID] int NOT NULL,
-                            [UTCtime] datetime2(0) NOT NULL,
-                            [E] decimal(18,4) NOT NULL,
-                            [N] decimal(18,4) NOT NULL,
-                            [H] decimal(18,4) NOT NULL,
-
-                            CONSTRAINT [PK_CoordinatesCurrent]
-                                PRIMARY KEY CLUSTERED ([PointName_ID]),
-
-                            CONSTRAINT [FK_CoordinatesCurrent_PointName]
-                                FOREIGN KEY ([PointName_ID])
-                                REFERENCES [dbo].[PointName] ([PointName_ID])
-                                ON DELETE NO ACTION
-                                ON UPDATE NO ACTION
-                        );
-
-                        CREATE INDEX [IX_CoordinatesCurrent_UTCtime]
-                            ON [dbo].[CoordinatesCurrent] ([UTCtime]);
-
-                    END;
-
-
-                    /* =============================================================
-                       PRISM PAIRS
-                       Left and Right points must be different.
-                       Same-project validation is performed by the application.
-
-                       Soft deletion:
-                           IsDeleted = 0 -> Active
-                           IsDeleted = 1 -> Deleted / retired
-                       ============================================================= */
-
-                    IF OBJECT_ID(N'dbo.PrismPairs', N'U') IS NULL
-                    BEGIN
-
-                        CREATE TABLE [dbo].[PrismPairs]
-                        (
-                            [PrismPair_ID] int IDENTITY(1,1) NOT NULL,
-                            [Left_ID] int NOT NULL,
-                            [Right_ID] int NOT NULL,
-                            [IsDeleted] bit NOT NULL
-                                CONSTRAINT [DF_PrismPairs_IsDeleted]
-                                DEFAULT (0),
-
-                            CONSTRAINT [PK_PrismPairs]
-                                PRIMARY KEY CLUSTERED ([PrismPair_ID]),
-
-                            CONSTRAINT [UQ_PrismPairs_Left_Right]
-                                UNIQUE ([Left_ID], [Right_ID]),
-
-                            CONSTRAINT [CK_PrismPairs_DifferentPoints]
-                                CHECK ([Left_ID] <> [Right_ID]),
-
-                            CONSTRAINT [FK_PrismPairs_LeftPoint]
-                                FOREIGN KEY ([Left_ID])
-                                REFERENCES [dbo].[PointName] ([PointName_ID])
-                                ON DELETE NO ACTION
-                                ON UPDATE NO ACTION,
-
-                            CONSTRAINT [FK_PrismPairs_RightPoint]
-                                FOREIGN KEY ([Right_ID])
-                                REFERENCES [dbo].[PointName] ([PointName_ID])
-                                ON DELETE NO ACTION
-                                ON UPDATE NO ACTION
-                        );
-
-                    END;
-
-
-                    /* =============================================================
-                       dH EPOCHS
-                       Individual epoch values stored in metres.
-                       ============================================================= */
-
-                    IF OBJECT_ID(N'dbo.DhEpochs', N'U') IS NULL
-                    BEGIN
-
-                        CREATE TABLE [dbo].[DhEpochs]
-                        (
-                            [UTCtime] datetime2(0) NOT NULL,
-                            [PointName_ID] int NOT NULL,
-                            [dH] decimal(18,4) NOT NULL,
-
-                            CONSTRAINT [PK_DhEpochs]
-                                PRIMARY KEY CLUSTERED
-                                ([PointName_ID], [UTCtime]),
-
-                            CONSTRAINT [FK_DhEpochs_PointName]
-                                FOREIGN KEY ([PointName_ID])
-                                REFERENCES [dbo].[PointName] ([PointName_ID])
-                                ON DELETE NO ACTION
-                                ON UPDATE NO ACTION
-                        );
-
-                        CREATE INDEX [IX_DhEpochs_UTCtime]
-                            ON [dbo].[DhEpochs] ([UTCtime]);
-
-                    END;
-
-
-                    /* =============================================================
-                       SLEW EPOCHS
-                       Individual epoch values stored in metres.
-                       ============================================================= */
-
-                    IF OBJECT_ID(N'dbo.SlewEpochs', N'U') IS NULL
-                    BEGIN
-
-                        CREATE TABLE [dbo].[SlewEpochs]
-                        (
-                            [UTCtime] datetime2(0) NOT NULL,
-                            [PointName_ID] int NOT NULL,
-                            [Slew] decimal(18,4) NOT NULL,
-
-                            CONSTRAINT [PK_SlewEpochs]
-                                PRIMARY KEY CLUSTERED
-                                ([PointName_ID], [UTCtime]),
-
-                            CONSTRAINT [FK_SlewEpochs_PointName]
-                                FOREIGN KEY ([PointName_ID])
-                                REFERENCES [dbo].[PointName] ([PointName_ID])
-                                ON DELETE NO ACTION
-                                ON UPDATE NO ACTION
-                        );
-
-                        CREATE INDEX [IX_SlewEpochs_UTCtime]
-                            ON [dbo].[SlewEpochs] ([UTCtime]);
-
-                    END;
-
-
-                    /* =============================================================
-                       TOP EPOCHS
-                       Individual epoch values stored in metres.
-                       ============================================================= */
-
-                    IF OBJECT_ID(N'dbo.TopEpochs', N'U') IS NULL
-                    BEGIN
-
-                        CREATE TABLE [dbo].[TopEpochs]
-                        (
-                            [UTCtime] datetime2(0) NOT NULL,
-                            [PointName_ID] int NOT NULL,
-                            [Top] decimal(18,4) NOT NULL,
-
-                            CONSTRAINT [PK_TopEpochs]
-                                PRIMARY KEY CLUSTERED
-                                ([PointName_ID], [UTCtime]),
-
-                            CONSTRAINT [FK_TopEpochs_PointName]
-                                FOREIGN KEY ([PointName_ID])
-                                REFERENCES [dbo].[PointName] ([PointName_ID])
-                                ON DELETE NO ACTION
-                                ON UPDATE NO ACTION
-                        );
-
-                        CREATE INDEX [IX_TopEpochs_UTCtime]
-                            ON [dbo].[TopEpochs] ([UTCtime]);
-
-                    END;
-
-
-                    /* =============================================================
-                       CANT EPOCHS
-                       Individual epoch values stored in metres.
-                       ============================================================= */
-
-                    IF OBJECT_ID(N'dbo.CantEpochs', N'U') IS NULL
-                    BEGIN
-
-                        CREATE TABLE [dbo].[CantEpochs]
-                        (
-                            [UTCtime] datetime2(0) NOT NULL,
-                            [PrismPair_ID] int NOT NULL,
-                            [Cant] decimal(18,4) NOT NULL,
-
-                            CONSTRAINT [PK_CantEpochs]
-                                PRIMARY KEY CLUSTERED
-                                ([PrismPair_ID], [UTCtime]),
-
-                            CONSTRAINT [FK_CantEpochs_PrismPairs]
-                                FOREIGN KEY ([PrismPair_ID])
-                                REFERENCES [dbo].[PrismPairs] ([PrismPair_ID])
-                                ON DELETE NO ACTION
-                                ON UPDATE NO ACTION
-                        );
-
-                        CREATE INDEX [IX_CantEpochs_UTCtime]
-                            ON [dbo].[CantEpochs] ([UTCtime]);
-
-                    END;
-
-
-                    /* =============================================================
-                       SHORT TWIST EPOCHS
-                       SIGNED twist displacement stored in millimetres over 3 m.
-                       Ratio is derived by the reporting software.
-                       ============================================================= */
-
-                    IF OBJECT_ID(N'dbo.ShortTwistEpochs', N'U') IS NULL
-                    BEGIN
-
-                        CREATE TABLE [dbo].[ShortTwistEpochs]
-                        (
-                            [UTCtime] datetime2(0) NOT NULL,
-                            [PrismPair_ID] int NOT NULL,
-                            [ShortTwist] decimal(18,4) NULL,
-
-                            CONSTRAINT [PK_ShortTwistEpochs]
-                                PRIMARY KEY CLUSTERED
-                                ([PrismPair_ID], [UTCtime]),
-
-                            CONSTRAINT [FK_ShortTwistEpochs_PrismPairs]
-                                FOREIGN KEY ([PrismPair_ID])
-                                REFERENCES [dbo].[PrismPairs] ([PrismPair_ID])
-                                ON DELETE NO ACTION
-                                ON UPDATE NO ACTION
-                        );
-
-                        CREATE INDEX [IX_ShortTwistEpochs_UTCtime]
-                            ON [dbo].[ShortTwistEpochs] ([UTCtime]);
-
-                    END;
-
-
-                    /* =============================================================
-                       LONG TWIST EPOCHS
-                       SIGNED twist displacement stored in millimetres over 15 m.
-                       Ratio is derived by the reporting software.
-                       ============================================================= */
-
-                    IF OBJECT_ID(N'dbo.LongTwistEpochs', N'U') IS NULL
-                    BEGIN
-
-                        CREATE TABLE [dbo].[LongTwistEpochs]
-                        (
-                            [UTCtime] datetime2(0) NOT NULL,
-                            [PrismPair_ID] int NOT NULL,
-                            [LongTwist] decimal(18,4) NULL,
-
-                            CONSTRAINT [PK_LongTwistEpochs]
-                                PRIMARY KEY CLUSTERED
-                                ([PrismPair_ID], [UTCtime]),
-
-                            CONSTRAINT [FK_LongTwistEpochs_PrismPairs]
-                                FOREIGN KEY ([PrismPair_ID])
-                                REFERENCES [dbo].[PrismPairs] ([PrismPair_ID])
-                                ON DELETE NO ACTION
-                                ON UPDATE NO ACTION
-                        );
-
-                        CREATE INDEX [IX_LongTwistEpochs_UTCtime]
-                            ON [dbo].[LongTwistEpochs] ([UTCtime]);
-
-                    END;
-
-
-                    /* =============================================================
-                       COORDINATES DAILY
-                       One daily mean coordinate set per point.
-                       Coordinates stored in metres.
-                       ============================================================= */
-
-                    IF OBJECT_ID(N'dbo.CoordinatesDaily', N'U') IS NULL
-                    BEGIN
-
-                        CREATE TABLE [dbo].[CoordinatesDaily]
-                        (
-                            [UTCdate] date NOT NULL,
-                            [PointName_ID] int NOT NULL,
-                            [E] decimal(18,4) NOT NULL,
-                            [N] decimal(18,4) NOT NULL,
-                            [H] decimal(18,4) NOT NULL,
-
-                            CONSTRAINT [PK_CoordinatesDaily]
-                                PRIMARY KEY CLUSTERED
-                                ([PointName_ID], [UTCdate]),
-
-                            CONSTRAINT [FK_CoordinatesDaily_PointName]
-                                FOREIGN KEY ([PointName_ID])
-                                REFERENCES [dbo].[PointName] ([PointName_ID])
-                                ON DELETE NO ACTION
-                                ON UPDATE NO ACTION
-                        );
-
-                        CREATE INDEX [IX_CoordinatesDaily_UTCdate]
-                            ON [dbo].[CoordinatesDaily] ([UTCdate]);
-
-                    END;
-
-
-                    /* =============================================================
-                       dH DAILY
-                       Daily mean derived from DhEpochs.
-                       Value stored in metres.
-                       ============================================================= */
-
-                    IF OBJECT_ID(N'dbo.DhDaily', N'U') IS NULL
-                    BEGIN
-
-                        CREATE TABLE [dbo].[DhDaily]
-                        (
-                            [UTCdate] date NOT NULL,
-                            [PointName_ID] int NOT NULL,
-                            [dH] decimal(18,4) NOT NULL,
-
-                            CONSTRAINT [PK_DhDaily]
-                                PRIMARY KEY CLUSTERED
-                                ([PointName_ID], [UTCdate]),
-
-                            CONSTRAINT [FK_DhDaily_PointName]
-                                FOREIGN KEY ([PointName_ID])
-                                REFERENCES [dbo].[PointName] ([PointName_ID])
-                                ON DELETE NO ACTION
-                                ON UPDATE NO ACTION
-                        );
-
-                        CREATE INDEX [IX_DhDaily_UTCdate]
-                            ON [dbo].[DhDaily] ([UTCdate]);
-
-                    END;
-
-
-                    /* =============================================================
-                       SLEW DAILY
-                       Daily mean derived from SlewEpochs.
-                       Value stored in metres.
-                       ============================================================= */
-
-                    IF OBJECT_ID(N'dbo.SlewDaily', N'U') IS NULL
-                    BEGIN
-
-                        CREATE TABLE [dbo].[SlewDaily]
-                        (
-                            [UTCdate] date NOT NULL,
-                            [PointName_ID] int NOT NULL,
-                            [Slew] decimal(18,4) NOT NULL,
-
-                            CONSTRAINT [PK_SlewDaily]
-                                PRIMARY KEY CLUSTERED
-                                ([PointName_ID], [UTCdate]),
-
-                            CONSTRAINT [FK_SlewDaily_PointName]
-                                FOREIGN KEY ([PointName_ID])
-                                REFERENCES [dbo].[PointName] ([PointName_ID])
-                                ON DELETE NO ACTION
-                                ON UPDATE NO ACTION
-                        );
-
-                        CREATE INDEX [IX_SlewDaily_UTCdate]
-                            ON [dbo].[SlewDaily] ([UTCdate]);
-
-                    END;
-
-
-                    /* =============================================================
-                       TOP DAILY
-                       Daily mean derived from TopEpochs.
-                       Value stored in metres.
-                       ============================================================= */
-
-                    IF OBJECT_ID(N'dbo.TopDaily', N'U') IS NULL
-                    BEGIN
-
-                        CREATE TABLE [dbo].[TopDaily]
-                        (
-                            [UTCdate] date NOT NULL,
-                            [PointName_ID] int NOT NULL,
-                            [Top] decimal(18,4) NOT NULL,
-
-                            CONSTRAINT [PK_TopDaily]
-                                PRIMARY KEY CLUSTERED
-                                ([PointName_ID], [UTCdate]),
-
-                            CONSTRAINT [FK_TopDaily_PointName]
-                                FOREIGN KEY ([PointName_ID])
-                                REFERENCES [dbo].[PointName] ([PointName_ID])
-                                ON DELETE NO ACTION
-                                ON UPDATE NO ACTION
-                        );
-
-                        CREATE INDEX [IX_TopDaily_UTCdate]
-                            ON [dbo].[TopDaily] ([UTCdate]);
-
-                    END;
-
-
-                    /* =============================================================
-                       CANT DAILY
-                       Daily mean derived from CantEpochs.
-                       Value stored in metres.
-                       ============================================================= */
-
-                    IF OBJECT_ID(N'dbo.CantDaily', N'U') IS NULL
-                    BEGIN
-
-                        CREATE TABLE [dbo].[CantDaily]
-                        (
-                            [UTCdate] date NOT NULL,
-                            [PrismPair_ID] int NOT NULL,
-                            [Cant] decimal(18,4) NOT NULL,
-
-                            CONSTRAINT [PK_CantDaily]
-                                PRIMARY KEY CLUSTERED
-                                ([PrismPair_ID], [UTCdate]),
-
-                            CONSTRAINT [FK_CantDaily_PrismPairs]
-                                FOREIGN KEY ([PrismPair_ID])
-                                REFERENCES [dbo].[PrismPairs] ([PrismPair_ID])
-                                ON DELETE NO ACTION
-                                ON UPDATE NO ACTION
-                        );
-
-                        CREATE INDEX [IX_CantDaily_UTCdate]
-                            ON [dbo].[CantDaily] ([UTCdate]);
-
-                    END;
-
-
-                    /* =============================================================
-                       SHORT TWIST DAILY
-                       Daily mean of SIGNED ShortTwistEpochs displacement.
-                       Value stored in millimetres over a 3 m base.
-                       ============================================================= */
-
-                    IF OBJECT_ID(N'dbo.ShortTwistDaily', N'U') IS NULL
-                    BEGIN
-
-                        CREATE TABLE [dbo].[ShortTwistDaily]
-                        (
-                            [UTCdate] date NOT NULL,
-                            [PrismPair_ID] int NOT NULL,
-                            [ShortTwist] decimal(18,4) NULL,
-
-                            CONSTRAINT [PK_ShortTwistDaily]
-                                PRIMARY KEY CLUSTERED
-                                ([PrismPair_ID], [UTCdate]),
-
-                            CONSTRAINT [FK_ShortTwistDaily_PrismPairs]
-                                FOREIGN KEY ([PrismPair_ID])
-                                REFERENCES [dbo].[PrismPairs] ([PrismPair_ID])
-                                ON DELETE NO ACTION
-                                ON UPDATE NO ACTION
-                        );
-
-                        CREATE INDEX [IX_ShortTwistDaily_UTCdate]
-                            ON [dbo].[ShortTwistDaily] ([UTCdate]);
-
-                    END;
-
-
-                    /* =============================================================
-                       LONG TWIST DAILY
-                       Daily mean of SIGNED LongTwistEpochs displacement.
-                       Value stored in millimetres over a 15 m base.
-                       ============================================================= */
-
-                    IF OBJECT_ID(N'dbo.LongTwistDaily', N'U') IS NULL
-                    BEGIN
-
-                        CREATE TABLE [dbo].[LongTwistDaily]
-                        (
-                            [UTCdate] date NOT NULL,
-                            [PrismPair_ID] int NOT NULL,
-                            [LongTwist] decimal(18,4) NULL,
-
-                            CONSTRAINT [PK_LongTwistDaily]
-                                PRIMARY KEY CLUSTERED
-                                ([PrismPair_ID], [UTCdate]),
-
-                            CONSTRAINT [FK_LongTwistDaily_PrismPairs]
-                                FOREIGN KEY ([PrismPair_ID])
-                                REFERENCES [dbo].[PrismPairs] ([PrismPair_ID])
-                                ON DELETE NO ACTION
-                                ON UPDATE NO ACTION
-                        );
-
-                        CREATE INDEX [IX_LongTwistDaily_UTCdate]
-                            ON [dbo].[LongTwistDaily] ([UTCdate]);
-
-                    END;
-
-
-                    COMMIT TRANSACTION;
-
-                END TRY
-
-                BEGIN CATCH
-
-                    IF @@TRANCOUNT > 0
-                        ROLLBACK TRANSACTION;
-
-                    THROW;
-
-                END CATCH;
-                """;
-
-            #endregion
-
-
-            #region Create Missing Tables
-
-            await using (SqlConnection databaseConnection =
-                new(
-                    connectionString:
-                        databaseConnectionBuilder.ConnectionString))
-            {
-                await databaseConnection.OpenAsync();
-
-                await using SqlCommand createTablesCommand =
-                    new(
-                        cmdText: createTablesSql,
-                        connection: databaseConnection);
-
-                await createTablesCommand.ExecuteNonQueryAsync();
-            }
-
-
-            await EnsureTrackAndPrismPairSchemaAsync(
-                connectionString:
-                    databaseConnectionBuilder.ConnectionString);
-
-            #endregion
-
-
-
-        }
-
-
-        #region Track And Prism Pair Schema Upgrade
-
-        private static async Task EnsureTrackAndPrismPairSchemaAsync(
-            string connectionString)
-        {
-            #region Validate Connection String
-
-            if (string.IsNullOrWhiteSpace(connectionString))
-            {
-                throw new ArgumentException(
-                    message: "Database connection string cannot be empty.",
-                    paramName: nameof(connectionString));
-            }
-
-            #endregion
-
-
-            #region Define Schema Upgrade Phase One
-
-            // IMPORTANT:
-            //
-            // Track_ID and PairOrder must be ADDED in a separate SQL batch from
-            // any SQL statements that subsequently reference those columns.
-            //
-            // SQL Server compiles an entire batch before executing it. Therefore
-            // adding a column and then referencing that new column later in the
-            // same batch can produce:
-            //
-            //     Invalid column name 'PairOrder'
-            //
-            // even though the ALTER TABLE ADD statement appears earlier.
-
-            const string phaseOneSql = """
-        /* =============================================================
-           TRACK
-           Each Track belongs to one Project.
-           TrackName is unique within that Project.
-           ============================================================= */
-
-        IF OBJECT_ID(N'dbo.Track', N'U') IS NULL
-        BEGIN
-
-            CREATE TABLE [dbo].[Track]
-            (
-                [Track_ID] int IDENTITY(1,1) NOT NULL,
-                [Project_ID] int NOT NULL,
-                [TrackName] nvarchar(200) NOT NULL,
-                [IsDeleted] bit NOT NULL
-                    CONSTRAINT [DF_Track_IsDeleted]
-                    DEFAULT (0),
-
-                CONSTRAINT [PK_Track]
-                    PRIMARY KEY CLUSTERED ([Track_ID]),
-
-                CONSTRAINT [UQ_Track_Project_TrackName]
-                    UNIQUE ([Project_ID], [TrackName]),
-
-                CONSTRAINT [FK_Track_Project]
-                    FOREIGN KEY ([Project_ID])
-                    REFERENCES [dbo].[Project] ([Project_ID])
-                    ON DELETE NO ACTION
-                    ON UPDATE NO ACTION
-            );
-
-        END;
-
-
-        /* =============================================================
-           PRISM PAIRS
-           Validate existing table before migration.
-           ============================================================= */
-
-        IF OBJECT_ID(N'dbo.PrismPairs', N'U') IS NULL
-        BEGIN
-
-            THROW 50001,
-                'PrismPairs table does not exist.',
-                1;
-
-        END;
-
-
-        /* -------------------------------------------------------------
-           Reject migration of populated legacy PrismPairs.
-
-           Track_ID and PairOrder cannot safely be inferred from the
-           old PrismPairs records.
-           ------------------------------------------------------------- */
-
-        IF
-        (
-            COL_LENGTH(
-                'dbo.PrismPairs',
-                'Track_ID') IS NULL
-
-            OR
-
-            COL_LENGTH(
-                'dbo.PrismPairs',
-                'PairOrder') IS NULL
-        )
-        AND EXISTS
-        (
-            SELECT 1
-            FROM [dbo].[PrismPairs]
-        )
-        BEGIN
-
-            THROW 50002,
-                'Legacy PrismPairs contains existing data. Automatic Track migration is blocked.',
-                1;
-
-        END;
-
-
-        /* -------------------------------------------------------------
-           Add Track_ID.
-           ------------------------------------------------------------- */
-
-        IF COL_LENGTH(
-            'dbo.PrismPairs',
-            'Track_ID') IS NULL
-        BEGIN
-
-            ALTER TABLE [dbo].[PrismPairs]
-            ADD [Track_ID] int NULL;
-
-        END;
-
-
-        /* -------------------------------------------------------------
-           Add PairOrder.
-           ------------------------------------------------------------- */
-
-        IF COL_LENGTH(
-            'dbo.PrismPairs',
-            'PairOrder') IS NULL
-        BEGIN
-
-            ALTER TABLE [dbo].[PrismPairs]
-            ADD [PairOrder] int NULL;
-
-        END;
-        """;
-
-            #endregion
-
-
-            #region Define Schema Upgrade Phase Two
-
-            // This is deliberately a SECOND SQL batch.
-            //
-            // When SQL Server compiles this batch, Track_ID and PairOrder already
-            // exist because Phase One has completed on the same SQL connection
-            // and within the same transaction.
-
-            const string phaseTwoSql = """
-        /* =============================================================
-           VERIFY NEW PRISM PAIR COLUMNS
-           ============================================================= */
-
-        IF COL_LENGTH(
-            'dbo.PrismPairs',
-            'Track_ID') IS NULL
-        BEGIN
-
-            THROW 50003,
-                'Track_ID was not created in PrismPairs.',
-                1;
-
-        END;
-
-
-        IF COL_LENGTH(
-            'dbo.PrismPairs',
-            'PairOrder') IS NULL
-        BEGIN
-
-            THROW 50004,
-                'PairOrder was not created in PrismPairs.',
-                1;
-
-        END;
-
-
-        /* =============================================================
-           VERIFY MIGRATION DATA STATE
-           ============================================================= */
-
-        IF EXISTS
-        (
-            SELECT 1
-            FROM [dbo].[PrismPairs]
-            WHERE
-                [Track_ID] IS NULL
-                OR
-                [PairOrder] IS NULL
-        )
-        BEGIN
-
-            THROW 50005,
-                'PrismPairs contains records without Track_ID or PairOrder.',
-                1;
-
-        END;
-
-
-        /* =============================================================
-           MAKE NEW COLUMNS MANDATORY
-           ============================================================= */
-
-        IF EXISTS
-        (
-            SELECT 1
-            FROM sys.columns
-            WHERE
-                [object_id] =
-                    OBJECT_ID(N'dbo.PrismPairs')
-                AND [name] =
-                    N'Track_ID'
-                AND [is_nullable] =
-                    1
-        )
-        BEGIN
-
-            ALTER TABLE [dbo].[PrismPairs]
-            ALTER COLUMN [Track_ID] int NOT NULL;
-
-        END;
-
-
-        IF EXISTS
-        (
-            SELECT 1
-            FROM sys.columns
-            WHERE
-                [object_id] =
-                    OBJECT_ID(N'dbo.PrismPairs')
-                AND [name] =
-                    N'PairOrder'
-                AND [is_nullable] =
-                    1
-        )
-        BEGIN
-
-            ALTER TABLE [dbo].[PrismPairs]
-            ALTER COLUMN [PairOrder] int NOT NULL;
-
-        END;
-
-
-        /* =============================================================
-           TRACK FOREIGN KEY
-           ============================================================= */
-
-        IF NOT EXISTS
-        (
-            SELECT 1
-            FROM sys.foreign_keys
-            WHERE
-                [name] =
-                    N'FK_PrismPairs_Track'
-                AND [parent_object_id] =
-                    OBJECT_ID(N'dbo.PrismPairs')
-        )
-        BEGIN
-
-            ALTER TABLE [dbo].[PrismPairs]
-            ADD CONSTRAINT [FK_PrismPairs_Track]
-                FOREIGN KEY ([Track_ID])
-                REFERENCES [dbo].[Track] ([Track_ID])
-                ON DELETE NO ACTION
-                ON UPDATE NO ACTION;
-
-        END;
-
-
-        /* =============================================================
-           PAIR ORDER CHECK
-           ============================================================= */
-
-        IF NOT EXISTS
-        (
-            SELECT 1
-            FROM sys.check_constraints
-            WHERE
-                [name] =
-                    N'CK_PrismPairs_PairOrder'
-                AND [parent_object_id] =
-                    OBJECT_ID(N'dbo.PrismPairs')
-        )
-        BEGIN
-
-            ALTER TABLE [dbo].[PrismPairs]
-            ADD CONSTRAINT [CK_PrismPairs_PairOrder]
-                CHECK ([PairOrder] > 0);
-
-        END;
-
-
-        /* =============================================================
-           PAIR ORDER UNIQUE WITHIN TRACK
-           ============================================================= */
-
-        IF NOT EXISTS
-        (
-            SELECT 1
-            FROM sys.key_constraints
-            WHERE
-                [name] =
-                    N'UQ_PrismPairs_Track_PairOrder'
-                AND [parent_object_id] =
-                    OBJECT_ID(N'dbo.PrismPairs')
-        )
-        BEGIN
-
-            ALTER TABLE [dbo].[PrismPairs]
-            ADD CONSTRAINT [UQ_PrismPairs_Track_PairOrder]
-                UNIQUE ([Track_ID], [PairOrder]);
-
-        END;
-
-
-        /* =============================================================
-           TRACK LOOKUP INDEX
-           ============================================================= */
-
-        IF NOT EXISTS
-        (
-            SELECT 1
-            FROM sys.indexes
-            WHERE
-                [object_id] =
-                    OBJECT_ID(N'dbo.PrismPairs')
-                AND [name] =
-                    N'IX_PrismPairs_Track_ID'
-        )
-        BEGIN
-
-            CREATE INDEX [IX_PrismPairs_Track_ID]
-                ON [dbo].[PrismPairs] ([Track_ID]);
-
-        END;
-        """;
-
-            #endregion
-
-
-            #region Open Schema Upgrade Database Connection
-
-            await using SqlConnection databaseConnection =
-                new(
-                    connectionString: connectionString);
-
-            await databaseConnection.OpenAsync();
-
-            #endregion
-
-
-            #region Begin Schema Upgrade Transaction
-
-            using SqlTransaction transaction =
-                databaseConnection.BeginTransaction(
-                    iso:
-                        System.Data.IsolationLevel.Serializable);
-
-            bool transactionCommitted =
-                false;
-
-            #endregion
-
-
-            try
-            {
-                #region Apply Schema Upgrade Phase One
-
-                await using (SqlCommand phaseOneCommand =
-                    new(
-                        cmdText: phaseOneSql,
-                        connection: databaseConnection,
-                        transaction: transaction))
-                {
-                    await phaseOneCommand.ExecuteNonQueryAsync();
-                }
-
-                #endregion
-
-
-                #region Apply Schema Upgrade Phase Two
-
-                await using (SqlCommand phaseTwoCommand =
-                    new(
-                        cmdText: phaseTwoSql,
-                        connection: databaseConnection,
-                        transaction: transaction))
-                {
-                    await phaseTwoCommand.ExecuteNonQueryAsync();
-                }
-
-                #endregion
-
-
-                #region Commit Schema Upgrade
-
-                transaction.Commit();
-
-                transactionCommitted =
-                    true;
-
-                #endregion
-            }
-            catch
-            {
-                #region Roll Back Schema Upgrade
-
-                if (!transactionCommitted)
-                {
-                    try
-                    {
-                        transaction.Rollback();
-                    }
-                    catch
-                    {
-                        // Preserve the original schema-upgrade exception.
-                    }
-                }
-
-                throw;
-
-                #endregion
-            }
-        }
-
-        #endregion
-
-
-
-
-        #endregion
-
-
-
-
-
-
-
-
-        #region Project Configuration
-
-        #region Cross-Instance Project Lock Infrastructure
-
-        private static string BuildProjectLockResourceName(
-            int projectId)
-        {
-            #region Validate Project ID
-
-            if (projectId <= 0)
-            {
-                throw new ArgumentOutOfRangeException(
-                    paramName: nameof(projectId),
-                    message: "Project_ID must be greater than zero.");
-            }
-
-            #endregion
-
-
-            #region Build Lock Resource Name
-
-            return
-                $"{ProjectLockResourcePrefix}{projectId}";
-
-            #endregion
-        }
-
-
-        private async Task<SqlConnection> OpenSharedProjectLockConnectionAsync(
-            int projectId)
-        {
-            #region Validate Project ID
-
-            if (projectId <= 0)
-            {
-                throw new ArgumentOutOfRangeException(
-                    paramName: nameof(projectId),
-                    message: "Project_ID must be greater than zero.");
-            }
-
-            #endregion
-
-
-            #region Read Database Connection String
-
-            string connectionString =
-                txtDbConnectionString.Text?.Trim()
-                ?? throw new InvalidOperationException(
-                    "Database connection string control returned null.");
-
-            if (string.IsNullOrWhiteSpace(connectionString))
-            {
-                throw new InvalidOperationException(
-                    "Database connection string has not been configured.");
-            }
-
-            #endregion
-
-
-            #region Build Dedicated Lock Connection String
-
-            SqlConnectionStringBuilder lockConnectionBuilder =
-                new(
-                    connectionString: connectionString)
-                {
-                    InitialCatalog = TrackGeometryDatabaseName,
-
-                    // The physical SQL session must terminate when this connection
-                    // is disposed so its Session-owned application lock is released.
-                    Pooling = false
-                };
-
-            #endregion
-
-
-            #region Open Dedicated Lock Connection
-
-            SqlConnection lockConnection =
-                new(
-                    connectionString:
-                        lockConnectionBuilder.ConnectionString);
-
-            try
-            {
-                await lockConnection.OpenAsync();
-
-            #endregion
-
-
-                #region Acquire Shared Project Lock
-
-                const string acquireSharedLockSql = """
-            DECLARE @LockResult int;
-
-            EXEC @LockResult = sys.sp_getapplock
-                @Resource = @Resource,
-                @LockMode = 'Shared',
-                @LockOwner = 'Session',
-                @LockTimeout = 0;
-
-            SELECT @LockResult;
-            """;
-
-                await using SqlCommand acquireSharedLockCommand =
-                    new(
-                        cmdText: acquireSharedLockSql,
-                        connection: lockConnection);
-
-                acquireSharedLockCommand.Parameters.AddWithValue(
-                    parameterName: "@Resource",
-                    value: BuildProjectLockResourceName(
-                        projectId: projectId));
-
-                object lockResultObject =
-                    await acquireSharedLockCommand.ExecuteScalarAsync()
-                    ?? throw new InvalidOperationException(
-                        "SQL Server returned no result when acquiring the project lock.");
-
-                int lockResult =
-                    Convert.ToInt32(
-                        value: lockResultObject);
-
-                if (lockResult < 0)
-                {
-                    throw new InvalidOperationException(
-                        $"Project_ID {projectId} is temporarily unavailable because " +
-                        "another application instance is changing its project state.");
-                }
-
-                #endregion
-
-
-                #region Return Locked Connection
-
-                // This connection must remain open for as long as this project is
-                // active in this application instance.
-
-                return lockConnection;
-
-                #endregion
-            }
-            catch
-            {
-                #region Release Failed Lock Connection
-
-                await lockConnection.DisposeAsync();
-
-                #endregion
-
-                throw;
-            }
-        }
-
-
-        #region Exclusive Project Lock
-
-        private async Task<SqlConnection> OpenExclusiveProjectLockConnectionAsync(
-            int projectId)
-        {
-            #region Validate Project ID
-
-            if (projectId <= 0)
-            {
-                throw new ArgumentOutOfRangeException(
-                    paramName: nameof(projectId),
-                    message: "Project_ID must be greater than zero.");
-            }
-
-            #endregion
-
-
-            #region Read Database Connection String
-
-            string connectionString =
-                txtDbConnectionString.Text?.Trim()
-                ?? throw new InvalidOperationException(
-                    "Database connection string control returned null.");
-
-            if (string.IsNullOrWhiteSpace(connectionString))
-            {
-                throw new InvalidOperationException(
-                    "Database connection string has not been configured.");
-            }
-
-            #endregion
-
-
-            #region Build Dedicated Lock Connection String
-
-            SqlConnectionStringBuilder lockConnectionBuilder =
-                new(
-                    connectionString: connectionString)
-                {
-                    InitialCatalog = TrackGeometryDatabaseName,
-
-                    // The Exclusive application lock belongs to this SQL session.
-                    // Pooling is disabled so disposal terminates the physical
-                    // session and releases the lock deterministically.
-                    Pooling = false
-                };
-
-            #endregion
-
-
-            #region Open Dedicated Lock Connection
-
-            SqlConnection lockConnection =
-                new(
-                    connectionString:
-                        lockConnectionBuilder.ConnectionString);
-
-            try
-            {
-                await lockConnection.OpenAsync();
-
-            #endregion
-
-
-                #region Acquire Exclusive Project Lock
-
-                const string acquireExclusiveLockSql = """
-            DECLARE @LockResult int;
-
-            EXEC @LockResult = sys.sp_getapplock
-                @Resource = @Resource,
-                @LockMode = 'Exclusive',
-                @LockOwner = 'Session',
-                @LockTimeout = 0;
-
-            SELECT @LockResult;
-            """;
-
-                await using SqlCommand acquireExclusiveLockCommand =
-                    new(
-                        cmdText: acquireExclusiveLockSql,
-                        connection: lockConnection);
-
-                acquireExclusiveLockCommand.Parameters.AddWithValue(
-                    parameterName: "@Resource",
-                    value: BuildProjectLockResourceName(
-                        projectId: projectId));
-
-                object lockResultObject =
-                    await acquireExclusiveLockCommand.ExecuteScalarAsync()
-                    ?? throw new InvalidOperationException(
-                        "SQL Server returned no result when acquiring the " +
-                        "exclusive project lock.");
-
-                int lockResult =
-                    Convert.ToInt32(
-                        value: lockResultObject);
-
-                if (lockResult < 0)
-                {
-                    throw new InvalidOperationException(
-                        $"Project_ID {projectId} cannot be deleted because it is " +
-                        "currently active or otherwise in use by another running " +
-                        "application instance.");
-                }
-
-                #endregion
-
-
-                #region Return Exclusively Locked Connection
-
-                // The caller must keep this connection open throughout the complete
-                // delete operation.
-                //
-                // Disposing the connection releases the Exclusive application lock.
-
-                return lockConnection;
-
-                #endregion
-            }
-            catch
-            {
-                #region Dispose Failed Lock Connection
-
-                await lockConnection.DisposeAsync();
-
-                #endregion
-
-                throw;
-            }
-        }
-
-        #endregion
-
-
-
-
-        #region Initialise Startup Active Project
-
-        private async Task InitialiseStartupActiveProjectAsync()
-        {
-            #region Handle No Persisted Active Project
-
-            if (!_activeProjectId.HasValue)
-            {
-                _activeProjectName =
-                    string.Empty;
-
-                txtActiveProject.Text =
-                    "No active project";
-
-                return;
-            }
-
-            #endregion
-
-
-            #region Capture Startup Project ID
-
-            // Capture the value once.
-            // Do not re-read the Registry during this operation.
-
-            int startupProjectId =
-                _activeProjectId.Value;
-
-            SqlConnection? startupLockConnection =
-                null;
-
-            #endregion
-
-
-            try
-            {
-                #region Acquire Shared Project Lock
-
-                startupLockConnection =
-                    await OpenSharedProjectLockConnectionAsync(
-                        projectId: startupProjectId);
-
-                #endregion
-
-
-                #region Define Project Validation Query
-
-                const string validateProjectSql = """
-            SELECT
-                [ProjectName],
-                [IsDeleted]
-            FROM [dbo].[Project]
-            WHERE [Project_ID] = @Project_ID;
-            """;
-
-                #endregion
-
-
-                #region Validate Project Against Database
-
-                await using SqlCommand validateProjectCommand =
-                    new(
-                        cmdText: validateProjectSql,
-                        connection: startupLockConnection);
-
-                validateProjectCommand.Parameters.AddWithValue(
-                    parameterName: "@Project_ID",
-                    value: startupProjectId);
-
-                await using SqlDataReader reader =
-                    await validateProjectCommand.ExecuteReaderAsync();
-
-                if (!await reader.ReadAsync())
-                {
-                    #region Handle Missing Project
-
-                    await startupLockConnection.DisposeAsync();
-
-                    startupLockConnection =
-                        null;
-
-                    _activeProjectId =
-                        null;
-
-                    _activeProjectName =
-                        string.Empty;
-
-                    txtActiveProject.Text =
-                        "No active project";
-
-                    return;
-
-                    #endregion
-                }
-
-
-                string databaseProjectName =
-                    reader.GetString(
-                        i: 0);
-
-                bool projectIsDeleted =
-                    reader.GetBoolean(
-                        i: 1);
-
-                #endregion
-
-
-                #region Reject Deleted Project
-
-                if (projectIsDeleted)
-                {
-                    await startupLockConnection.DisposeAsync();
-
-                    startupLockConnection =
-                        null;
-
-                    _activeProjectId =
-                        null;
-
-                    _activeProjectName =
-                        string.Empty;
-
-                    txtActiveProject.Text =
-                        "No active project";
-
-                    return;
-                }
-
-                #endregion
-
-
-                #region Establish Process-Local Active Project
-
-                // Ownership of this open connection now transfers to the running
-                // application instance.
-                //
-                // The connection must remain open for as long as this project
-                // remains active in this process.
-
-                _activeProjectLockConnection =
-                    startupLockConnection;
-
-                _activeProjectLockProjectId =
-                    startupProjectId;
-
-                startupLockConnection =
-                    null;
-
-                #endregion
-
-
-                #region Refresh Runtime Project Name
-
-                // Project_ID is authoritative.
-                //
-                // The SQL ProjectName replaces the Registry copy in this process
-                // in case the project has subsequently been renamed.
-                //
-                // Do NOT write the refreshed name back to the Registry here.
-                // Another running instance may have changed the startup default.
-
-                _activeProjectName =
-                    databaseProjectName;
-
-                txtActiveProject.Text =
-                    _activeProjectName;
-
-                #endregion
-            }
-            catch (Exception ex)
-            {
-                #region Dispose Incomplete Lock Connection
-
-                if (startupLockConnection is not null)
-                {
-                    await startupLockConnection.DisposeAsync();
-
-                    startupLockConnection =
-                        null;
-                }
-
-                #endregion
-
-
-                #region Clear Process-Local Active Project
-
-                ReleaseActiveProjectLockConnection();
-
-                _activeProjectId =
-                    null;
-
-                _activeProjectName =
-                    string.Empty;
-
-                txtActiveProject.Text =
-                    "No active project";
-
-                #endregion
-
-
-                #region Report Startup Lock Failure
-
-                // Do not clear or modify the Registry here.
-                //
-                // The failure may be temporary and another running instance may
-                // have changed the persisted startup default since this process
-                // originally read it.
-
-                txtDbConnectionStatus.Text =
-                    $"Startup active project unavailable: {ex.Message}";
-
-                #endregion
-            }
-        }
-
-        #endregion
-
-
-
-
-        private void ReleaseActiveProjectLockConnection()
-        {
-            #region Release Current Active Project Lock
-
-            if (_activeProjectLockConnection is not null)
-            {
-                // Pooling is disabled for this dedicated connection.
-                // Disposing it closes the underlying SQL session and therefore
-                // releases the Session-owned application lock.
-
-                _activeProjectLockConnection.Dispose();
-
-                _activeProjectLockConnection =
-                    null;
-            }
-
-            _activeProjectLockProjectId =
-                null;
-
-            #endregion
-        }
-
-        #endregion
-
-
-
-
-
-
-        private async void btnManageProjects_Click(
-            object sender,
-            RoutedEventArgs e)
-        {
-            #region Display Project Management Overlay
-
-            brdProjectManagement.Visibility =
-                Visibility.Visible;
-
-            txtProjectManagementStatus.Text =
-                "Loading projects...";
-
-            #endregion
-
-
-            #region Load Project Data
-
-            try
-            {
-                await LoadProjectsAsync();
-
-                txtProjectManagementStatus.Text =
-                    $"{_projectItems.Count} project(s) loaded.";
-            }
-            catch (SqlException ex)
-            {
-                txtProjectManagementStatus.Text =
-                    $"Unable to load projects: {ex.Message}";
-            }
-            catch (ArgumentException ex)
-            {
-                txtProjectManagementStatus.Text =
-                    $"Invalid database configuration: {ex.Message}";
-            }
-            catch (InvalidOperationException ex)
-            {
-                txtProjectManagementStatus.Text =
-                    $"Unable to load projects: {ex.Message}";
-            }
-            catch (Exception ex)
-            {
-                txtProjectManagementStatus.Text =
-                    $"Unable to load projects: {ex.Message}";
-            }
-
-            #endregion
-        }
-
-
-        private void btnCloseProjectManagement_Click(
-            object sender,
-            RoutedEventArgs e)
-        {
-            #region Hide Project Management Overlay
-
-            brdProjectManagement.Visibility =
-                Visibility.Collapsed;
-
-            #endregion
-        }
-
-
-
-
-        #region Add Project
-
-        private async void btnAddProject_Click(
-            object sender,
-            RoutedEventArgs e)
-        {
-            #region Validate Project Name
-
-            string projectName =
-                txtNewProjectName.Text?.Trim()
-                ?? throw new InvalidOperationException(
-                    "New project name control returned null.");
-
-            if (string.IsNullOrWhiteSpace(projectName))
-            {
-                txtProjectManagementStatus.Text =
-                    "Enter a project name.";
-
-                txtNewProjectName.Focus();
-
-                return;
-            }
-
-            if (projectName.Length > 200)
-            {
-                txtProjectManagementStatus.Text =
-                    "Project name cannot exceed 200 characters.";
-
-                txtNewProjectName.Focus();
-
-                return;
-            }
-
-            #endregion
-
-
-            #region Prepare User Interface
-
-            btnAddProject.IsEnabled =
-                false;
-
-            txtProjectManagementStatus.Text =
-                $"Checking project '{projectName}'...";
-
-            #endregion
-
-
-            try
-            {
-                #region Add Or Restore Project
-
-                bool projectAddedOrRestored =
-                    await AddOrRestoreProjectAsync(
-                        projectName: projectName);
-
-                #endregion
-
-
-                #region Refresh Project List
-
-                if (projectAddedOrRestored)
-                {
-                    txtNewProjectName.Clear();
-
-                    await LoadProjectsAsync();
-                }
-
-                #endregion
-            }
-
-            #region Handle Project Errors
-
-            catch (SqlException ex)
-                when (ex.Number == 2601 ||
-                      ex.Number == 2627)
-            {
-                // SQL Server remains the final authority for uniqueness.
-                // This also protects against two application instances attempting
-                // to create the same project at approximately the same time.
-
-                txtProjectManagementStatus.Text =
-                    $"Project '{projectName}' already exists.";
-
-                await LoadProjectsAsync();
-            }
-            catch (SqlException ex)
-            {
-                txtProjectManagementStatus.Text =
-                    $"Unable to add project: {ex.Message}";
-            }
-            catch (ArgumentException ex)
-            {
-                txtProjectManagementStatus.Text =
-                    $"Invalid project: {ex.Message}";
-            }
-            catch (InvalidOperationException ex)
-            {
-                txtProjectManagementStatus.Text =
-                    $"Unable to add project: {ex.Message}";
-            }
-            catch (Exception ex)
-            {
-                txtProjectManagementStatus.Text =
-                    $"Unable to add project: {ex.Message}";
-            }
-
-            #endregion
-
-
-            #region Restore User Interface
-
-            finally
-            {
-                btnAddProject.IsEnabled =
-                    true;
-            }
-
-            #endregion
-        }
-
-
-        private async Task<bool> AddOrRestoreProjectAsync(
-            string projectName)
-        {
-            #region Validate Project Name
-
-            string validatedProjectName =
-                projectName?.Trim()
-                ?? throw new ArgumentNullException(
-                    paramName: nameof(projectName));
-
-            if (string.IsNullOrWhiteSpace(validatedProjectName))
-            {
-                throw new ArgumentException(
-                    message: "Project name cannot be empty.",
-                    paramName: nameof(projectName));
-            }
-
-            if (validatedProjectName.Length > 200)
-            {
-                throw new ArgumentException(
-                    message: "Project name cannot exceed 200 characters.",
-                    paramName: nameof(projectName));
-            }
-
-            #endregion
-
-
-            #region Read Database Connection String
-
-            string connectionString =
-                txtDbConnectionString.Text?.Trim()
-                ?? throw new InvalidOperationException(
-                    "Database connection string control returned null.");
-
-            if (string.IsNullOrWhiteSpace(connectionString))
-            {
-                throw new InvalidOperationException(
-                    "Database connection string has not been configured.");
-            }
-
-            #endregion
-
-
-            #region Build Track Geometry Database Connection String
-
-            SqlConnectionStringBuilder databaseConnectionBuilder =
-                new(
-                    connectionString: connectionString)
-                {
-                    InitialCatalog = TrackGeometryDatabaseName
-                };
-
-            #endregion
-
-
-            #region Open Database Connection
-
-            await using SqlConnection databaseConnection =
-                new(
-                    connectionString:
-                        databaseConnectionBuilder.ConnectionString);
-
-            await databaseConnection.OpenAsync();
-
-            #endregion
-
-
-            #region Check For Existing Project
-
-            const string findProjectSql = """
-        SELECT
-            [Project_ID],
-            [ProjectName],
-            [IsDeleted]
-        FROM [dbo].[Project]
-        WHERE [ProjectName] = @ProjectName;
-        """;
-
-            await using SqlCommand findProjectCommand =
-                new(
-                    cmdText: findProjectSql,
-                    connection: databaseConnection);
-
-            findProjectCommand.Parameters.AddWithValue(
-                parameterName: "@ProjectName",
-                value: validatedProjectName);
-
-            int? existingProjectId =
-                null;
-
-            bool existingProjectIsDeleted =
-                false;
-
-            await using (SqlDataReader reader =
-                await findProjectCommand.ExecuteReaderAsync())
-            {
-                if (await reader.ReadAsync())
-                {
-                    existingProjectId =
-                        reader.GetInt32(
-                            i: 0);
-
-                    existingProjectIsDeleted =
-                        reader.GetBoolean(
-                            i: 2);
-                }
-            }
-
-            #endregion
-
-
-            #region Handle Existing Active Project
-
-            if (existingProjectId.HasValue &&
-                !existingProjectIsDeleted)
-            {
-                txtProjectManagementStatus.Text =
-                    $"Project '{validatedProjectName}' already exists.";
-
-                return false;
-            }
-
-            #endregion
-
-
-            #region Handle Existing Deleted Project
-
-            if (existingProjectId.HasValue &&
-                existingProjectIsDeleted)
-            {
-                MessageBoxResult restoreConfirmation =
-                    MessageBox.Show(
-                        messageBoxText:
-                            $"Project '{validatedProjectName}' already exists but is marked as deleted.\n\n" +
-                            "Do you want to restore this project?",
-                        caption: "Restore Project",
-                        button: MessageBoxButton.YesNo,
-                        icon: MessageBoxImage.Question,
-                        defaultResult: MessageBoxResult.No);
-
-                if (restoreConfirmation != MessageBoxResult.Yes)
-                {
-                    txtProjectManagementStatus.Text =
-                        $"Project '{validatedProjectName}' was not restored.";
-
-                    return false;
-                }
-
-                #region Restore Deleted Project
-
-                const string restoreProjectSql = """
-            UPDATE [dbo].[Project]
-            SET [IsDeleted] = 0
-            WHERE [Project_ID] = @Project_ID
-              AND [IsDeleted] = 1;
-            """;
-
-                await using SqlCommand restoreProjectCommand =
-                    new(
-                        cmdText: restoreProjectSql,
-                        connection: databaseConnection);
-
-                restoreProjectCommand.Parameters.AddWithValue(
-                    parameterName: "@Project_ID",
-                    value: existingProjectId.Value);
-
-                int restoredRows =
-                    await restoreProjectCommand.ExecuteNonQueryAsync();
-
-                if (restoredRows != 1)
-                {
-                    throw new InvalidOperationException(
-                        $"Project '{validatedProjectName}' could not be restored because " +
-                        "its database state changed before the operation completed.");
-                }
-
-                #endregion
-
-
-                #region Report Successful Restoration
-
-                txtProjectManagementStatus.Text =
-                    $"Project '{validatedProjectName}' restored successfully.";
-
-                return true;
-
-                #endregion
-            }
-
-            #endregion
-
-
-            #region Insert New Project
-
-            const string insertProjectSql = """
-        INSERT INTO [dbo].[Project]
-        (
-            [ProjectName],
-            [IsDeleted]
-        )
-        VALUES
-        (
-            @ProjectName,
-            0
-        );
-        """;
-
-            await using SqlCommand insertProjectCommand =
-                new(
-                    cmdText: insertProjectSql,
-                    connection: databaseConnection);
-
-            insertProjectCommand.Parameters.AddWithValue(
-                parameterName: "@ProjectName",
-                value: validatedProjectName);
-
-            int insertedRows =
-                await insertProjectCommand.ExecuteNonQueryAsync();
-
-            if (insertedRows != 1)
-            {
-                throw new InvalidOperationException(
-                    $"Project '{validatedProjectName}' was not inserted.");
-            }
-
-            #endregion
-
-
-            #region Report Successful Addition
-
-            txtProjectManagementStatus.Text =
-                $"Project '{validatedProjectName}' added successfully.";
-
-            return true;
-
-            #endregion
-        }
-
-        #endregion
-
-        #region Active Project Selection
-
-        private async void ActiveProjectRadioButton_Click(
-            object sender,
-            RoutedEventArgs e)
-        {
-            #region Validate Event Source
-
-            if (sender is not RadioButton activeProjectRadioButton)
-            {
-                throw new InvalidOperationException(
-                    "Active project selection was raised by an invalid control.");
-            }
-
-            if (activeProjectRadioButton.DataContext
-                is not ProjectConfigurationItem selectedProject)
-            {
-                throw new InvalidOperationException(
-                    "Active project selection does not contain a valid project.");
-            }
-
-            #endregion
-
-
-            #region Prevent Deleted Project Selection
-
-            if (selectedProject.IsDeleted)
-            {
-                ApplyActiveProjectStateToLoadedProjects();
-
-                txtProjectManagementStatus.Text =
-                    "A deleted project cannot be selected as the active project.";
-
-                return;
-            }
-
-            #endregion
-
-
-            #region Handle Existing Active Selection
-
-            if (_activeProjectId.HasValue &&
-                _activeProjectId.Value == selectedProject.Project_ID)
-            {
-                selectedProject.IsActive =
-                    true;
-
-                txtProjectManagementStatus.Text =
-                    $"'{selectedProject.ProjectName}' is already the active project.";
-
-                return;
-            }
-
-            #endregion
-
-
-            #region Preserve Existing Project Lock
-
-            // Do not release the existing Shared lock yet.
-            //
-            // The current project must remain fully operational unless the complete
-            // transition to the newly selected project succeeds.
-
-            SqlConnection? previousProjectLockConnection =
-                _activeProjectLockConnection;
-
-            SqlConnection? newProjectLockConnection =
-                null;
-
-            #endregion
-
-
-
-
-
-
-
-
-            try
-            {
-                #region Acquire New Project Shared Lock
-
-                newProjectLockConnection =
-                    await OpenSharedProjectLockConnectionAsync(
-                        projectId: selectedProject.Project_ID);
-
-                #endregion
-
-
-                #region Validate New Project Against Database
-
-                const string validateProjectSql = """
-            SELECT
-                [ProjectName],
-                [IsDeleted]
-            FROM [dbo].[Project]
-            WHERE [Project_ID] = @Project_ID;
-            """;
-
-                string databaseProjectName;
-                bool databaseProjectIsDeleted;
-
-                await using (SqlCommand validateProjectCommand =
-                    new(
-                        cmdText: validateProjectSql,
-                        connection: newProjectLockConnection))
-                {
-                    validateProjectCommand.Parameters.AddWithValue(
-                        parameterName: "@Project_ID",
-                        value: selectedProject.Project_ID);
-
-                    await using SqlDataReader reader =
-                        await validateProjectCommand.ExecuteReaderAsync();
-
-                    if (!await reader.ReadAsync())
-                    {
-                        throw new InvalidOperationException(
-                            $"Project_ID {selectedProject.Project_ID} no longer exists.");
-                    }
-
-                    databaseProjectName =
-                        reader.GetString(
-                            i: 0);
-
-                    databaseProjectIsDeleted =
-                        reader.GetBoolean(
-                            i: 1);
-                }
-
-                if (databaseProjectIsDeleted)
-                {
-                    throw new InvalidOperationException(
-                        $"Project '{databaseProjectName}' has been deleted and " +
-                        "cannot be selected as the active project.");
-                }
-
-                #endregion
-
-
-                #region Persist New Startup Default
-
-                // Persist only after the new Shared lock has been acquired and
-                // the SQL project record has been validated.
-                //
-                // This changes the default for FUTURE application instances only.
-                // Existing application instances retain their own process-local
-                // active-project state.
-
-                SaveActiveProjectToRegistry(
-                    projectId: selectedProject.Project_ID,
-                    projectName: databaseProjectName);
-
-                #endregion
-
-
-                #region Clear Existing DataGrid Active Flags
-
-                foreach (ProjectConfigurationItem projectItem in _projectItems)
-                {
-                    projectItem.IsActive =
-                        false;
-                }
-
-                #endregion
-
-
-                #region Establish New Process-Local Active Project
-
-                // SQL ProjectName is authoritative in case another application
-                // instance has renamed the project since this DataGrid was loaded.
-
-                selectedProject.ProjectName =
-                    databaseProjectName;
-
-                selectedProject.OriginalProjectName =
-                    databaseProjectName;
-
-                selectedProject.IsActive =
-                    true;
-
-                _activeProjectId =
-                    selectedProject.Project_ID;
-
-                _activeProjectName =
-                    databaseProjectName;
-
-                txtActiveProject.Text =
-                    databaseProjectName;
-
-                #endregion
-
-
-                #region Transfer Active Project Lock Ownership
-
-                // The newly opened SQL connection now becomes the dedicated Shared
-                // lock connection for this application instance.
-
-                _activeProjectLockConnection =
-                    newProjectLockConnection;
-
-                _activeProjectLockProjectId =
-                    selectedProject.Project_ID;
-
-                // Clear the local reference so the exception cleanup code cannot
-                // dispose the connection now owned by the application instance.
-
-                newProjectLockConnection =
-                    null;
-
-                #endregion
-
-                #region Report Successful Project Change
-
-                // Any loaded import source belongs to the project that was active
-                // when that import was started.
-                //
-                // Changing the active project invalidates all existing import state.
-
-                ResetReferenceImportState(
-                    statusMessage:
-                        $"Active project changed to '{_activeProjectName}'. " +
-                        "Select a CSV for this project.");
-
-                ResetPrismPairImportState(
-                    statusMessage:
-                        $"Active project changed to '{_activeProjectName}'. " +
-                        "Select a Track Geometry workbook for this project.");
-
-                txtProjectManagementStatus.Text =
-                    $"Active project set to '{_activeProjectName}'.";
-
-                #endregion
-
-
-            }
-            catch (Exception ex)
-            {
-                #region Release Incomplete New Project Lock
-
-                if (newProjectLockConnection is not null)
-                {
-                    await newProjectLockConnection.DisposeAsync();
-
-                    newProjectLockConnection =
-                        null;
-                }
-
-                #endregion
-
-
-                #region Restore Existing DataGrid State
-
-                // The process-local active-project fields and existing Shared lock
-                // were deliberately not changed until the new project had been
-                // successfully acquired and validated.
-
-                ApplyActiveProjectStateToLoadedProjects();
-
-                #endregion
-
-
-                #region Report Selection Failure
-
-                txtProjectManagementStatus.Text =
-                    $"Unable to set active project: {ex.Message}";
-
-                #endregion
-
-                return;
-            }
-
-
-            #region Release Previous Project Shared Lock
-
-            // The new project is now fully established.
-            //
-            // Only now is it safe to release the previous project's Shared lock.
-
-            if (previousProjectLockConnection is not null &&
-                !ReferenceEquals(
-                    previousProjectLockConnection,
-                    _activeProjectLockConnection))
-            {
-                try
-                {
-                    await previousProjectLockConnection.DisposeAsync();
-                }
-                catch (Exception ex)
-                {
-                    // The active-project change itself has succeeded.
-                    //
-                    // Report a lock-release warning rather than reverting the
-                    // successfully established new project.
-
-                    txtProjectManagementStatus.Text =
-                        $"Active project set to '{_activeProjectName}', " +
-                        $"but the previous project lock reported: {ex.Message}";
-                }
-            }
-
-            #endregion
-        }
-
-        #endregion
-
-
-        #region Project Rename
-
-        private async void ProjectNameTextBox_LostFocus(
-            object sender,
-            RoutedEventArgs e)
-        {
-            #region Validate Event Source
-
-            if (sender is not TextBox projectNameTextBox)
-            {
-                throw new InvalidOperationException(
-                    "Project-name edit was raised by an invalid control.");
-            }
-
-            if (projectNameTextBox.DataContext
-                is not ProjectConfigurationItem selectedProject)
-            {
-                throw new InvalidOperationException(
-                    "Project-name edit does not contain a valid project.");
-            }
-
-            #endregion
-
-
-            #region Read Edited Project Name
-
-            string newProjectName =
-                projectNameTextBox.Text?.Trim()
-                ?? throw new InvalidOperationException(
-                    "Project-name edit control returned null.");
-
-            string originalProjectName =
-                selectedProject.OriginalProjectName?.Trim()
-                ?? throw new InvalidOperationException(
-                    "Original project name is not available.");
-
-            #endregion
-
-
-            #region Handle Unchanged Project Name
-
-            if (string.Equals(
-                a: newProjectName,
-                b: originalProjectName,
-                comparisonType: StringComparison.Ordinal))
-            {
-                selectedProject.ProjectName =
-                    originalProjectName;
-
-                return;
-            }
-
-            #endregion
-
-
-            #region Validate Edited Project Name
-
-            if (string.IsNullOrWhiteSpace(newProjectName))
-            {
-                selectedProject.ProjectName =
-                    originalProjectName;
-
-                projectNameTextBox.Text =
-                    originalProjectName;
-
-                txtProjectManagementStatus.Text =
-                    "Project name cannot be blank.";
-
-                return;
-            }
-
-            if (newProjectName.Length > 200)
-            {
-                selectedProject.ProjectName =
-                    originalProjectName;
-
-                projectNameTextBox.Text =
-                    originalProjectName;
-
-                txtProjectManagementStatus.Text =
-                    "Project name cannot exceed 200 characters.";
-
-                return;
-            }
-
-            #endregion
-
-
-            try
-            {
-                #region Rename Project In Database
-
-                await RenameProjectAsync(
-                    projectId: selectedProject.Project_ID,
-                    originalProjectName: originalProjectName,
-                    newProjectName: newProjectName);
-
-                #endregion
-
-
-                #region Update Local Project Item
-
-                selectedProject.ProjectName =
-                    newProjectName;
-
-                selectedProject.OriginalProjectName =
-                    newProjectName;
-
-                #endregion
-
-
-                #region Update Active Project Runtime State
-
-                if (_activeProjectId.HasValue &&
-                    _activeProjectId.Value == selectedProject.Project_ID)
-                {
-                    // Project_ID remains the authoritative operational identity.
-                    //
-                    // Only the process-local display name changes.
-
-                    _activeProjectName =
-                        newProjectName;
-
-                    txtActiveProject.Text =
-                        newProjectName;
-
-                    #region Update Persisted Startup Name Safely
-
-                    UpdatePersistedActiveProjectNameIfCurrent(
-                        projectId: selectedProject.Project_ID,
-                        projectName: newProjectName);
-
-                    #endregion
-                }
-
-                #endregion
-
-
-                #region Report Successful Rename
-
-                txtProjectManagementStatus.Text =
-                    $"Project renamed to '{newProjectName}'.";
-
-                #endregion
-            }
-
-            #region Handle Duplicate Project Name
-
-            catch (SqlException ex)
-                when (ex.Number == 2601 ||
-                      ex.Number == 2627)
-            {
-                await LoadProjectsAsync();
-
-                txtProjectManagementStatus.Text =
-                    $"Project name '{newProjectName}' already exists.";
-            }
-
-            #endregion
-
-
-            #region Handle Rename Errors
-
-            catch (Exception ex)
-            {
-                // SQL remains authoritative.
-                // Reload the complete list to remove any uncommitted UI value.
-
-                await LoadProjectsAsync();
-
-                txtProjectManagementStatus.Text =
-                    $"Unable to rename project: {ex.Message}";
-            }
-
-            #endregion
-        }
-
-
-        private async Task RenameProjectAsync(
-            int projectId,
-            string originalProjectName,
-            string newProjectName)
-        {
-            #region Validate Project ID
-
-            if (projectId <= 0)
-            {
-                throw new ArgumentOutOfRangeException(
-                    paramName: nameof(projectId),
-                    message: "Project_ID must be greater than zero.");
-            }
-
-            #endregion
-
-
-            #region Validate Original Project Name
-
-            string validatedOriginalProjectName =
-                originalProjectName?.Trim()
-                ?? throw new ArgumentNullException(
-                    paramName: nameof(originalProjectName));
-
-            if (string.IsNullOrWhiteSpace(validatedOriginalProjectName))
-            {
-                throw new ArgumentException(
-                    message: "Original project name cannot be empty.",
-                    paramName: nameof(originalProjectName));
-            }
-
-            #endregion
-
-
-            #region Validate New Project Name
-
-            string validatedNewProjectName =
-                newProjectName?.Trim()
-                ?? throw new ArgumentNullException(
-                    paramName: nameof(newProjectName));
-
-            if (string.IsNullOrWhiteSpace(validatedNewProjectName))
-            {
-                throw new ArgumentException(
-                    message: "New project name cannot be empty.",
-                    paramName: nameof(newProjectName));
-            }
-
-            if (validatedNewProjectName.Length > 200)
-            {
-                throw new ArgumentException(
-                    message: "New project name cannot exceed 200 characters.",
-                    paramName: nameof(newProjectName));
-            }
-
-            #endregion
-
-
-            #region Read Database Connection String
-
-            string connectionString =
-                txtDbConnectionString.Text?.Trim()
-                ?? throw new InvalidOperationException(
-                    "Database connection string control returned null.");
-
-            if (string.IsNullOrWhiteSpace(connectionString))
-            {
-                throw new InvalidOperationException(
-                    "Database connection string has not been configured.");
-            }
-
-            #endregion
-
-
-            #region Build Database Connection String
-
-            SqlConnectionStringBuilder databaseConnectionBuilder =
-                new(
-                    connectionString: connectionString)
-                {
-                    InitialCatalog = TrackGeometryDatabaseName
-                };
-
-            #endregion
-
-
-            #region Define Rename Command
-
-            const string renameProjectSql = """
-        UPDATE [dbo].[Project]
-        SET
-            [ProjectName] = @NewProjectName
-        WHERE
-            [Project_ID] = @Project_ID
-            AND [ProjectName] = @OriginalProjectName;
-        """;
-
-            #endregion
-
-
-            #region Rename Project
-
-            await using SqlConnection databaseConnection =
-                new(
-                    connectionString:
-                        databaseConnectionBuilder.ConnectionString);
-
-            await databaseConnection.OpenAsync();
-
-            await using SqlCommand renameProjectCommand =
-                new(
-                    cmdText: renameProjectSql,
-                    connection: databaseConnection);
-
-            renameProjectCommand.Parameters.AddWithValue(
-                parameterName: "@Project_ID",
-                value: projectId);
-
-            renameProjectCommand.Parameters.AddWithValue(
-                parameterName: "@OriginalProjectName",
-                value: validatedOriginalProjectName);
-
-            renameProjectCommand.Parameters.AddWithValue(
-                parameterName: "@NewProjectName",
-                value: validatedNewProjectName);
-
-            int affectedRows =
-                await renameProjectCommand.ExecuteNonQueryAsync();
-
-            if (affectedRows != 1)
-            {
-                throw new InvalidOperationException(
-                    $"Project_ID {projectId} could not be renamed because its " +
-                    "database state changed after this Project Management window " +
-                    "was loaded.");
-            }
-
-            #endregion
-        }
-
-
-        private static void UpdatePersistedActiveProjectNameIfCurrent(
-            int projectId,
-            string projectName)
-        {
-            #region Validate Parameters
-
-            if (projectId <= 0)
-            {
-                throw new ArgumentOutOfRangeException(
-                    paramName: nameof(projectId),
-                    message: "Project_ID must be greater than zero.");
-            }
-
-            string validatedProjectName =
-                projectName?.Trim()
-                ?? throw new ArgumentNullException(
-                    paramName: nameof(projectName));
-
-            if (string.IsNullOrWhiteSpace(validatedProjectName))
-            {
-                throw new ArgumentException(
-                    message: "Project name cannot be empty.",
-                    paramName: nameof(projectName));
-            }
-
-            #endregion
-
-
-            #region Open Persisted Startup Configuration
-
-            using RegistryKey? registryKey =
-                Registry.CurrentUser.OpenSubKey(
-                    name: RegistryPath,
-                    writable: true);
-
-            if (registryKey is null)
-            {
-                return;
-            }
-
-            #endregion
-
-
-            #region Verify Persisted Startup Project
-
-            object? persistedProjectIdValue =
-                registryKey.GetValue(
-                    name: RegistryActiveProjectId,
-                    defaultValue: null);
-
-            if (persistedProjectIdValue is not int persistedProjectId ||
-                persistedProjectId != projectId)
-            {
-                // Another running instance has changed the persisted startup
-                // project since this process started.
-                //
-                // Do not overwrite that newer startup default.
-
-                return;
-            }
-
-            #endregion
-
-
-            #region Update Persisted Project Name
-
-            registryKey.SetValue(
-                name: RegistryActiveProjectName,
-                value: validatedProjectName,
-                valueKind: RegistryValueKind.String);
-
-            #endregion
-        }
-
-        #endregion
-
-
-
-
-        #region Project Soft Delete And Restore
-
-        private async void DeletedProjectCheckBox_Click(
-            object sender,
-            RoutedEventArgs e)
-        {
-            #region Validate Event Source
-
-            if (sender is not CheckBox deletedProjectCheckBox)
-            {
-                throw new InvalidOperationException(
-                    "Project deleted-state change was raised by an invalid control.");
-            }
-
-            if (deletedProjectCheckBox.DataContext
-                is not ProjectConfigurationItem selectedProject)
-            {
-                throw new InvalidOperationException(
-                    "Project deleted-state change does not contain a valid project.");
-            }
-
-            #endregion
-
-
-            #region Determine Requested State
-
-            bool requestedDeletedState =
-                deletedProjectCheckBox.IsChecked == true;
-
-            #endregion
-
-
-            #region Prevent Active Project Deletion
-
-            if (requestedDeletedState &&
-                (_activeProjectId == selectedProject.Project_ID ||
-                 selectedProject.IsActive))
-            {
-                // Restore the visual state because an active project
-                // is never permitted to become deleted.
-
-                selectedProject.IsDeleted =
-                    false;
-
-                deletedProjectCheckBox.IsChecked =
-                    false;
-
-                txtProjectManagementStatus.Text =
-                    $"Project '{selectedProject.ProjectName}' is active and cannot be deleted.";
-
-                return;
-            }
-
-            #endregion
-
-
-            #region Prepare User Interface
-
-            deletedProjectCheckBox.IsEnabled =
-                false;
-
-            txtProjectManagementStatus.Text =
-                requestedDeletedState
-                    ? $"Deleting project '{selectedProject.ProjectName}'..."
-                    : $"Restoring project '{selectedProject.ProjectName}'...";
-
-            #endregion
-
-
-            try
-            {
-                #region Update Project Deleted State
-
-                // Persist the requested soft-delete or restore state to SQL Server.
-                //
-                // SetProjectDeletedStateAsync() also enforces the cross-instance rule:
-                // deletion requires an Exclusive application lock and therefore cannot
-                // proceed while the project is active in another running instance.
-
-                await SetProjectDeletedStateAsync(
-                    projectId: selectedProject.Project_ID,
-                    isDeleted: requestedDeletedState);
-
-                #endregion
-
-
-                #region Reload Projects From Database
-
-                // SQL is authoritative.
-                //
-                // Reload the complete project list after every change so this
-                // running instance does not rely on stale DataGrid state.
-
-                await LoadProjectsAsync();
-
-                #endregion
-
-
-                #region Report Successful Completion
-
-                txtProjectManagementStatus.Text =
-                    requestedDeletedState
-                        ? $"Project '{selectedProject.ProjectName}' deleted."
-                        : $"Project '{selectedProject.ProjectName}' restored.";
-
-                #endregion
-            }
-
-            #region Handle Project State Errors
-
-            catch (SqlException ex)
-            {
-                await LoadProjectsAsync();
-
-                txtProjectManagementStatus.Text =
-                    $"Unable to change project state: {ex.Message}";
-            }
-            catch (ArgumentException ex)
-            {
-                await LoadProjectsAsync();
-
-                txtProjectManagementStatus.Text =
-                    $"Invalid project state: {ex.Message}";
-            }
-            catch (InvalidOperationException ex)
-            {
-                await LoadProjectsAsync();
-
-                txtProjectManagementStatus.Text =
-                    $"Unable to change project state: {ex.Message}";
-            }
-            catch (Exception ex)
-            {
-                await LoadProjectsAsync();
-
-                txtProjectManagementStatus.Text =
-                    $"Unable to change project state: {ex.Message}";
-            }
-
-            #endregion
-        }
-
-
-        private async Task SetProjectDeletedStateAsync(
-    int projectId,
-    bool isDeleted)
-        {
-            #region Validate Project
-
-            if (projectId <= 0)
-            {
-                throw new ArgumentOutOfRangeException(
-                    paramName: nameof(projectId),
-                    message: "Project_ID must be greater than zero.");
-            }
-
-            #endregion
-
-
-            #region Protect Process-Local Active Project
-
-            if (isDeleted &&
-                _activeProjectId.HasValue &&
-                _activeProjectId.Value == projectId)
-            {
-                throw new InvalidOperationException(
-                    "The active project cannot be deleted.");
-            }
-
-            #endregion
-
-
-            #region Handle Project Deletion
-
-            if (isDeleted)
-            {
-                // -------------------------------------------------------------
-                // CROSS-INSTANCE DELETE RULE
-                //
-                // Deletion requires an Exclusive application lock.
-                //
-                // Any running instance that has this project active holds a
-                // Shared lock on exactly the same SQL application-lock resource.
-                //
-                // Shared + Exclusive are incompatible. Therefore this operation
-                // cannot proceed while any application instance is actively
-                // using this project.
-                // -------------------------------------------------------------
-
-                #region Acquire Exclusive Project Lock
-
-                await using SqlConnection exclusiveLockConnection =
-                    await OpenExclusiveProjectLockConnectionAsync(
-                        projectId: projectId);
-
-                #endregion
-
-
-                #region Revalidate Project Under Exclusive Lock
-
-                const string validateProjectSql = """
-            SELECT
-                [ProjectName],
-                [IsDeleted]
-            FROM [dbo].[Project]
-            WHERE [Project_ID] = @Project_ID;
-            """;
-
-                string projectName;
-                bool projectAlreadyDeleted;
-
-                await using (SqlCommand validateProjectCommand =
-                    new(
-                        cmdText: validateProjectSql,
-                        connection: exclusiveLockConnection))
-                {
-                    validateProjectCommand.Parameters.AddWithValue(
-                        parameterName: "@Project_ID",
-                        value: projectId);
-
-                    await using SqlDataReader reader =
-                        await validateProjectCommand.ExecuteReaderAsync();
-
-                    if (!await reader.ReadAsync())
-                    {
-                        throw new InvalidOperationException(
-                            $"Project_ID {projectId} no longer exists.");
-                    }
-
-                    projectName =
-                        reader.GetString(
-                            i: 0);
-
-                    projectAlreadyDeleted =
-                        reader.GetBoolean(
-                            i: 1);
-                }
-
-                #endregion
-
-
-                #region Handle Already Deleted Project
-
-                if (projectAlreadyDeleted)
-                {
-                    throw new InvalidOperationException(
-                        $"Project '{projectName}' is already deleted.");
-                }
-
-                #endregion
-
-
-                #region Delete Project Under Exclusive Lock
-
-                const string deleteProjectSql = """
-            UPDATE [dbo].[Project]
-            SET
-                [IsDeleted] = 1
-            WHERE
-                [Project_ID] = @Project_ID
-                AND [IsDeleted] = 0;
-            """;
-
-                await using SqlCommand deleteProjectCommand =
-                    new(
-                        cmdText: deleteProjectSql,
-                        connection: exclusiveLockConnection);
-
-                deleteProjectCommand.Parameters.AddWithValue(
-                    parameterName: "@Project_ID",
-                    value: projectId);
-
-                int affectedRows =
-                    await deleteProjectCommand.ExecuteNonQueryAsync();
-
-                if (affectedRows != 1)
-                {
-                    throw new InvalidOperationException(
-                        $"Project '{projectName}' could not be deleted because " +
-                        "its database state changed before the operation completed.");
-                }
-
-                #endregion
-
-
-                #region Complete Exclusive Delete Operation
-
-                // ExecuteNonQueryAsync() has completed the SQL UPDATE before this
-                // point.
-                //
-                // The Exclusive lock remains held until exclusiveLockConnection
-                // is disposed when this scope exits.
-                //
-                // Only after that disposal may another instance acquire a Shared
-                // lock. Such an instance will then validate IsDeleted = 1 and
-                // reject the project as an active-project selection.
-
-                return;
-
-                #endregion
-            }
-
-            #endregion
-
-
-            #region Handle Project Restoration
-
-            // A deleted project cannot legitimately be active, therefore restoring
-            // it does not require the Exclusive active-project protection used
-            // during deletion.
-
-            #region Read Database Connection String
-
-            string connectionString =
-                txtDbConnectionString.Text?.Trim()
-                ?? throw new InvalidOperationException(
-                    "Database connection string control returned null.");
-
-            if (string.IsNullOrWhiteSpace(connectionString))
-            {
-                throw new InvalidOperationException(
-                    "Database connection string has not been configured.");
-            }
-
-            #endregion
-
-
-            #region Build Track Geometry Database Connection String
-
-            SqlConnectionStringBuilder databaseConnectionBuilder =
-                new(
-                    connectionString: connectionString)
-                {
-                    InitialCatalog = TrackGeometryDatabaseName
-                };
-
-            #endregion
-
-
-            #region Restore Project
-
-            const string restoreProjectSql = """
-        UPDATE [dbo].[Project]
-        SET
-            [IsDeleted] = 0
-        WHERE
-            [Project_ID] = @Project_ID
-            AND [IsDeleted] = 1;
-        """;
-
-            await using SqlConnection databaseConnection =
-                new(
-                    connectionString:
-                        databaseConnectionBuilder.ConnectionString);
-
-            await databaseConnection.OpenAsync();
-
-            await using SqlCommand restoreProjectCommand =
-                new(
-                    cmdText: restoreProjectSql,
-                    connection: databaseConnection);
-
-            restoreProjectCommand.Parameters.AddWithValue(
-                parameterName: "@Project_ID",
-                value: projectId);
-
-            int restoredRows =
-                await restoreProjectCommand.ExecuteNonQueryAsync();
-
-            if (restoredRows != 1)
-            {
-                throw new InvalidOperationException(
-                    $"Project_ID {projectId} could not be restored. " +
-                    "The project may already have been restored or its database " +
-                    "state may have changed.");
-            }
-
-            #endregion
-
-            #endregion
-        }
-
-        #endregion
-
-
-
-
-        private async Task LoadProjectsAsync()
-        {
-            #region Read Database Connection String
-
-            string connectionString =
-                txtDbConnectionString.Text?.Trim()
-                ?? throw new InvalidOperationException(
-                    "Database connection string control returned null.");
-
-            if (string.IsNullOrWhiteSpace(connectionString))
-            {
-                throw new InvalidOperationException(
-                    "Database connection string has not been configured.");
-            }
-
-            #endregion
-
-
-            #region Build Track Geometry Database Connection String
-
-            SqlConnectionStringBuilder databaseConnectionBuilder =
-                new(
-                    connectionString: connectionString)
-                {
-                    InitialCatalog = TrackGeometryDatabaseName
-                };
-
-            #endregion
-
-
-            #region Define Project Query
-
-            const string loadProjectsSql = """
-                SELECT
-                    [Project_ID],
-                    [ProjectName],
-                    [IsDeleted]
-                FROM [dbo].[Project]
-                ORDER BY
-                    [ProjectName];
-                """;
-
-            #endregion
-
-
-            #region Clear Existing Project List
-
-            _projectItems.Clear();
-
-            #endregion
-
-
-            #region Load Projects From Database
-
-            await using SqlConnection databaseConnection =
-                new(
-                    connectionString:
-                        databaseConnectionBuilder.ConnectionString);
-
-            await databaseConnection.OpenAsync();
-
-            await using SqlCommand loadProjectsCommand =
-                new(
-                    cmdText: loadProjectsSql,
-                    connection: databaseConnection);
-
-            await using SqlDataReader reader =
-                await loadProjectsCommand.ExecuteReaderAsync();
-
-            while (await reader.ReadAsync())
-            {
-                int projectId =
-                    reader.GetInt32(
-                        i: 0);
-
-                string projectName =
-                    reader.GetString(
-                        i: 1);
-
-                bool isDeleted =
-                    reader.GetBoolean(
-                        i: 2);
-
-                ProjectConfigurationItem projectItem =
-                    new()
-                    {
-                        Project_ID = projectId,
-                        ProjectName = projectName,
-                        OriginalProjectName = projectName,
-                        IsDeleted = isDeleted,
-                        IsActive = false
-                    };
-
-                _projectItems.Add(
-                    item: projectItem);
-            }
-
-            #endregion
-
-
-            #region Apply Process-Local Active Project
-
-            ApplyActiveProjectStateToLoadedProjects();
-
-            #endregion
-        }
-
-
-        private void ApplyActiveProjectStateToLoadedProjects()
-        {
-            #region Reset DataGrid Active State
-
-            foreach (ProjectConfigurationItem projectItem in _projectItems)
-            {
-                projectItem.IsActive =
-                    false;
-            }
-
-            #endregion
-
-
-            #region Handle No Active Project
-
-            if (!_activeProjectId.HasValue)
-            {
-                _activeProjectName =
-                    string.Empty;
-
-                txtActiveProject.Text =
-                    "No active project";
-
-                return;
-            }
-
-            #endregion
-
-
-            #region Locate Active Project
-
-            ProjectConfigurationItem? activeProjectItem =
-                null;
-
-            foreach (ProjectConfigurationItem projectItem in _projectItems)
-            {
-                if (projectItem.Project_ID == _activeProjectId.Value)
-                {
-                    activeProjectItem =
-                        projectItem;
-
-                    break;
-                }
-            }
-
-            #endregion
-
-
-            #region Validate Active Project
-
-            if (activeProjectItem is null ||
-                activeProjectItem.IsDeleted)
-            {
-                // The startup default no longer represents an available
-                // project in the current database.
-                //
-                // Only this process's runtime state is cleared here.
-                //
-                // The Registry is not modified during normal reconciliation
-                // because another running instance may have changed the
-                // persisted startup default after this process started.
-
-                _activeProjectId =
-                    null;
-
-                _activeProjectName =
-                    string.Empty;
-
-                txtActiveProject.Text =
-                    "No active project";
-
-                return;
-            }
-
-            #endregion
-
-
-            #region Apply Active Project To This Process
-
-            activeProjectItem.IsActive =
-                true;
-
-            // Project_ID is authoritative.
-            // Refresh the process-local name from SQL in case the project
-            // name has been changed since this process started.
-
-            _activeProjectName =
-                activeProjectItem.ProjectName;
-
-            txtActiveProject.Text =
-                _activeProjectName;
-
-            #endregion
-        }
+        public string ValidationStatus { get; set; } =
+            string.Empty;
 
         #endregion
     }
+
+    #endregion
+
 }
