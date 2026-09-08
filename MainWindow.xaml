@@ -197,36 +197,6 @@
                                 <!-- #endregion -->
 
 
-                                <!-- #region CLEAR TABLES -->
-
-                                <TextBlock Grid.Row="2"
-                                           Grid.Column="0"
-                                           VerticalAlignment="Center"
-                                           Text="Clear table:"/>
-
-                                <ComboBox x:Name="cmbClearTables"
-                                          Grid.Row="2"
-                                          Grid.Column="1"
-                                          Height="28"
-                                          SelectedIndex="0"
-                                          VerticalContentAlignment="Center">
-
-                                    <ComboBoxItem Content="Select table..."/>
-                                    <ComboBoxItem Content="CoordinatesReference"/>
-                                    <ComboBoxItem Content="PrismPairs"/>
-
-                                </ComboBox>
-
-                                <Button x:Name="btnClearTables"
-                                        Grid.Row="2"
-                                        Grid.Column="3"
-                                        Height="30"
-                                        Content="Clear Table"
-                                        Click="btnClearTables_Click"/>
-
-                                <!-- #endregion -->
-
-
                                 <!-- #region CLEAR LATEST READING -->
 
                                 <TextBlock Grid.Row="4"
@@ -394,11 +364,14 @@
 
                         <TabControl x:Name="tabConfiguration"
                                     Grid.Row="2"
+                                    IsEnabled="False"
                                     SelectionChanged="tabConfiguration_SelectionChanged">
 
                             <!-- #region REFERENCE COORDINATES TAB -->
 
-                            <TabItem Header="Reference Coordinates">
+                            <TabItem x:Name="tabReferenceCoordinates"
+                                     Header="Reference Coordinates"
+                                     IsEnabled="False">
 
                                 <GroupBox Header="Point Names / Reference Coordinates Import"
                                           Margin="8"
@@ -584,198 +557,11 @@
                             <!-- #endregion -->
 
 
-                            <!-- #region GEOTECH TAB -->
-
-                            <TabItem Header="Geotech">
-
-                                <GroupBox Header="Geotechnical Sensor Import"
-                                          Margin="8"
-                                          Padding="15">
-
-                                    <Grid>
-
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto"/>
-                                            <RowDefinition Height="10"/>
-                                            <RowDefinition Height="Auto"/>
-                                            <RowDefinition Height="10"/>
-                                            <RowDefinition Height="*"/>
-                                            <RowDefinition Height="10"/>
-                                            <RowDefinition Height="Auto"/>
-                                        </Grid.RowDefinitions>
-
-
-                                        <!-- #region CSV FILE SELECTION -->
-
-                                        <Grid Grid.Row="0">
-
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="95"/>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="15"/>
-                                                <ColumnDefinition Width="110"/>
-                                                <ColumnDefinition Width="10"/>
-                                                <ColumnDefinition Width="90"/>
-                                            </Grid.ColumnDefinitions>
-
-                                            <TextBlock Grid.Column="0"
-                                                       VerticalAlignment="Center"
-                                                       Text="Source CSV:"/>
-
-                                            <TextBox x:Name="txtGeotechCsvPath"
-                                                     Grid.Column="1"
-                                                     Height="28"
-                                                     IsReadOnly="True"
-                                                     VerticalContentAlignment="Center"/>
-
-                                            <Button x:Name="btnSelectGeotechCsv"
-                                                    Grid.Column="3"
-                                                    Height="30"
-                                                    Content="Select CSV"
-                                                    Click="btnSelectGeotechCsv_Click"/>
-
-                                            <Button x:Name="btnClearGeotechImport"
-                                                    Grid.Column="5"
-                                                    Height="30"
-                                                    Content="Clear"
-                                                    Click="btnClearGeotechImport_Click"/>
-
-                                        </Grid>
-
-                                        <!-- #endregion -->
-
-
-                                        <!-- #region CSV COLUMN ORDER -->
-
-                                        <Grid Grid.Row="2">
-
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="95"/>
-                                                <ColumnDefinition Width="500"/>
-                                                <ColumnDefinition Width="*"/>
-                                            </Grid.ColumnDefinitions>
-
-                                            <TextBlock Grid.Column="0"
-                                                       VerticalAlignment="Center"
-                                                       Text="Column order:"/>
-
-                                            <ComboBox x:Name="cmbGeotechCsvColumnOrder"
-                                                      Grid.Column="1"
-                                                      Height="28"
-                                                      SelectedIndex="0"
-                                                      IsEnabled="False"
-                                                      VerticalContentAlignment="Center">
-
-                                                <ComboBoxItem Content="Sensor Name, E, N, Ht, Replacement Name, Sensor Type"/>
-
-                                            </ComboBox>
-
-                                        </Grid>
-
-                                        <!-- #endregion -->
-
-
-                                        <!-- #region IMPORT PREVIEW DATAGRID -->
-
-                                        <DataGrid x:Name="dgGeotechSensorImport"
-                                                  Grid.Row="4"
-                                                  AutoGenerateColumns="False"
-                                                  CanUserAddRows="False"
-                                                  CanUserDeleteRows="False"
-                                                  CanUserReorderColumns="False"
-                                                  CanUserResizeRows="False"
-                                                  IsReadOnly="True"
-                                                  SelectionMode="Single"
-                                                  SelectionUnit="FullRow"
-                                                  HeadersVisibility="Column"
-                                                  GridLinesVisibility="Horizontal"
-                                                  HorizontalGridLinesBrush="LightGray"
-                                                  SelectionChanged="dgGeotechSensorImport_SelectionChanged">
-
-                                            <DataGrid.Columns>
-
-                                                <DataGridTextColumn Header="Row"
-                                                                    Width="50"
-                                                                    Binding="{Binding SourceRow}"/>
-
-                                                <DataGridTextColumn Header="Sensor Name"
-                                                                    Width="115"
-                                                                    Binding="{Binding SensorName}"/>
-
-                                                <DataGridTextColumn Header="Replacement Name"
-                                                                    Width="125"
-                                                                    Binding="{Binding ReplacementName}"/>
-
-                                                <DataGridTextColumn Header="Sensor Type"
-                                                                    Width="90"
-                                                                    Binding="{Binding SensorType}"/>
-
-                                                <DataGridTextColumn Header="E"
-                                                                    Width="90"
-                                                                    Binding="{Binding EastingText}"/>
-
-                                                <DataGridTextColumn Header="N"
-                                                                    Width="90"
-                                                                    Binding="{Binding NorthingText}"/>
-
-                                                <DataGridTextColumn Header="Ht"
-                                                                    Width="80"
-                                                                    Binding="{Binding HeightText}"/>
-
-                                                <DataGridTextColumn Header="Validation"
-                                                                    Width="*"
-                                                                    Binding="{Binding ValidationStatus}"/>
-
-                                            </DataGrid.Columns>
-
-                                        </DataGrid>
-
-                                        <!-- #endregion -->
-
-
-                                        <!-- #region IMPORT STATUS AND COMMIT -->
-
-                                        <Grid Grid.Row="6">
-
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="20"/>
-                                                <ColumnDefinition Width="130"/>
-                                            </Grid.ColumnDefinitions>
-
-                                            <TextBox x:Name="txtGeotechImportStatus"
-                                                     Grid.Column="0"
-                                                     Height="42"
-                                                     IsReadOnly="True"
-                                                     TextWrapping="NoWrap"
-                                                     HorizontalScrollBarVisibility="Auto"
-                                                     VerticalScrollBarVisibility="Disabled"
-                                                     VerticalContentAlignment="Center"
-                                                     Text="No CSV selected."/>
-
-                                            <Button x:Name="btnCommitGeotechImport"
-                                                    Grid.Column="2"
-                                                    Height="30"
-                                                    Content="Commit Import"
-                                                    IsEnabled="False"
-                                                    Click="btnCommitGeotechImport_Click"/>
-
-                                        </Grid>
-
-                                        <!-- #endregion -->
-
-                                    </Grid>
-
-                                </GroupBox>
-
-                            </TabItem>
-
-                            <!-- #endregion -->
-
-
                             <!-- #region PRISM PAIRS TAB -->
 
-                            <TabItem Header="Prism Pairs">
+                            <TabItem x:Name="tabPrismPairs"
+                                     Header="Prism Pairs"
+                                     IsEnabled="False">
 
                                 <GroupBox Header="Prism Pair Import"
                                           Margin="8"
@@ -1039,7 +825,8 @@
                             <!-- #region PRISM ARRAYS TAB -->
 
                             <TabItem x:Name="tabPrismArrays"
-                                     Header="Arrays">
+                                     Header="Arrays"
+                                     IsEnabled="False">
 
                                 <GroupBox Header="Prism Array Configuration"
                                           Margin="8"
@@ -1080,12 +867,10 @@
                                                       Grid.Column="1"
                                                       Height="28"
                                                       SelectedIndex="-1"
-                                                      VerticalContentAlignment="Center">
-
-                                                <ComboBoxItem Content="Structural Array"/>
-                                                <ComboBoxItem Content="Tunnel Convergence"/>
-
-                                            </ComboBox>
+                                                      DisplayMemberPath="ArrayTypeName"
+                                                      SelectedValuePath="ArrayType_ID"
+                                                      SelectionChanged="cmbPrismArrayType_SelectionChanged"
+                                                      VerticalContentAlignment="Center"/>
 
                                             <TextBlock Grid.Column="3"
                                                        VerticalAlignment="Center"
@@ -1318,6 +1103,197 @@
                                                  VerticalScrollBarVisibility="Disabled"
                                                  VerticalContentAlignment="Center"
                                                  Text="Select the Arrays tab to load available points."/>
+
+                                        <!-- #endregion -->
+
+                                    </Grid>
+
+                                </GroupBox>
+
+                            </TabItem>
+
+                            <!-- #endregion -->
+
+
+                            <!-- #region GEOTECH TAB -->
+
+                            <TabItem x:Name="tabGeotech"
+                                     Header="Geotech"
+                                     IsEnabled="False">
+
+                                <GroupBox Header="Geotechnical Sensor Import"
+                                          Margin="8"
+                                          Padding="15">
+
+                                    <Grid>
+
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="10"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="10"/>
+                                            <RowDefinition Height="*"/>
+                                            <RowDefinition Height="10"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+
+
+                                        <!-- #region CSV FILE SELECTION -->
+
+                                        <Grid Grid.Row="0">
+
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="95"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="15"/>
+                                                <ColumnDefinition Width="110"/>
+                                                <ColumnDefinition Width="10"/>
+                                                <ColumnDefinition Width="90"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <TextBlock Grid.Column="0"
+                                                       VerticalAlignment="Center"
+                                                       Text="Source CSV:"/>
+
+                                            <TextBox x:Name="txtGeotechCsvPath"
+                                                     Grid.Column="1"
+                                                     Height="28"
+                                                     IsReadOnly="True"
+                                                     VerticalContentAlignment="Center"/>
+
+                                            <Button x:Name="btnSelectGeotechCsv"
+                                                    Grid.Column="3"
+                                                    Height="30"
+                                                    Content="Select CSV"
+                                                    Click="btnSelectGeotechCsv_Click"/>
+
+                                            <Button x:Name="btnClearGeotechImport"
+                                                    Grid.Column="5"
+                                                    Height="30"
+                                                    Content="Clear"
+                                                    Click="btnClearGeotechImport_Click"/>
+
+                                        </Grid>
+
+                                        <!-- #endregion -->
+
+
+                                        <!-- #region CSV COLUMN ORDER -->
+
+                                        <Grid Grid.Row="2">
+
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="95"/>
+                                                <ColumnDefinition Width="500"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <TextBlock Grid.Column="0"
+                                                       VerticalAlignment="Center"
+                                                       Text="Column order:"/>
+
+                                            <ComboBox x:Name="cmbGeotechCsvColumnOrder"
+                                                      Grid.Column="1"
+                                                      Height="28"
+                                                      SelectedIndex="0"
+                                                      IsEnabled="False"
+                                                      VerticalContentAlignment="Center">
+
+                                                <ComboBoxItem Content="Sensor Name, E, N, Ht, Replacement Name, Sensor Type"/>
+
+                                            </ComboBox>
+
+                                        </Grid>
+
+                                        <!-- #endregion -->
+
+
+                                        <!-- #region IMPORT PREVIEW DATAGRID -->
+
+                                        <DataGrid x:Name="dgGeotechSensorImport"
+                                                  Grid.Row="4"
+                                                  AutoGenerateColumns="False"
+                                                  CanUserAddRows="False"
+                                                  CanUserDeleteRows="False"
+                                                  CanUserReorderColumns="False"
+                                                  CanUserResizeRows="False"
+                                                  IsReadOnly="True"
+                                                  SelectionMode="Single"
+                                                  SelectionUnit="FullRow"
+                                                  HeadersVisibility="Column"
+                                                  GridLinesVisibility="Horizontal"
+                                                  HorizontalGridLinesBrush="LightGray"
+                                                  SelectionChanged="dgGeotechSensorImport_SelectionChanged">
+
+                                            <DataGrid.Columns>
+
+                                                <DataGridTextColumn Header="Row"
+                                                                    Width="50"
+                                                                    Binding="{Binding SourceRow}"/>
+
+                                                <DataGridTextColumn Header="Sensor Name"
+                                                                    Width="115"
+                                                                    Binding="{Binding SensorName}"/>
+
+                                                <DataGridTextColumn Header="Replacement Name"
+                                                                    Width="125"
+                                                                    Binding="{Binding ReplacementName}"/>
+
+                                                <DataGridTextColumn Header="Sensor Type"
+                                                                    Width="90"
+                                                                    Binding="{Binding SensorType}"/>
+
+                                                <DataGridTextColumn Header="E"
+                                                                    Width="90"
+                                                                    Binding="{Binding EastingText}"/>
+
+                                                <DataGridTextColumn Header="N"
+                                                                    Width="90"
+                                                                    Binding="{Binding NorthingText}"/>
+
+                                                <DataGridTextColumn Header="Ht"
+                                                                    Width="80"
+                                                                    Binding="{Binding HeightText}"/>
+
+                                                <DataGridTextColumn Header="Validation"
+                                                                    Width="*"
+                                                                    Binding="{Binding ValidationStatus}"/>
+
+                                            </DataGrid.Columns>
+
+                                        </DataGrid>
+
+                                        <!-- #endregion -->
+
+
+                                        <!-- #region IMPORT STATUS AND COMMIT -->
+
+                                        <Grid Grid.Row="6">
+
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="20"/>
+                                                <ColumnDefinition Width="130"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <TextBox x:Name="txtGeotechImportStatus"
+                                                     Grid.Column="0"
+                                                     Height="42"
+                                                     IsReadOnly="True"
+                                                     TextWrapping="NoWrap"
+                                                     HorizontalScrollBarVisibility="Auto"
+                                                     VerticalScrollBarVisibility="Disabled"
+                                                     VerticalContentAlignment="Center"
+                                                     Text="No CSV selected."/>
+
+                                            <Button x:Name="btnCommitGeotechImport"
+                                                    Grid.Column="2"
+                                                    Height="30"
+                                                    Content="Commit Import"
+                                                    IsEnabled="False"
+                                                    Click="btnCommitGeotechImport_Click"/>
+
+                                        </Grid>
 
                                         <!-- #endregion -->
 
@@ -1634,11 +1610,8 @@
                    TextAlignment="Left"
                    FontFamily="Century Gothic"
                    FontSize="9"
-                   Foreground="DarkSlateGray">
-
-            <Run Text="© 2026 GNA Software"/>
-
-        </TextBlock>
+                   Foreground="DarkSlateGray"
+                   Text="{Binding CopyrightText, RelativeSource={RelativeSource AncestorType=Window}}"/>
 
         <!-- #endregion -->
 

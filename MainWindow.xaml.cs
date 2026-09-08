@@ -1,4 +1,4 @@
-#region System Preparation
+﻿#region System Preparation
 
 using System;
 using System.Collections.Generic;
@@ -25,6 +25,51 @@ namespace GNA_DLRreport
     /// </summary>
     public partial class MainWindow : Window
     {
+
+        #region Application Footer
+
+        public string CopyrightText
+        {
+            get
+            {
+                DateTime buildDate =
+                    GetBuildDate();
+
+                int year =
+                    buildDate.Year;
+
+                return
+                    $"© {year} GNA Software — Built {buildDate:yyyy-MM-dd}";
+            }
+        }
+
+
+        private static DateTime GetBuildDate()
+        {
+            #region Resolve Executable Build Date
+
+            string assemblyLocation =
+                System.Reflection.Assembly
+                    .GetExecutingAssembly()
+                    .Location;
+
+            if (string.IsNullOrWhiteSpace(
+                value: assemblyLocation))
+            {
+                return DateTime.Today;
+            }
+
+            DateTime buildDate =
+                File.GetLastWriteTime(
+                    path: assemblyLocation);
+
+            return buildDate.Date;
+
+            #endregion
+        }
+
+        #endregion
+
 
         #region Setting State
         private readonly gnaTools gnaT =
@@ -235,11 +280,8 @@ namespace GNA_DLRreport
 
         #region Prism Array Configuration State
 
-        private const byte PrismArrayTypeStructural =
-            1;
-
-        private const byte PrismArrayTypeTunnelConvergence =
-            2;
+        private const int PrismArrayTypePrismCrackGauge =
+            3;
 
         private const string PrismArrayDefinitionLockResourcePrefix =
             "GNA_DLRreport:PrismArrayDefinition:";
@@ -251,6 +293,12 @@ namespace GNA_DLRreport
             'C',
             'D',
             'E'
+        };
+
+        private static readonly char[] PrismCrackGaugePointRoles =
+        {
+            'A',
+            'B'
         };
 
         private static readonly (char StartRole, char EndRole, string ChordName)[]
@@ -267,6 +315,10 @@ namespace GNA_DLRreport
             ('C', 'E', "CE"),
             ('D', 'E', "DE")
         };
+
+        private readonly ObservableCollection<PrismArrayTypeItem>
+            _prismArrayTypes =
+                new();
 
         private readonly ObservableCollection<PrismArrayAvailablePoint>
             _availablePrismArrayPoints =
@@ -285,7 +337,7 @@ namespace GNA_DLRreport
         private string _prismArrayProjectName =
             string.Empty;
 
-        private byte? _selectedPrismArrayType;
+        private int? _selectedPrismArrayType;
 
         private string _pendingPrismArrayName =
             string.Empty;
@@ -297,6 +349,15 @@ namespace GNA_DLRreport
         #region Prism Array Configuration
 
         #region Array State Models
+
+        private sealed class PrismArrayTypeItem
+        {
+            public int ArrayType_ID { get; init; }
+
+            public string ArrayTypeName { get; init; } =
+                string.Empty;
+        }
+
 
         private sealed class PrismArrayAvailablePoint
         {
@@ -314,11 +375,10 @@ namespace GNA_DLRreport
         {
             public int Array_ID { get; init; }
 
-            public byte ArrayType { get; init; }
+            public int ArrayType { get; init; }
 
-            public string ArrayTypeName =>
-                GetPrismArrayTypeName(
-                    arrayType: ArrayType);
+            public string ArrayTypeName { get; init; } =
+                string.Empty;
 
             public string ArrayName { get; init; } =
                 string.Empty;
@@ -333,11 +393,10 @@ namespace GNA_DLRreport
 
             public int Project_ID { get; init; }
 
-            public byte ArrayType { get; init; }
+            public int ArrayType { get; init; }
 
-            public string ArrayTypeName =>
-                GetPrismArrayTypeName(
-                    arrayType: ArrayType);
+            public string ArrayTypeName { get; init; } =
+                string.Empty;
 
             public string ArrayName { get; init; } =
                 string.Empty;
@@ -404,39 +463,74 @@ namespace GNA_DLRreport
 
         #region Array Type And Role Helpers
 
-        private static string GetPrismArrayTypeName(
-            byte arrayType)
+        private PrismArrayTypeItem GetPrismArrayType(
+            int arrayTypeId)
         {
-            #region Resolve Array Type Name
+            #region Resolve Array Type From Database Lookup
 
-            return arrayType switch
+            foreach (PrismArrayTypeItem arrayType
+                in _prismArrayTypes)
             {
-                PrismArrayTypeStructural =>
-                    "Structural Array",
+                if (arrayType.ArrayType_ID == arrayTypeId)
+                {
+                    return arrayType;
+                }
+            }
 
-                PrismArrayTypeTunnelConvergence =>
-                    "Tunnel Convergence",
-
-                _ =>
-                    "Unknown"
-            };
+            throw new InvalidOperationException(
+                $"Array type {arrayTypeId} is not defined.");
 
             #endregion
         }
 
 
-        private static void ValidatePrismArrayType(
-            byte arrayType)
+        private void ValidatePrismArrayType(
+            int arrayTypeId)
         {
-            #region Validate Array Type
+            #region Validate Array Type Against Database Lookup
 
-            if (arrayType != PrismArrayTypeStructural &&
-                arrayType != PrismArrayTypeTunnelConvergence)
+            _ =
+                GetPrismArrayType(
+                    arrayTypeId: arrayTypeId);
+
+            #endregion
+        }
+
+
+        private static IReadOnlyList<char> GetRequiredPrismArrayPointRoles(
+            int arrayType)
+        {
+            #region Resolve Required Point Roles
+
+            return arrayType == PrismArrayTypePrismCrackGauge
+                ? PrismCrackGaugePointRoles
+                : PrismArrayPointRoles;
+
+            #endregion
+        }
+
+
+        private static bool PrismArrayTypeUsesPointRole(
+            int arrayType,
+            char pointRole)
+        {
+            #region Resolve Role Availability
+
+            char validatedPointRole =
+                ValidatePrismArrayPointRole(
+                    pointRole: pointRole);
+
+            foreach (char requiredPointRole
+                in GetRequiredPrismArrayPointRoles(
+                    arrayType: arrayType))
             {
-                throw new ArgumentOutOfRangeException(
-                    paramName: nameof(arrayType),
-                    message: "Invalid array type.");
+                if (requiredPointRole == validatedPointRole)
+                {
+                    return true;
+                }
             }
+
+            return false;
 
             #endregion
         }
@@ -499,6 +593,8 @@ namespace GNA_DLRreport
 
 
             #region Clear Array Lists
+
+            _prismArrayTypes.Clear();
 
             _availablePrismArrayPoints.Clear();
 
@@ -576,13 +672,13 @@ namespace GNA_DLRreport
 
 
         private void SetPendingPrismArrayDefinition(
-            byte arrayType,
+            int arrayType,
             string arrayName)
         {
             #region Validate Definition Header
 
             ValidatePrismArrayType(
-                arrayType: arrayType);
+                arrayTypeId: arrayType);
 
             string validatedArrayName =
                 arrayName?.Trim()
@@ -619,6 +715,97 @@ namespace GNA_DLRreport
         #endregion
 
 
+        #region Array Type Lookup
+
+        private async Task LoadPrismArrayTypesAsync()
+        {
+            #region Define Array Type Query
+
+            const string arrayTypeSql = """
+                SELECT
+                    [ArrayType_ID],
+                    [ArrayTypeName]
+                FROM [dbo].[PrismArrayType]
+                ORDER BY
+                    [ArrayType_ID];
+                """;
+
+            #endregion
+
+
+            #region Load Array Types
+
+            List<PrismArrayTypeItem> arrayTypes =
+                new();
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand arrayTypeCommand =
+                new(
+                    cmdText: arrayTypeSql,
+                    connection: databaseConnection);
+
+            await using SqlDataReader reader =
+                await arrayTypeCommand.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                arrayTypes.Add(
+                    item:
+                        new PrismArrayTypeItem
+                        {
+                            ArrayType_ID =
+                                reader.GetInt32(
+                                    i: 0),
+
+                            ArrayTypeName =
+                                reader.GetString(
+                                    i: 1)
+                        });
+            }
+
+            #endregion
+
+
+            #region Validate Array Type Lookup
+
+            if (arrayTypes.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "No array types are defined.");
+            }
+
+            #endregion
+
+
+            #region Refresh Array Type User Interface
+
+            _prismArrayTypes.Clear();
+
+            foreach (PrismArrayTypeItem arrayType
+                in arrayTypes)
+            {
+                _prismArrayTypes.Add(
+                    item: arrayType);
+            }
+
+            cmbPrismArrayType.ItemsSource =
+                _prismArrayTypes;
+
+            cmbPrismArrayType.SelectedIndex =
+                -1;
+
+            #endregion
+        }
+
+        #endregion
+
+
         #region Available Array Points
 
         private async Task InitialisePrismArrayConfigurationForActiveProjectAsync()
@@ -646,6 +833,13 @@ namespace GNA_DLRreport
 
             _prismArrayProjectName =
                 _activeProjectName;
+
+            #endregion
+
+
+            #region Load Array Types
+
+            await LoadPrismArrayTypesAsync();
 
             #endregion
 
@@ -769,14 +963,6 @@ namespace GNA_DLRreport
                 WHERE
                     PN.[Project_ID] = @Project_ID
                     AND PN.[IsDeleted] = 0
-                    AND NOT EXISTS
-                    (
-                        SELECT 1
-                        FROM [dbo].[PrismArrayPoint] AS PAP
-                        WHERE
-                            PAP.[PointName_ID] = PN.[PointName_ID]
-                            AND PAP.[IsDeleted] = 0
-                    )
                 ORDER BY
                     PN.[ReplacementName],
                     PN.[PointName];
@@ -1049,11 +1235,11 @@ namespace GNA_DLRreport
                     "Select an array type.");
             }
 
-            byte arrayType =
+            int arrayType =
                 _selectedPrismArrayType.Value;
 
             ValidatePrismArrayType(
-                arrayType: arrayType);
+                arrayTypeId: arrayType);
 
             string arrayName =
                 _pendingPrismArrayName.Trim();
@@ -1071,7 +1257,8 @@ namespace GNA_DLRreport
             }
 
             Dictionary<char, int> pointAssignments =
-                CapturePrismArrayPointAssignments();
+                CapturePrismArrayPointAssignments(
+                    arrayType: arrayType);
 
             int projectId =
                 _prismArrayProjectId.Value;
@@ -1135,6 +1322,7 @@ namespace GNA_DLRreport
                 await ValidatePrismArrayDefinitionForCommitAsync(
                     projectId: projectId,
                     arrayName: arrayName,
+                    arrayType: arrayType,
                     pointAssignments: pointAssignments,
                     databaseConnection: databaseConnection,
                     transaction: transaction);
@@ -1158,7 +1346,8 @@ namespace GNA_DLRreport
                 #region Insert A-E Membership
 
                 foreach (char pointRole
-                    in PrismArrayPointRoles)
+                    in GetRequiredPrismArrayPointRoles(
+                        arrayType: arrayType))
                 {
                     await InsertPrismArrayPointAsync(
                         arrayId: arrayId,
@@ -1214,9 +1403,10 @@ namespace GNA_DLRreport
         }
 
 
-        private Dictionary<char, int> CapturePrismArrayPointAssignments()
+        private Dictionary<char, int> CapturePrismArrayPointAssignments(
+            int arrayType)
         {
-            #region Validate Complete A-E Assignment
+            #region Validate Required Point Assignment
 
             Dictionary<char, int> pointAssignments =
                 new();
@@ -1225,7 +1415,8 @@ namespace GNA_DLRreport
                 new();
 
             foreach (char pointRole
-                in PrismArrayPointRoles)
+                in GetRequiredPrismArrayPointRoles(
+                    arrayType: arrayType))
             {
                 if (!_prismArrayAssignments.TryGetValue(
                     key: pointRole,
@@ -1321,6 +1512,7 @@ namespace GNA_DLRreport
         private static async Task ValidatePrismArrayDefinitionForCommitAsync(
             int projectId,
             string arrayName,
+            int arrayType,
             Dictionary<char, int> pointAssignments,
             SqlConnection databaseConnection,
             SqlTransaction transaction)
@@ -1383,16 +1575,27 @@ namespace GNA_DLRreport
                         ELSE 1
                     END AS [HasReference],
                     CASE
-                        WHEN PAP.[PointName_ID] IS NULL THEN 0
-                        ELSE 1
-                    END AS [AlreadyAllocated]
+                        WHEN EXISTS
+                        (
+                            SELECT 1
+                            FROM [dbo].[PrismArrayPoint] AS PAP
+                                WITH (UPDLOCK, HOLDLOCK)
+                            INNER JOIN [dbo].[PrismArray] AS PA
+                                WITH (UPDLOCK, HOLDLOCK)
+                                ON PA.[Array_ID] = PAP.[Array_ID]
+                            WHERE
+                                PAP.[PointName_ID] = PN.[PointName_ID]
+                                AND PAP.[IsDeleted] = 0
+                                AND PA.[IsDeleted] = 0
+                                AND PA.[Project_ID] = @Project_ID
+                                AND PA.[ArrayType] = @ArrayType
+                        ) THEN 1
+                        ELSE 0
+                    END AS [AlreadyAllocatedToType]
                 FROM [dbo].[PointName] AS PN WITH (UPDLOCK, HOLDLOCK)
                 LEFT JOIN [dbo].[CoordinatesReference] AS CR WITH (HOLDLOCK)
                     ON CR.[PointName_ID] = PN.[PointName_ID]
                     AND CR.[IsDeleted] = 0
-                LEFT JOIN [dbo].[PrismArrayPoint] AS PAP WITH (UPDLOCK, HOLDLOCK)
-                    ON PAP.[PointName_ID] = PN.[PointName_ID]
-                    AND PAP.[IsDeleted] = 0
                 WHERE PN.[PointName_ID] IN
                 (
                     @A_ID,
@@ -1408,7 +1611,7 @@ namespace GNA_DLRreport
 
             #region Execute Point Validation Query
 
-            Dictionary<int, (int ProjectId, bool IsDeleted, bool HasReference, bool AlreadyAllocated)>
+            Dictionary<int, (int ProjectId, bool IsDeleted, bool HasReference, bool AlreadyAllocatedToType)>
                 pointStates =
                     new();
 
@@ -1418,14 +1621,32 @@ namespace GNA_DLRreport
                     connection: databaseConnection,
                     transaction: transaction);
 
+            pointCommand.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    projectId;
+
+            pointCommand.Parameters.Add(
+                parameterName: "@ArrayType",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    arrayType;
+
             foreach (char pointRole
                 in PrismArrayPointRoles)
             {
-                pointCommand.Parameters.Add(
-                    parameterName: $"@{pointRole}_ID",
-                    sqlDbType: System.Data.SqlDbType.Int)
-                    .Value =
-                        pointAssignments[pointRole];
+                SqlParameter pointParameter =
+                    pointCommand.Parameters.Add(
+                        parameterName: $"@{pointRole}_ID",
+                        sqlDbType: System.Data.SqlDbType.Int);
+
+                pointParameter.Value =
+                    pointAssignments.TryGetValue(
+                        key: pointRole,
+                        value: out int pointNameId)
+                        ? pointNameId
+                        : DBNull.Value;
             }
 
             await using SqlDataReader reader =
@@ -1451,7 +1672,7 @@ namespace GNA_DLRreport
                             reader.GetInt32(
                                 i: 3) == 1,
 
-                        AlreadyAllocated:
+                        AlreadyAllocatedToType:
                             reader.GetInt32(
                                 i: 4) == 1
                     );
@@ -1463,7 +1684,8 @@ namespace GNA_DLRreport
             #region Validate Each A-E Point
 
             foreach (char pointRole
-                in PrismArrayPointRoles)
+                in GetRequiredPrismArrayPointRoles(
+                    arrayType: arrayType))
             {
                 int pointNameId =
                     pointAssignments[pointRole];
@@ -1471,7 +1693,7 @@ namespace GNA_DLRreport
                 if (!pointStates.TryGetValue(
                     key: pointNameId,
                     value: out
-                        (int ProjectId, bool IsDeleted, bool HasReference, bool AlreadyAllocated)
+                        (int ProjectId, bool IsDeleted, bool HasReference, bool AlreadyAllocatedToType)
                         pointState))
                 {
                     throw new InvalidOperationException(
@@ -1496,10 +1718,10 @@ namespace GNA_DLRreport
                         $"Point {pointRole} has no reference coordinates.");
                 }
 
-                if (pointState.AlreadyAllocated)
+                if (pointState.AlreadyAllocatedToType)
                 {
                     throw new InvalidOperationException(
-                        $"Point {pointRole} is already allocated.");
+                        $"Point {pointRole} is already allocated to array type {arrayType}.");
                 }
             }
 
@@ -1510,7 +1732,7 @@ namespace GNA_DLRreport
         private static async Task<int> InsertPrismArrayAsync(
             int projectId,
             string arrayName,
-            byte arrayType,
+            int arrayType,
             SqlConnection databaseConnection,
             SqlTransaction transaction)
         {
@@ -1561,7 +1783,7 @@ namespace GNA_DLRreport
 
             arrayCommand.Parameters.Add(
                 parameterName: "@ArrayType",
-                sqlDbType: System.Data.SqlDbType.TinyInt)
+                sqlDbType: System.Data.SqlDbType.Int)
                 .Value =
                     arrayType;
 
@@ -1666,18 +1888,21 @@ namespace GNA_DLRreport
 
             const string arraySql = """
                 SELECT
-                    [Array_ID],
-                    [ArrayType],
-                    [ArrayName],
-                    [IsDeleted]
-                FROM [dbo].[PrismArray]
+                    PA.[Array_ID],
+                    PA.[ArrayType],
+                    PAT.[ArrayTypeName],
+                    PA.[ArrayName],
+                    PA.[IsDeleted]
+                FROM [dbo].[PrismArray] AS PA
+                INNER JOIN [dbo].[PrismArrayType] AS PAT
+                    ON PAT.[ArrayType_ID] = PA.[ArrayType]
                 WHERE
-                    [Project_ID] = @Project_ID
-                    AND [IsDeleted] = 0
+                    PA.[Project_ID] = @Project_ID
+                    AND PA.[IsDeleted] = 0
                 ORDER BY
-                    [ArrayType],
-                    [ArrayName],
-                    [Array_ID];
+                    PA.[ArrayType],
+                    PA.[ArrayName],
+                    PA.[Array_ID];
                 """;
 
             #endregion
@@ -1718,16 +1943,20 @@ namespace GNA_DLRreport
                                     i: 0),
 
                             ArrayType =
-                                reader.GetByte(
+                                reader.GetInt32(
                                     i: 1),
 
-                            ArrayName =
+                            ArrayTypeName =
                                 reader.GetString(
                                     i: 2),
 
+                            ArrayName =
+                                reader.GetString(
+                                    i: 3),
+
                             IsDeleted =
                                 reader.GetBoolean(
-                                    i: 3)
+                                    i: 4)
                         });
             }
 
@@ -1772,6 +2001,7 @@ namespace GNA_DLRreport
                     PA.[Array_ID],
                     PA.[Project_ID],
                     PA.[ArrayType],
+                    PAT.[ArrayTypeName],
                     PA.[ArrayName],
                     PA.[IsDeleted],
                     PAP.[PointRole],
@@ -1779,6 +2009,8 @@ namespace GNA_DLRreport
                     PN.[PointName],
                     PN.[ReplacementName]
                 FROM [dbo].[PrismArray] AS PA
+                INNER JOIN [dbo].[PrismArrayType] AS PAT
+                    ON PAT.[ArrayType_ID] = PA.[ArrayType]
                 LEFT JOIN [dbo].[PrismArrayPoint] AS PAP
                     ON PAP.[Array_ID] = PA.[Array_ID]
                     AND PAP.[IsDeleted] = 0
@@ -1841,29 +2073,33 @@ namespace GNA_DLRreport
                                 i: 1),
 
                         ArrayType =
-                            reader.GetByte(
+                            reader.GetInt32(
                                 i: 2),
 
-                        ArrayName =
+                        ArrayTypeName =
                             reader.GetString(
                                 i: 3),
 
+                        ArrayName =
+                            reader.GetString(
+                                i: 4),
+
                         IsDeleted =
                             reader.GetBoolean(
-                                i: 4)
+                                i: 5)
                     };
 
                 if (reader.IsDBNull(
-                    i: 5) ||
+                    i: 6) ||
                     reader.IsDBNull(
-                        i: 6))
+                        i: 7))
                 {
                     continue;
                 }
 
                 string roleText =
                     reader.GetString(
-                        i: 5);
+                        i: 6);
 
                 if (string.IsNullOrWhiteSpace(roleText))
                 {
@@ -1881,15 +2117,15 @@ namespace GNA_DLRreport
                         {
                             PointName_ID =
                                 reader.GetInt32(
-                                    i: 6),
+                                    i: 7),
 
                             PointName =
                                 reader.GetString(
-                                    i: 7),
+                                    i: 8),
 
                             ReplacementName =
                                 reader.GetString(
-                                    i: 8)
+                                    i: 9)
                         });
             }
 
@@ -1904,8 +2140,12 @@ namespace GNA_DLRreport
                     "Array not found.");
             }
 
+            IReadOnlyList<char> requiredPointRoles =
+                GetRequiredPrismArrayPointRoles(
+                    arrayType: details.ArrayType);
+
             foreach (char pointRole
-                in PrismArrayPointRoles)
+                in requiredPointRoles)
             {
                 if (!details.Points.ContainsKey(
                     key: pointRole))
@@ -1915,7 +2155,7 @@ namespace GNA_DLRreport
                 }
             }
 
-            if (details.Points.Count != 5)
+            if (details.Points.Count != requiredPointRoles.Count)
             {
                 throw new InvalidOperationException(
                     "Array membership invalid.");
@@ -1950,7 +2190,8 @@ namespace GNA_DLRreport
             message.AppendLine();
 
             foreach (char pointRole
-                in PrismArrayPointRoles)
+                in GetRequiredPrismArrayPointRoles(
+                    arrayType: details.ArrayType))
             {
                 PrismArrayAvailablePoint point =
                     details.Points[pointRole];
@@ -2389,6 +2630,8 @@ namespace GNA_DLRreport
             }
             else
             {
+                await LoadPrismArrayTypesAsync();
+
                 await ReloadPrismArrayConfigurationListsAsync();
             }
 
@@ -2419,6 +2662,85 @@ namespace GNA_DLRreport
 
 
         #region Array Definition Controls
+
+        private void cmbPrismArrayType_SelectionChanged(
+            object sender,
+            SelectionChangedEventArgs e)
+        {
+            #region Ignore Pre-Initialisation Event
+
+            if (!IsInitialized)
+            {
+                return;
+            }
+
+            #endregion
+
+
+            #region Remove Assignments Not Used By Selected Type
+
+            if (cmbPrismArrayType.SelectedItem
+                is PrismArrayTypeItem selectedArrayType)
+            {
+                IReadOnlyList<char> requiredPointRoles =
+                    GetRequiredPrismArrayPointRoles(
+                        arrayType: selectedArrayType.ArrayType_ID);
+
+                HashSet<char> requiredRoleSet =
+                    new(
+                        collection: requiredPointRoles);
+
+                List<char> rolesToClear =
+                    new();
+
+                foreach (char assignedRole
+                    in _prismArrayAssignments.Keys)
+                {
+                    if (!requiredRoleSet.Contains(
+                        item: assignedRole))
+                    {
+                        rolesToClear.Add(
+                            item: assignedRole);
+                    }
+                }
+
+                foreach (char roleToClear
+                    in rolesToClear)
+                {
+                    ClearPrismArrayPointAssignment(
+                        pointRole: roleToClear);
+                }
+            }
+
+            #endregion
+
+
+            #region Refresh Role Availability
+
+            UpdatePrismArrayAssignmentDisplay();
+
+            #endregion
+        }
+
+
+        private bool IsPrismArrayPointRoleSelectableFromUi(
+            char pointRole)
+        {
+            #region Resolve Selected Array Type
+
+            if (cmbPrismArrayType.SelectedItem
+                is not PrismArrayTypeItem selectedArrayType)
+            {
+                return true;
+            }
+
+            return PrismArrayTypeUsesPointRole(
+                arrayType: selectedArrayType.ArrayType_ID,
+                pointRole: pointRole);
+
+            #endregion
+        }
+
 
         private void ClearPrismArrayDefinitionControls()
         {
@@ -2498,6 +2820,31 @@ namespace GNA_DLRreport
             #endregion
 
 
+            #region Resolve Role Availability
+
+            bool roleASelectable =
+                IsPrismArrayPointRoleSelectableFromUi(
+                    pointRole: 'A');
+
+            bool roleBSelectable =
+                IsPrismArrayPointRoleSelectableFromUi(
+                    pointRole: 'B');
+
+            bool roleCSelectable =
+                IsPrismArrayPointRoleSelectableFromUi(
+                    pointRole: 'C');
+
+            bool roleDSelectable =
+                IsPrismArrayPointRoleSelectableFromUi(
+                    pointRole: 'D');
+
+            bool roleESelectable =
+                IsPrismArrayPointRoleSelectableFromUi(
+                    pointRole: 'E');
+
+            #endregion
+
+
             #region Update Assignment Text
 
             txtPrismArrayPointA.Text =
@@ -2518,21 +2865,56 @@ namespace GNA_DLRreport
             #endregion
 
 
-            #region Update Clear Buttons
+            #region Update Assignment Controls
+
+            txtPrismArrayPointA.IsEnabled =
+                roleASelectable;
+
+            txtPrismArrayPointB.IsEnabled =
+                roleBSelectable;
+
+            txtPrismArrayPointC.IsEnabled =
+                roleCSelectable;
+
+            txtPrismArrayPointD.IsEnabled =
+                roleDSelectable;
+
+            txtPrismArrayPointE.IsEnabled =
+                roleESelectable;
+
+            btnAssignPrismArrayA.IsEnabled =
+                roleASelectable;
+
+            btnAssignPrismArrayB.IsEnabled =
+                roleBSelectable;
+
+            btnAssignPrismArrayC.IsEnabled =
+                roleCSelectable;
+
+            btnAssignPrismArrayD.IsEnabled =
+                roleDSelectable;
+
+            btnAssignPrismArrayE.IsEnabled =
+                roleESelectable;
 
             btnClearPrismArrayA.IsEnabled =
+                roleASelectable &&
                 pointA is not null;
 
             btnClearPrismArrayB.IsEnabled =
+                roleBSelectable &&
                 pointB is not null;
 
             btnClearPrismArrayC.IsEnabled =
+                roleCSelectable &&
                 pointC is not null;
 
             btnClearPrismArrayD.IsEnabled =
+                roleDSelectable &&
                 pointD is not null;
 
             btnClearPrismArrayE.IsEnabled =
+                roleESelectable &&
                 pointE is not null;
 
             #endregion
@@ -2563,6 +2945,35 @@ namespace GNA_DLRreport
         private void AssignSelectedPrismArrayPointFromUi(
             char pointRole)
         {
+            #region Validate Array Type And Role
+
+            int arrayType;
+
+            try
+            {
+                arrayType =
+                    GetSelectedPrismArrayTypeFromUi(
+                        arrayTypeComboBox: cmbPrismArrayType);
+
+                if (!PrismArrayTypeUsesPointRole(
+                    arrayType: arrayType,
+                    pointRole: pointRole))
+                {
+                    throw new InvalidOperationException(
+                        $"Point {char.ToUpperInvariant(pointRole)} is not used by the selected array type.");
+                }
+            }
+            catch (Exception ex)
+            {
+                txtPrismArrayStatus.Text =
+                    ex.Message;
+
+                return;
+            }
+
+            #endregion
+
+
             #region Validate Selected Available Point
 
             if (dgPrismArrayAvailablePoints.SelectedItem
@@ -2664,22 +3075,22 @@ namespace GNA_DLRreport
 
         #region Array Commit UI
 
-        private static byte GetSelectedPrismArrayTypeFromUi(
+        private static int GetSelectedPrismArrayTypeFromUi(
             ComboBox arrayTypeComboBox)
         {
-            #region Resolve Selected Array Type
+            #region Resolve Selected Database Array Type
 
             ArgumentNullException.ThrowIfNull(
                 argument: arrayTypeComboBox);
 
-            return arrayTypeComboBox.SelectedIndex switch
+            if (arrayTypeComboBox.SelectedItem
+                is not PrismArrayTypeItem selectedArrayType)
             {
-                0 => PrismArrayTypeStructural,
-                1 => PrismArrayTypeTunnelConvergence,
+                throw new InvalidOperationException(
+                    "Select an array type.");
+            }
 
-                _ => throw new InvalidOperationException(
-                    "Select an array type.")
-            };
+            return selectedArrayType.ArrayType_ID;
 
             #endregion
         }
@@ -2695,7 +3106,7 @@ namespace GNA_DLRreport
                 txtPrismArrayName.Text?.Trim()
                 ?? string.Empty;
 
-            byte arrayType;
+            int arrayType;
 
             try
             {
@@ -2719,7 +3130,8 @@ namespace GNA_DLRreport
                     arrayType: arrayType,
                     arrayName: arrayName);
 
-                _ = CapturePrismArrayPointAssignments();
+                _ = CapturePrismArrayPointAssignments(
+                    arrayType: arrayType);
             }
             catch (Exception ex)
             {
@@ -2734,16 +3146,37 @@ namespace GNA_DLRreport
 
             #region Confirm Array Commit
 
+            StringBuilder confirmationBuilder =
+                new();
+
+            confirmationBuilder.AppendLine(
+                value: $"Project: {_prismArrayProjectName}");
+
+            confirmationBuilder.AppendLine(
+                value: $"Type: {GetPrismArrayType(arrayTypeId: arrayType).ArrayTypeName}");
+
+            confirmationBuilder.AppendLine(
+                value: $"Array: {arrayName}");
+
+            confirmationBuilder.AppendLine();
+
+            foreach (char pointRole
+                in GetRequiredPrismArrayPointRoles(
+                    arrayType: arrayType))
+            {
+                confirmationBuilder.AppendLine(
+                    value:
+                        $"{pointRole}: " +
+                        $"{GetPrismArrayPointAssignment(pointRole: pointRole)!.ReplacementName}");
+            }
+
+            confirmationBuilder.AppendLine();
+
+            confirmationBuilder.Append(
+                value: "Commit this array?");
+
             string confirmationMessage =
-                $"Project: {_prismArrayProjectName}\n" +
-                $"Type: {GetPrismArrayTypeName(arrayType: arrayType)}\n" +
-                $"Array: {arrayName}\n\n" +
-                $"A: {GetPrismArrayPointAssignment(pointRole: 'A')!.ReplacementName}\n" +
-                $"B: {GetPrismArrayPointAssignment(pointRole: 'B')!.ReplacementName}\n" +
-                $"C: {GetPrismArrayPointAssignment(pointRole: 'C')!.ReplacementName}\n" +
-                $"D: {GetPrismArrayPointAssignment(pointRole: 'D')!.ReplacementName}\n" +
-                $"E: {GetPrismArrayPointAssignment(pointRole: 'E')!.ReplacementName}\n\n" +
-                "Commit this array?";
+                confirmationBuilder.ToString();
 
             MessageBoxResult confirmation =
                 MessageBox.Show(
@@ -3075,6 +3508,8 @@ namespace GNA_DLRreport
 
             InitializeComponent();
 
+            UpdateConfigurationWorkflowTabAvailability();
+
             #endregion
 
 
@@ -3134,6 +3569,43 @@ namespace GNA_DLRreport
         #endregion
 
 
+        #region Configuration Workflow Availability
+
+        private void UpdateConfigurationWorkflowTabAvailability()
+        {
+            #region Resolve Active Project State
+
+            bool activeProjectAvailable =
+                _activeProjectId.HasValue &&
+                !string.IsNullOrWhiteSpace(
+                    value: _activeProjectName);
+
+            #endregion
+
+
+            #region Apply Workflow Tab State
+
+            tabConfiguration.IsEnabled =
+                activeProjectAvailable;
+
+            tabReferenceCoordinates.IsEnabled =
+                activeProjectAvailable;
+
+            tabPrismPairs.IsEnabled =
+                activeProjectAvailable;
+
+            tabPrismArrays.IsEnabled =
+                activeProjectAvailable;
+
+            tabGeotech.IsEnabled =
+                activeProjectAvailable;
+
+            #endregion
+        }
+
+        #endregion
+
+
         #region Window Initialisation
 
         #region Application Startup
@@ -3163,6 +3635,8 @@ namespace GNA_DLRreport
             // application instance must acquire its Shared project lock.
 
             await InitialiseStartupActiveProjectAsync();
+
+            UpdateConfigurationWorkflowTabAvailability();
 
             #endregion
         }
@@ -3562,6 +4036,8 @@ namespace GNA_DLRreport
 
             ResetPrismArrayConfigurationState();
 
+            UpdateConfigurationWorkflowTabAvailability();
+
             #endregion
 
 
@@ -3749,273 +4225,6 @@ namespace GNA_DLRreport
         }
 
         #endregion
-
-
-        #region Clear Selected Database Table
-
-        private async void btnClearTables_Click(
-            object sender,
-            RoutedEventArgs e)
-        {
-            #region Validate Table Selection
-
-            if (cmbClearTables.SelectedItem
-                is not ComboBoxItem selectedItem)
-            {
-                txtDbConnectionStatus.Text =
-                    "Select a table.";
-
-                return;
-            }
-
-            string selectedTable =
-                selectedItem.Content?.ToString()?.Trim()
-                ?? string.Empty;
-
-            if (cmbClearTables.SelectedIndex == 0 ||
-                string.IsNullOrWhiteSpace(selectedTable))
-            {
-                txtDbConnectionStatus.Text =
-                    "Select a table.";
-
-                return;
-            }
-
-            #endregion
-
-
-            #region Confirm Clear Operation
-
-            string confirmationMessage =
-                $"Clear table '{selectedTable}'?\n\nThis cannot be undone.";
-
-            MessageBoxResult confirmation =
-                MessageBox.Show(
-                    owner: this,
-                    messageBoxText: confirmationMessage,
-                    caption: "Confirm Clear Table",
-                    button: MessageBoxButton.YesNo,
-                    icon: MessageBoxImage.Warning,
-                    defaultResult: MessageBoxResult.No);
-
-            if (confirmation != MessageBoxResult.Yes)
-            {
-                txtDbConnectionStatus.Text =
-                    "Clear cancelled.";
-
-                return;
-            }
-
-            #endregion
-
-
-            #region Prepare User Interface
-
-            btnClearTables.IsEnabled =
-                false;
-
-            cmbClearTables.IsEnabled =
-                false;
-
-            txtDbConnectionStatus.Text =
-                $"Clearing '{selectedTable}'...";
-
-            #endregion
-
-
-            try
-            {
-                #region Clear Selected Table
-
-                await ClearDatabaseTableAsync(
-                    tableName: selectedTable);
-
-                #endregion
-
-
-                #region Reset Application State
-
-                if (selectedTable == "Project")
-                {
-                    ReleaseActiveProjectLockConnection();
-
-                    _activeProjectId =
-                        null;
-
-                    _activeProjectName =
-                        string.Empty;
-
-                    txtActiveProject.Text =
-                        "No active project";
-
-                    ClearActiveProjectFromRegistry();
-
-                    _projectItems.Clear();
-
-                    ResetReferenceImportState(
-                        statusMessage: "No CSV selected.");
-
-                    ResetGeotechImportState(
-                        statusMessage: "No CSV selected.");
-
-                    ResetPrismPairImportState(
-                        statusMessage: "No workbook selected.");
-
-                    ResetPrismArrayConfigurationState();
-                }
-                else if (selectedTable == "PointName" ||
-                         selectedTable == "CoordinatesReference")
-                {
-                    ResetReferenceImportState(
-                        statusMessage: "No CSV selected.");
-
-                    ResetGeotechImportState(
-                        statusMessage: "No CSV selected.");
-
-                    ResetPrismPairImportState(
-                        statusMessage: "No workbook selected.");
-
-                    ResetPrismArrayConfigurationState();
-                }
-                else if (selectedTable == "Track" ||
-                         selectedTable == "PrismPairs")
-                {
-                    ResetPrismPairImportState(
-                        statusMessage: "No workbook selected.");
-                }
-
-                #endregion
-
-
-                #region Report Success
-
-
-                txtDbConnectionStatus.Text =
-    $"'{selectedTable}' cleared.";
-
-                cmbClearTables.SelectedIndex =
-                    0;
-
-                #endregion
-            }
-            catch (SqlException ex)
-                when (ex.Number == 547)
-            {
-                #region Report Foreign Key Failure
-
-                txtDbConnectionStatus.Text =
-                    $"'{selectedTable}': Related records exist.";
-
-                #endregion
-            }
-            catch (SqlException ex)
-            {
-                #region Report SQL Failure
-
-                txtDbConnectionStatus.Text =
-                    $"Clear failed: {ex.Message}";
-
-                #endregion
-            }
-            catch (Exception ex)
-            {
-                #region Report Clear Failure
-
-                txtDbConnectionStatus.Text =
-                    $"Clear failed: {ex.Message}";
-
-                #endregion
-            }
-            finally
-            {
-                #region Restore User Interface
-
-                btnClearTables.IsEnabled =
-                    true;
-
-                cmbClearTables.IsEnabled =
-                    true;
-
-                #endregion
-            }
-        }
-
-
-        private async Task ClearDatabaseTableAsync(
-            string tableName)
-        {
-
-
-            #region Validate Table Name
-
-            string clearSql =
-                tableName switch
-                {
-                    "CoordinatesReference" =>
-                        "DELETE FROM [dbo].[CoordinatesReference];",
-
-                    "PrismPairs" =>
-                        """
-    SET XACT_ABORT ON;
-
-    BEGIN TRY
-
-        BEGIN TRANSACTION;
-
-        DELETE FROM [dbo].[PrismPairs];
-        DELETE FROM [dbo].[Track];
-
-        COMMIT TRANSACTION;
-
-    END TRY
-
-    BEGIN CATCH
-
-        IF @@TRANCOUNT > 0
-            ROLLBACK TRANSACTION;
-
-        THROW;
-
-    END CATCH;
-    """,
-
-                    _ =>
-                        throw new InvalidOperationException(
-                            "Invalid table selection.")
-                };
-
-            #endregion
-
-
-            #region Resolve Database Connection String
-
-            string databaseConnectionString =
-                GetTrackGeometryConnectionString();
-
-            #endregion
-
-
-            #region Execute Clear Operation
-
-            await using SqlConnection databaseConnection =
-                new(
-                    connectionString:
-                        databaseConnectionString);
-
-            await databaseConnection.OpenAsync();
-
-            await using SqlCommand clearCommand =
-                new(
-                    cmdText: clearSql,
-                    connection: databaseConnection);
-
-            await clearCommand.ExecuteNonQueryAsync();
-
-            #endregion
-        }
-
-        #endregion
-
 
 
         #region Database Creation
@@ -4360,8 +4569,6 @@ namespace GNA_DLRreport
                 BEGIN TRY
 
                     BEGIN TRANSACTION;
-
-
                     /* =============================================================
                        PROJECT
                        Soft deletion:
@@ -4389,6 +4596,50 @@ namespace GNA_DLRreport
 
                     END;
 
+                    /* =============================================================
+                       DATABASE WRITE HISTORY
+                       One row per attempted DBTrackGeometry writing activity.
+                       ReportUTCtime is report epoch UTC; WriteUTCtime is actual
+                       database-writing UTC. Duplicate report epochs are permitted.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.DatabaseWriteHistory', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[DatabaseWriteHistory]
+                        (
+                            [WriteHistory_ID] int IDENTITY(1,1) NOT NULL,
+                            [Project_ID] int NOT NULL,
+                            [ReportUTCtime] datetime2(0) NOT NULL,
+                            [WriteUTCtime] datetime2(0) NOT NULL,
+                            [Outcome] nvarchar(30) NOT NULL,
+                            [Details] nvarchar(max) NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_DatabaseWriteHistory_IsDeleted]
+                                DEFAULT (0),
+
+                            CONSTRAINT [PK_DatabaseWriteHistory]
+                                PRIMARY KEY CLUSTERED ([WriteHistory_ID]),
+
+                            CONSTRAINT [CK_DatabaseWriteHistory_Outcome]
+                                CHECK ([Outcome] IN
+                                    (N'Success', N'PartialSuccess', N'Failed')),
+
+                            CONSTRAINT [FK_DatabaseWriteHistory_Project]
+                                FOREIGN KEY ([Project_ID])
+                                REFERENCES [dbo].[Project] ([Project_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_DatabaseWriteHistory_Project_ReportUTCtime]
+                            ON [dbo].[DatabaseWriteHistory]
+                            ([Project_ID], [ReportUTCtime]);
+
+                        CREATE INDEX [IX_DatabaseWriteHistory_WriteUTCtime]
+                            ON [dbo].[DatabaseWriteHistory] ([WriteUTCtime]);
+
+                    END;
 
                     /* =============================================================
                        POINT NAME
@@ -4429,7 +4680,6 @@ namespace GNA_DLRreport
 
                     END;
 
-
                     /* =============================================================
                        GEOTECHNICAL SENSORS
                        SensorName / ReplacementName identify the sensor within
@@ -4469,7 +4719,6 @@ namespace GNA_DLRreport
                             ([Project_ID], [SensorType]);
 
                     END;
-
 
                     /* =============================================================
                        COORDINATES REFERENCE
@@ -4539,46 +4788,111 @@ namespace GNA_DLRreport
 
                     END;
 
-
                     /* =============================================================
-                       COORDINATES CURRENT
-                       One current coordinate set per point.
-                       Coordinates stored in metres.
+                       TOP-OF-RAIL REFERENCE
+                       Reference ToR from Survey worksheet column G.
+                       One active row per point. Value stored in metres.
                        ============================================================= */
 
-                    IF OBJECT_ID(N'dbo.CoordinatesCurrent', N'U') IS NULL
+                    IF OBJECT_ID(N'dbo.ToRReference', N'U') IS NULL
                     BEGIN
 
-                        CREATE TABLE [dbo].[CoordinatesCurrent]
+                        CREATE TABLE [dbo].[ToRReference]
                         (
+                            [ToRReference_ID] int IDENTITY(1,1) NOT NULL,
                             [PointName_ID] int NOT NULL,
-                            [UTCtime] datetime2(0) NOT NULL,
-                            [E] decimal(18,4) NOT NULL,
-                            [N] decimal(18,4) NOT NULL,
-                            [H] decimal(18,4) NOT NULL,
-
+                            [ToR] decimal(18,6) NOT NULL,
                             [IsDeleted] bit NOT NULL
-
-                                CONSTRAINT [DF_CoordinatesCurrent_IsDeleted]
-
+                                CONSTRAINT [DF_ToRReference_IsDeleted]
                                 DEFAULT (0),
 
+                            CONSTRAINT [PK_ToRReference]
+                                PRIMARY KEY CLUSTERED ([ToRReference_ID]),
 
-                            CONSTRAINT [PK_CoordinatesCurrent]
-                                PRIMARY KEY CLUSTERED ([PointName_ID]),
-
-                            CONSTRAINT [FK_CoordinatesCurrent_PointName]
+                            CONSTRAINT [FK_ToRReference_PointName]
                                 FOREIGN KEY ([PointName_ID])
                                 REFERENCES [dbo].[PointName] ([PointName_ID])
                                 ON DELETE NO ACTION
                                 ON UPDATE NO ACTION
                         );
 
-                        CREATE INDEX [IX_CoordinatesCurrent_UTCtime]
-                            ON [dbo].[CoordinatesCurrent] ([UTCtime]);
+                        CREATE UNIQUE INDEX
+                            [UX_ToRReference_Active_PointName_ID]
+                            ON [dbo].[ToRReference] ([PointName_ID])
+                            WHERE [IsDeleted] = 0;
 
                     END;
 
+                    /* =============================================================
+                       COORDINATES CURRENT
+                       Time-stamped coordinate epoch history for monitoring points.
+                       Coordinates stored in metres. Missing values are SQL NULL.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.CoordinatesEpoch', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[CoordinatesEpoch]
+                        (
+                            [PointName_ID] int NOT NULL,
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [E] decimal(18,4) NULL,
+                            [N] decimal(18,4) NULL,
+                            [H] decimal(18,4) NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_CoordinatesEpoch_IsDeleted]
+                                DEFAULT (0),
+
+                            CONSTRAINT [PK_CoordinatesEpoch]
+                                PRIMARY KEY CLUSTERED
+                                ([PointName_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_CoordinatesEpoch_PointName]
+                                FOREIGN KEY ([PointName_ID])
+                                REFERENCES [dbo].[PointName] ([PointName_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_CoordinatesEpoch_UTCtime]
+                            ON [dbo].[CoordinatesEpoch] ([UTCtime]);
+
+                    END;
+
+                    /* =============================================================
+                       TOP-OF-RAIL CURRENT
+                       Time-stamped ToR history read from recalculated Reference
+                       worksheet column P. Do not recalculate as H + ToRoffset.
+                       Missing values are SQL NULL. Value stored in metres.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.ToRCurrent', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[ToRCurrent]
+                        (
+                            [PointName_ID] int NOT NULL,
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [ToR] decimal(18,4) NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_ToRCurrent_IsDeleted]
+                                DEFAULT (0),
+
+                            CONSTRAINT [PK_ToRCurrent]
+                                PRIMARY KEY CLUSTERED
+                                ([PointName_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_ToRCurrent_PointName]
+                                FOREIGN KEY ([PointName_ID])
+                                REFERENCES [dbo].[PointName] ([PointName_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_ToRCurrent_UTCtime]
+                            ON [dbo].[ToRCurrent] ([UTCtime]);
+
+                    END;
 
                     /* =============================================================
                        TRACK
@@ -4612,7 +4926,6 @@ namespace GNA_DLRreport
                         );
 
                     END;
-
 
                     /* =============================================================
                        PRISM PAIRS
@@ -4674,21 +4987,50 @@ namespace GNA_DLRreport
 
                     END;
 
+                                        /* =============================================================
+                       PRISM ARRAY TYPE
+                       Stable reference-data lookup for permitted PrismArray types.
+
+                       ArrayType_ID values are permanent programmatic identities.
+                       This table is not soft-deleted and is not user-managed.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.PrismArrayType', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[PrismArrayType]
+                        (
+                            [ArrayType_ID] int NOT NULL,
+                            [ArrayTypeName] nvarchar(100) NOT NULL,
+
+                            CONSTRAINT [PK_PrismArrayType]
+                                PRIMARY KEY CLUSTERED ([ArrayType_ID]),
+
+                            CONSTRAINT [UQ_PrismArrayType_ArrayTypeName]
+                                UNIQUE ([ArrayTypeName])
+                        );
+
+                        INSERT INTO [dbo].[PrismArrayType]
+                        (
+                            [ArrayType_ID],
+                            [ArrayTypeName]
+                        )
+                        VALUES
+                            (1, N'Structural Array'),
+                            (2, N'Tunnel Convergence'),
+                            (3, N'PrismCrackGauge');
+
+                    END;
 
                     /* =============================================================
                        PRISM ARRAY
-                       Common definition for Structural Array and Tunnel Convergence.
+                       Common array definition.
 
-                       ArrayType:
-                           1 -> Structural Array
-                           2 -> Tunnel Convergence
+                       ArrayType references dbo.PrismArrayType and must therefore
+                       contain a defined database lookup identity.
 
-                       Soft deletion:
-                           IsDeleted = 0 -> Active
-                           IsDeleted = 1 -> Deleted / retired
-
-                       Active array names are unique within a project. Deleted
-                       array names may be reused.
+                       Array names are unique only among ACTIVE arrays within a
+                       project. A soft-deleted array name may be reused.
                        ============================================================= */
 
                     IF OBJECT_ID(N'dbo.PrismArray', N'U') IS NULL
@@ -4699,7 +5041,7 @@ namespace GNA_DLRreport
                             [Array_ID] int IDENTITY(1,1) NOT NULL,
                             [Project_ID] int NOT NULL,
                             [ArrayName] nvarchar(200) NOT NULL,
-                            [ArrayType] tinyint NOT NULL,
+                            [ArrayType] int NOT NULL,
                             [IsDeleted] bit NOT NULL
                                 CONSTRAINT [DF_PrismArray_IsDeleted]
                                 DEFAULT (0),
@@ -4707,12 +5049,15 @@ namespace GNA_DLRreport
                             CONSTRAINT [PK_PrismArray]
                                 PRIMARY KEY CLUSTERED ([Array_ID]),
 
-                            CONSTRAINT [CK_PrismArray_ArrayType]
-                                CHECK ([ArrayType] IN (1,2)),
-
                             CONSTRAINT [FK_PrismArray_Project]
                                 FOREIGN KEY ([Project_ID])
                                 REFERENCES [dbo].[Project] ([Project_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION,
+
+                            CONSTRAINT [FK_PrismArray_PrismArrayType]
+                                FOREIGN KEY ([ArrayType])
+                                REFERENCES [dbo].[PrismArrayType] ([ArrayType_ID])
                                 ON DELETE NO ACTION
                                 ON UPDATE NO ACTION
                         );
@@ -4731,12 +5076,11 @@ namespace GNA_DLRreport
 
                     END;
 
-
-                    /* =============================================================
+                                        /* =============================================================
                        PRISM ARRAY POINT
                        Common A-E point membership for every array type.
 
-                       A point may belong to one ACTIVE array only.
+                       A point may belong to one ACTIVE array of each type.
                        Each array may contain one point for each role A-E.
 
                        Soft-deleted membership rows are retained so historical
@@ -4745,7 +5089,6 @@ namespace GNA_DLRreport
 
                     IF OBJECT_ID(N'dbo.PrismArrayPoint', N'U') IS NULL
                     BEGIN
-
                         CREATE TABLE [dbo].[PrismArrayPoint]
                         (
                             [Array_ID] int NOT NULL,
@@ -4778,16 +5121,19 @@ namespace GNA_DLRreport
                                 ON UPDATE NO ACTION
                         );
 
-                        CREATE UNIQUE INDEX
-                            [UX_PrismArrayPoint_Active_PointName_ID]
+                        CREATE NONCLUSTERED INDEX
+                            [IX_PrismArrayPoint_Active_PointName_ID]
                             ON [dbo].[PrismArrayPoint]
                             (
                                 [PointName_ID]
                             )
+                            INCLUDE
+                            (
+                                [Array_ID],
+                                [PointRole]
+                            )
                             WHERE [IsDeleted] = 0;
-
                     END;
-
 
                     /* =============================================================
                        dH EPOCHS
@@ -4801,7 +5147,7 @@ namespace GNA_DLRreport
                         (
                             [UTCtime] datetime2(0) NOT NULL,
                             [PointName_ID] int NOT NULL,
-                            [dH] decimal(18,4) NOT NULL,
+                            [dH] decimal(18,4) NULL,
 
                             [IsDeleted] bit NOT NULL
 
@@ -4826,7 +5172,6 @@ namespace GNA_DLRreport
 
                     END;
 
-
                     /* =============================================================
                        SLEW EPOCHS
                        Individual epoch values stored in metres.
@@ -4839,7 +5184,7 @@ namespace GNA_DLRreport
                         (
                             [UTCtime] datetime2(0) NOT NULL,
                             [PointName_ID] int NOT NULL,
-                            [Slew] decimal(18,4) NOT NULL,
+                            [Slew] decimal(18,4) NULL,
 
                             [IsDeleted] bit NOT NULL
 
@@ -4864,7 +5209,6 @@ namespace GNA_DLRreport
 
                     END;
 
-
                     /* =============================================================
                        TOP EPOCHS
                        Individual epoch values stored in metres.
@@ -4877,7 +5221,7 @@ namespace GNA_DLRreport
                         (
                             [UTCtime] datetime2(0) NOT NULL,
                             [PointName_ID] int NOT NULL,
-                            [Top] decimal(18,4) NOT NULL,
+                            [Top] decimal(18,4) NULL,
 
                             [IsDeleted] bit NOT NULL
 
@@ -4902,6 +5246,56 @@ namespace GNA_DLRreport
 
                     END;
 
+                    /* =============================================================
+                       VERSINE EPOCHS
+                       Stores the current absolute signed horizontal Versine
+                       independently for each Left and Right rail point.
+
+                       RightVersine -> Right rail PointName_ID
+                       LeftVersine  -> Left rail PointName_ID
+
+                       Stored value:
+                           signed horizontal Versine in metres
+
+                       Positive = current rail point lies left of chord A-C when
+                                  looking in the direction of increasing mileage.
+                       Negative = current rail point lies right of chord A-C.
+
+                       First/last point in a rail section, missing-coordinate
+                       conditions, invalid A-C chord geometry and other unavailable
+                       measurements are stored as SQL NULL.
+
+                       Epoch identity:
+                           (PointName_ID, UTCtime)
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.VersineEpochs', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[VersineEpochs]
+                        (
+                            [PointName_ID] int NOT NULL,
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [Versine] decimal(18,4) NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_VersineEpochs_IsDeleted]
+                                DEFAULT (0),
+
+                            CONSTRAINT [PK_VersineEpochs]
+                                PRIMARY KEY CLUSTERED
+                                ([PointName_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_VersineEpochs_PointName]
+                                FOREIGN KEY ([PointName_ID])
+                                REFERENCES [dbo].[PointName] ([PointName_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_VersineEpochs_UTCtime]
+                            ON [dbo].[VersineEpochs] ([UTCtime]);
+
+                    END;
 
                     /* =============================================================
                        CANT EPOCHS
@@ -4915,7 +5309,7 @@ namespace GNA_DLRreport
                         (
                             [UTCtime] datetime2(0) NOT NULL,
                             [PrismPair_ID] int NOT NULL,
-                            [Cant] decimal(18,4) NOT NULL,
+                            [Cant] decimal(18,4) NULL,
 
                             [IsDeleted] bit NOT NULL
 
@@ -4940,11 +5334,28 @@ namespace GNA_DLRreport
 
                     END;
 
-
-                    /* =============================================================
+                                        /* =============================================================
                        SHORT TWIST EPOCHS
-                       SIGNED twist displacement stored in millimetres over 3 m.
-                       Ratio is derived by the reporting software.
+                       Stores both Track Geometry Short Twist representations:
+
+                           ShortTwist
+                               Signed Cant difference in metres over the 3 m
+                               pair interval.
+
+                           ShortTwistRatio
+                               Absolute workbook Short Twist ratio rounded to an
+                               integer.
+
+                       ShortTwist = CurrentPair.Cant - PreviousPair.Cant
+
+                       ShortTwistRatio = ABS(3.0 / ShortTwistMetres)
+
+                       If ShortTwistMetres is exactly zero, 10000000 is the valid
+                       workbook-compatibility ratio value.
+
+                       Missing or unavailable values are stored as SQL NULL.
+                       The ratio must not be reconstructed from the rounded
+                       ShortTwist database value.
                        ============================================================= */
 
                     IF OBJECT_ID(N'dbo.ShortTwistEpochs', N'U') IS NULL
@@ -4955,17 +5366,21 @@ namespace GNA_DLRreport
                             [UTCtime] datetime2(0) NOT NULL,
                             [PrismPair_ID] int NOT NULL,
                             [ShortTwist] decimal(18,4) NULL,
-
+                            [ShortTwistRatio] int NULL,
                             [IsDeleted] bit NOT NULL
-
                                 CONSTRAINT [DF_ShortTwistEpochs_IsDeleted]
-
                                 DEFAULT (0),
-
 
                             CONSTRAINT [PK_ShortTwistEpochs]
                                 PRIMARY KEY CLUSTERED
                                 ([PrismPair_ID], [UTCtime]),
+
+                            CONSTRAINT [CK_ShortTwistEpochs_ShortTwistRatio]
+                                CHECK
+                                (
+                                    [ShortTwistRatio] IS NULL
+                                    OR [ShortTwistRatio] >= 0
+                                ),
 
                             CONSTRAINT [FK_ShortTwistEpochs_PrismPairs]
                                 FOREIGN KEY ([PrismPair_ID])
@@ -4979,11 +5394,28 @@ namespace GNA_DLRreport
 
                     END;
 
-
-                    /* =============================================================
+                                        /* =============================================================
                        LONG TWIST EPOCHS
-                       SIGNED twist displacement stored in millimetres over 15 m.
-                       Ratio is derived by the reporting software.
+                       Stores both Track Geometry Long Twist representations:
+
+                           LongTwist
+                               Signed Cant difference in metres over the 15 m
+                               interval.
+
+                           LongTwistRatio
+                               Absolute workbook Long Twist ratio rounded to an
+                               integer.
+
+                       LongTwist = CurrentPair.Cant - CantFivePairsEarlier
+
+                       LongTwistRatio = ABS(15.0 / LongTwistMetres)
+
+                       If LongTwistMetres is exactly zero, 10000000 is the valid
+                       workbook-compatibility ratio value.
+
+                       Missing or unavailable values are stored as SQL NULL.
+                       The ratio must not be reconstructed from the rounded
+                       LongTwist database value.
                        ============================================================= */
 
                     IF OBJECT_ID(N'dbo.LongTwistEpochs', N'U') IS NULL
@@ -4994,17 +5426,21 @@ namespace GNA_DLRreport
                             [UTCtime] datetime2(0) NOT NULL,
                             [PrismPair_ID] int NOT NULL,
                             [LongTwist] decimal(18,4) NULL,
-
+                            [LongTwistRatio] int NULL,
                             [IsDeleted] bit NOT NULL
-
                                 CONSTRAINT [DF_LongTwistEpochs_IsDeleted]
-
                                 DEFAULT (0),
-
 
                             CONSTRAINT [PK_LongTwistEpochs]
                                 PRIMARY KEY CLUSTERED
                                 ([PrismPair_ID], [UTCtime]),
+
+                            CONSTRAINT [CK_LongTwistEpochs_LongTwistRatio]
+                                CHECK
+                                (
+                                    [LongTwistRatio] IS NULL
+                                    OR [LongTwistRatio] >= 0
+                                ),
 
                             CONSTRAINT [FK_LongTwistEpochs_PrismPairs]
                                 FOREIGN KEY ([PrismPair_ID])
@@ -5018,10 +5454,11 @@ namespace GNA_DLRreport
 
                     END;
 
-
                     /* =============================================================
                        COORDINATES DAILY
-                       One daily mean coordinate set per point.
+                       UTC calendar-day arithmetic mean of non-NULL epoch values.
+                       Daily row timestamp is 12:00:00 UTC.
+                       If all values are NULL, retain a row with NULL values.
                        Coordinates stored in metres.
                        ============================================================= */
 
@@ -5032,9 +5469,9 @@ namespace GNA_DLRreport
                         (
                             [UTCtime] datetime2(0) NOT NULL,
                             [PointName_ID] int NOT NULL,
-                            [E] decimal(18,4) NOT NULL,
-                            [N] decimal(18,4) NOT NULL,
-                            [H] decimal(18,4) NOT NULL,
+                            [E] decimal(18,4) NULL,
+                            [N] decimal(18,4) NULL,
+                            [H] decimal(18,4) NULL,
 
                             [IsDeleted] bit NOT NULL
 
@@ -5059,10 +5496,45 @@ namespace GNA_DLRreport
 
                     END;
 
+                    /* =============================================================
+                       TOP-OF-RAIL DAILY
+                       UTC calendar-day arithmetic mean of non-NULL ToRCurrent.
+                       Daily row timestamp is 12:00:00 UTC. If all epoch values are
+                       NULL, retain a Daily row with ToR = NULL.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.ToRDaily', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[ToRDaily]
+                        (
+                            [PointName_ID] int NOT NULL,
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [ToR] decimal(18,4) NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_ToRDaily_IsDeleted]
+                                DEFAULT (0),
+
+                            CONSTRAINT [PK_ToRDaily]
+                                PRIMARY KEY CLUSTERED
+                                ([PointName_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_ToRDaily_PointName]
+                                FOREIGN KEY ([PointName_ID])
+                                REFERENCES [dbo].[PointName] ([PointName_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_ToRDaily_UTCtime]
+                            ON [dbo].[ToRDaily] ([UTCtime]);
+
+                    END;
 
                     /* =============================================================
                        dH DAILY
-                       Daily mean derived from DhEpochs.
+                       UTC calendar-day arithmetic mean of non-NULL DhEpochs.
+                       Daily row timestamp is 12:00:00 UTC.
                        Value stored in metres.
                        ============================================================= */
 
@@ -5073,7 +5545,7 @@ namespace GNA_DLRreport
                         (
                             [UTCtime] datetime2(0) NOT NULL,
                             [PointName_ID] int NOT NULL,
-                            [dH] decimal(18,4) NOT NULL,
+                            [dH] decimal(18,4) NULL,
 
                             [IsDeleted] bit NOT NULL
 
@@ -5098,10 +5570,10 @@ namespace GNA_DLRreport
 
                     END;
 
-
                     /* =============================================================
                        SLEW DAILY
-                       Daily mean derived from SlewEpochs.
+                       UTC calendar-day arithmetic mean of non-NULL SlewEpochs.
+                       Daily row timestamp is 12:00:00 UTC.
                        Value stored in metres.
                        ============================================================= */
 
@@ -5112,7 +5584,7 @@ namespace GNA_DLRreport
                         (
                             [UTCtime] datetime2(0) NOT NULL,
                             [PointName_ID] int NOT NULL,
-                            [Slew] decimal(18,4) NOT NULL,
+                            [Slew] decimal(18,4) NULL,
 
                             [IsDeleted] bit NOT NULL
 
@@ -5137,10 +5609,10 @@ namespace GNA_DLRreport
 
                     END;
 
-
                     /* =============================================================
                        TOP DAILY
-                       Daily mean derived from TopEpochs.
+                       UTC calendar-day arithmetic mean of non-NULL TopEpochs.
+                       Daily row timestamp is 12:00:00 UTC.
                        Value stored in metres.
                        ============================================================= */
 
@@ -5151,7 +5623,7 @@ namespace GNA_DLRreport
                         (
                             [UTCtime] datetime2(0) NOT NULL,
                             [PointName_ID] int NOT NULL,
-                            [Top] decimal(18,4) NOT NULL,
+                            [Top] decimal(18,4) NULL,
 
                             [IsDeleted] bit NOT NULL
 
@@ -5176,10 +5648,56 @@ namespace GNA_DLRreport
 
                     END;
 
+                    /* =============================================================
+                       VERSINE DAILY
+                       UTC calendar-day arithmetic mean of non-NULL signed
+                       VersineEpochs.Versine values for each rail point.
+
+                       Sign is preserved during aggregation.
+                       Daily row timestamp is 12:00:00 UTC for the applicable date.
+
+                       If all applicable epoch values are NULL, retain a Daily row
+                       with Versine = NULL.
+
+                       Stored value:
+                           signed horizontal Versine in metres
+
+                       Daily identity:
+                           (PointName_ID, UTCtime)
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.VersineDaily', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[VersineDaily]
+                        (
+                            [PointName_ID] int NOT NULL,
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [Versine] decimal(18,4) NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_VersineDaily_IsDeleted]
+                                DEFAULT (0),
+
+                            CONSTRAINT [PK_VersineDaily]
+                                PRIMARY KEY CLUSTERED
+                                ([PointName_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_VersineDaily_PointName]
+                                FOREIGN KEY ([PointName_ID])
+                                REFERENCES [dbo].[PointName] ([PointName_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_VersineDaily_UTCtime]
+                            ON [dbo].[VersineDaily] ([UTCtime]);
+
+                    END;
 
                     /* =============================================================
                        CANT DAILY
-                       Daily mean derived from CantEpochs.
+                       UTC calendar-day arithmetic mean of non-NULL CantEpochs.
+                       Daily row timestamp is 12:00:00 UTC.
                        Value stored in metres.
                        ============================================================= */
 
@@ -5190,7 +5708,7 @@ namespace GNA_DLRreport
                         (
                             [UTCtime] datetime2(0) NOT NULL,
                             [PrismPair_ID] int NOT NULL,
-                            [Cant] decimal(18,4) NOT NULL,
+                            [Cant] decimal(18,4) NULL,
 
                             [IsDeleted] bit NOT NULL
 
@@ -5215,11 +5733,10 @@ namespace GNA_DLRreport
 
                     END;
 
-
                     /* =============================================================
                        SHORT TWIST DAILY
-                       Daily mean of SIGNED ShortTwistEpochs displacement.
-                       Value stored in millimetres over a 3 m base.
+                       Daily mean of signed ShortTwistEpochs Cant differences.
+                       Value stored in metres over the 3 m pair interval.
                        ============================================================= */
 
                     IF OBJECT_ID(N'dbo.ShortTwistDaily', N'U') IS NULL
@@ -5254,11 +5771,10 @@ namespace GNA_DLRreport
 
                     END;
 
-
                     /* =============================================================
                        LONG TWIST DAILY
-                       Daily mean of SIGNED LongTwistEpochs displacement.
-                       Value stored in millimetres over a 15 m base.
+                       Daily mean of signed LongTwistEpochs Cant differences.
+                       Value stored in metres over the 15 m interval.
                        ============================================================= */
 
                     IF OBJECT_ID(N'dbo.LongTwistDaily', N'U') IS NULL
@@ -5293,7 +5809,6 @@ namespace GNA_DLRreport
 
                     END;
 
-
                     /* =============================================================
                        STRUCTURAL ARRAY EPOCHS
                        Point displacement relative to reference coordinates.
@@ -5309,9 +5824,9 @@ namespace GNA_DLRreport
                             [Array_ID] int NOT NULL,
                             [PointName_ID] int NOT NULL,
                             [UTCtime] datetime2(0) NOT NULL,
-                            [dE] decimal(18,4) NOT NULL,
-                            [dN] decimal(18,4) NOT NULL,
-                            [dH] decimal(18,4) NOT NULL,
+                            [dE] decimal(18,4) NULL,
+                            [dN] decimal(18,4) NULL,
+                            [dH] decimal(18,4) NULL,
 
                             [IsDeleted] bit NOT NULL
 
@@ -5337,7 +5852,6 @@ namespace GNA_DLRreport
 
                     END;
 
-
                     /* =============================================================
                        STRUCTURAL ARRAY DAILY
                        Daily derived point displacement dataset.
@@ -5353,9 +5867,9 @@ namespace GNA_DLRreport
                             [Array_ID] int NOT NULL,
                             [PointName_ID] int NOT NULL,
                             [UTCtime] datetime2(0) NOT NULL,
-                            [dE] decimal(18,4) NOT NULL,
-                            [dN] decimal(18,4) NOT NULL,
-                            [dH] decimal(18,4) NOT NULL,
+                            [dE] decimal(18,4) NULL,
+                            [dN] decimal(18,4) NULL,
+                            [dH] decimal(18,4) NULL,
 
                             [IsDeleted] bit NOT NULL
 
@@ -5381,7 +5895,6 @@ namespace GNA_DLRreport
 
                     END;
 
-
                     /* =============================================================
                        TUNNEL CONVERGENCE EPOCHS
                        Signed change in 3D chord length relative to reference.
@@ -5402,16 +5915,16 @@ namespace GNA_DLRreport
                         (
                             [Array_ID] int NOT NULL,
                             [UTCtime] datetime2(0) NOT NULL,
-                            [dAB] decimal(18,4) NOT NULL,
-                            [dAC] decimal(18,4) NOT NULL,
-                            [dAD] decimal(18,4) NOT NULL,
-                            [dAE] decimal(18,4) NOT NULL,
-                            [dBC] decimal(18,4) NOT NULL,
-                            [dBD] decimal(18,4) NOT NULL,
-                            [dBE] decimal(18,4) NOT NULL,
-                            [dCD] decimal(18,4) NOT NULL,
-                            [dCE] decimal(18,4) NOT NULL,
-                            [dDE] decimal(18,4) NOT NULL,
+                            [dAB] decimal(18,4) NULL,
+                            [dAC] decimal(18,4) NULL,
+                            [dAD] decimal(18,4) NULL,
+                            [dAE] decimal(18,4) NULL,
+                            [dBC] decimal(18,4) NULL,
+                            [dBD] decimal(18,4) NULL,
+                            [dBE] decimal(18,4) NULL,
+                            [dCD] decimal(18,4) NULL,
+                            [dCE] decimal(18,4) NULL,
+                            [dDE] decimal(18,4) NULL,
 
                             [IsDeleted] bit NOT NULL
 
@@ -5436,7 +5949,6 @@ namespace GNA_DLRreport
 
                     END;
 
-
                     /* =============================================================
                        TUNNEL CONVERGENCE DAILY
                        Daily derived signed change in 3D chord length.
@@ -5451,16 +5963,16 @@ namespace GNA_DLRreport
                         (
                             [Array_ID] int NOT NULL,
                             [UTCtime] datetime2(0) NOT NULL,
-                            [dAB] decimal(18,4) NOT NULL,
-                            [dAC] decimal(18,4) NOT NULL,
-                            [dAD] decimal(18,4) NOT NULL,
-                            [dAE] decimal(18,4) NOT NULL,
-                            [dBC] decimal(18,4) NOT NULL,
-                            [dBD] decimal(18,4) NOT NULL,
-                            [dBE] decimal(18,4) NOT NULL,
-                            [dCD] decimal(18,4) NOT NULL,
-                            [dCE] decimal(18,4) NOT NULL,
-                            [dDE] decimal(18,4) NOT NULL,
+                            [dAB] decimal(18,4) NULL,
+                            [dAC] decimal(18,4) NULL,
+                            [dAD] decimal(18,4) NULL,
+                            [dAE] decimal(18,4) NULL,
+                            [dBC] decimal(18,4) NULL,
+                            [dBD] decimal(18,4) NULL,
+                            [dBE] decimal(18,4) NULL,
+                            [dCD] decimal(18,4) NULL,
+                            [dCE] decimal(18,4) NULL,
+                            [dDE] decimal(18,4) NULL,
 
                             [IsDeleted] bit NOT NULL
 
@@ -5485,6 +5997,86 @@ namespace GNA_DLRreport
 
                     END;
 
+                    /* =============================================================
+                       PRISM CRACK GAUGE EPOCH
+                       Derived A-B crack-gauge geometry for each report epoch.
+
+                       All measurements are stored in metres:
+                           d2D = Current 2D A-B distance - Reference 2D A-B distance
+                           d3D = Current 3D A-B distance - Reference 3D A-B distance
+                           dH  = Current (B.H - A.H) - Reference (B.Href - A.Href)
+
+                       Measurements are calculated by TrackGeometryReport and are
+                       written to this table by the database export workflow.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.PrismCrackGaugeEpoch', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[PrismCrackGaugeEpoch]
+                        (
+                            [Array_ID] int NOT NULL,
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [d2D] decimal(18,4) NULL,
+                            [d3D] decimal(18,4) NULL,
+                            [dH] decimal(18,4) NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_PrismCrackGaugeEpoch_IsDeleted]
+                                DEFAULT (0),
+
+                            CONSTRAINT [PK_PrismCrackGaugeEpoch]
+                                PRIMARY KEY CLUSTERED
+                                ([Array_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_PrismCrackGaugeEpoch_PrismArray]
+                                FOREIGN KEY ([Array_ID])
+                                REFERENCES [dbo].[PrismArray] ([Array_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_PrismCrackGaugeEpoch_UTCtime]
+                            ON [dbo].[PrismCrackGaugeEpoch] ([UTCtime]);
+
+                    END;
+
+                    /* =============================================================
+                       PRISM CRACK GAUGE DAILY
+                       UTC calendar-day summary of PrismCrackGaugeEpoch data.
+
+                       All measurements are stored in metres. Daily values are
+                       populated by the Track Geometry database-writing workflow.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.PrismCrackGaugeDaily', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[PrismCrackGaugeDaily]
+                        (
+                            [Array_ID] int NOT NULL,
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [d2D] decimal(18,4) NULL,
+                            [d3D] decimal(18,4) NULL,
+                            [dH] decimal(18,4) NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_PrismCrackGaugeDaily_IsDeleted]
+                                DEFAULT (0),
+
+                            CONSTRAINT [PK_PrismCrackGaugeDaily]
+                                PRIMARY KEY CLUSTERED
+                                ([Array_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_PrismCrackGaugeDaily_PrismArray]
+                                FOREIGN KEY ([Array_ID])
+                                REFERENCES [dbo].[PrismArray] ([Array_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_PrismCrackGaugeDaily_UTCtime]
+                            ON [dbo].[PrismCrackGaugeDaily] ([UTCtime]);
+
+                    END;
 
                     /* =============================================================
                        TILT EPOCH
@@ -5522,7 +6114,6 @@ namespace GNA_DLRreport
 
                     END;
 
-
                     /* =============================================================
                        TILT DAILY
                        All Tilt values are stored to six decimal places.
@@ -5558,7 +6149,6 @@ namespace GNA_DLRreport
                             ON [dbo].[TiltDaily] ([UTCtime]);
 
                     END;
-
 
                     /* =============================================================
                        VIBRATION EPOCH
@@ -5596,7 +6186,6 @@ namespace GNA_DLRreport
 
                     END;
 
-
                     /* =============================================================
                        VIBRATION HOURLY
                        All Vibration values are stored to six decimal places.
@@ -5632,7 +6221,6 @@ namespace GNA_DLRreport
                             ON [dbo].[VibrationHourly] ([UTCtime]);
 
                     END;
-
 
                     /* =============================================================
                        VIBRATION DAILY
@@ -5670,6 +6258,435 @@ namespace GNA_DLRreport
 
                     END;
 
+                    /* =============================================================
+                       CHART TYPE
+                       Reusable catalogue entry defining the DB source and
+                       rendering behaviour for one logical chart type.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.ChartType', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[ChartType]
+                        (
+                            [ChartType_ID] int IDENTITY(1,1) NOT NULL,
+                            [ChartTypeKey] nvarchar(100) NOT NULL,
+                            [DisplayName] nvarchar(200) NOT NULL,
+                            [DataSourceTable] sysname NOT NULL,
+                            [TimestampColumnName] sysname NOT NULL,
+                            [EntityIdColumnName] sysname NOT NULL,
+                            [EntityKind] nvarchar(30) NOT NULL,
+                            [DefaultTitleTemplate] nvarchar(500) NOT NULL,
+                            [DefaultYAxisTitle] nvarchar(200) NOT NULL,
+                            [DefaultXAxisTitle] nvarchar(200) NOT NULL
+                                CONSTRAINT [DF_ChartType_DefaultXAxisTitle]
+                                DEFAULT (N'Date / Time'),
+                            [SupportsReferenceAdjustment] bit NOT NULL
+                                CONSTRAINT [DF_ChartType_SupportsReferenceAdjustment]
+                                DEFAULT (1),
+                            [SupportsTriggerBands] bit NOT NULL
+                                CONSTRAINT [DF_ChartType_SupportsTriggerBands]
+                                DEFAULT (1),
+                            [DefaultTriggerBandsSymmetric] bit NOT NULL
+                                CONSTRAINT [DF_ChartType_DefaultTriggerBandsSymmetric]
+                                DEFAULT (1),
+                            [IsEnabled] bit NOT NULL
+                                CONSTRAINT [DF_ChartType_IsEnabled]
+                                DEFAULT (1),
+                            [DisplayOrder] int NOT NULL
+                                CONSTRAINT [DF_ChartType_DisplayOrder]
+                                DEFAULT (0),
+
+                            CONSTRAINT [PK_ChartType]
+                                PRIMARY KEY CLUSTERED ([ChartType_ID]),
+
+                            CONSTRAINT [UQ_ChartType_ChartTypeKey]
+                                UNIQUE ([ChartTypeKey]),
+
+                            CONSTRAINT [CK_ChartType_EntityKind]
+                                CHECK
+                                (
+                                    [EntityKind] IN
+                                    (
+                                        N'Point',
+                                        N'PrismPair',
+                                        N'Track',
+                                        N'PrismArray'
+                                    )
+                                )
+                        );
+
+                    END;
+
+                    /* =============================================================
+                       CHART TYPE DATA ELEMENT
+                       Defines one selectable data element/value column for a
+                       chart type and its display-unit conversion.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.ChartTypeDataElement', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[ChartTypeDataElement]
+                        (
+                            [ChartTypeDataElement_ID] int IDENTITY(1,1) NOT NULL,
+                            [ChartType_ID] int NOT NULL,
+                            [DataElementKey] nvarchar(100) NOT NULL,
+                            [DisplayName] nvarchar(200) NOT NULL,
+                            [ValueColumnName] sysname NOT NULL,
+                            [DisplayUnit] nvarchar(50) NOT NULL,
+                            [DisplayScaleFactor] decimal(18,9) NOT NULL
+                                CONSTRAINT [DF_ChartTypeDataElement_DisplayScaleFactor]
+                                DEFAULT (1.0),
+                            [DisplayOrder] int NOT NULL
+                                CONSTRAINT [DF_ChartTypeDataElement_DisplayOrder]
+                                DEFAULT (0),
+                            [IsEnabled] bit NOT NULL
+                                CONSTRAINT [DF_ChartTypeDataElement_IsEnabled]
+                                DEFAULT (1),
+
+                            CONSTRAINT [PK_ChartTypeDataElement]
+                                PRIMARY KEY CLUSTERED ([ChartTypeDataElement_ID]),
+
+                            CONSTRAINT [FK_ChartTypeDataElement_ChartType]
+                                FOREIGN KEY ([ChartType_ID])
+                                REFERENCES [dbo].[ChartType] ([ChartType_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION,
+
+                            CONSTRAINT [UQ_ChartTypeDataElement]
+                                UNIQUE ([ChartType_ID], [DataElementKey])
+                        );
+
+                    END;
+
+                    /* =============================================================
+                       CHART DEFINITION
+                       One committed chart instance for one project.
+
+                       ChartNumber is sequential per project. Soft-deleted chart
+                       numbers remain consumed and are not recycled.
+
+                       Only chart configuration is persisted. Generated PNG files
+                       are temporary working files and are not stored here.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.ChartDefinition', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[ChartDefinition]
+                        (
+                            [ChartDefinition_ID] int IDENTITY(1,1) NOT NULL,
+                            [ChartDefinitionGuid] uniqueidentifier NOT NULL
+                                CONSTRAINT [DF_ChartDefinition_Guid]
+                                DEFAULT (NEWID()),
+
+                            [Project_ID] int NOT NULL,
+                            [ChartNumber] int NOT NULL,
+                            [ChartType_ID] int NOT NULL,
+
+                            [AutoTitleTemplate] nvarchar(500) NOT NULL,
+                            [TitleOverride] nvarchar(500) NULL,
+
+                            [YAxisTitle] nvarchar(200) NOT NULL,
+                            [YAxisUnit] nvarchar(50) NOT NULL,
+                            [XAxisTitle] nvarchar(200) NOT NULL
+                                CONSTRAINT [DF_ChartDefinition_XAxisTitle]
+                                DEFAULT (N'Date / Time'),
+                            [DisplayTimeZoneId] nvarchar(200) NOT NULL,
+
+                            [UseAutomaticYAxis] bit NOT NULL
+                                CONSTRAINT [DF_ChartDefinition_UseAutomaticYAxis]
+                                DEFAULT (1),
+                            [FixedYAxisMinimum] decimal(18,6) NULL,
+                            [FixedYAxisMaximum] decimal(18,6) NULL,
+
+                            [ReferenceLineValue] decimal(18,6) NOT NULL
+                                CONSTRAINT [DF_ChartDefinition_ReferenceLineValue]
+                                DEFAULT (0),
+
+                            [ShowLegend] bit NOT NULL
+                                CONSTRAINT [DF_ChartDefinition_ShowLegend]
+                                DEFAULT (1),
+                            [LegendPosition] nvarchar(50) NOT NULL
+                                CONSTRAINT [DF_ChartDefinition_LegendPosition]
+                                DEFAULT (N'LowerCenter'),
+
+                            [PngWidthPixels] int NOT NULL
+                                CONSTRAINT [DF_ChartDefinition_PngWidth]
+                                DEFAULT (1800),
+                            [PngHeightPixels] int NOT NULL
+                                CONSTRAINT [DF_ChartDefinition_PngHeight]
+                                DEFAULT (600),
+
+                            [ChartTimeWindowMode] nvarchar(20) NOT NULL,
+                            [AbsoluteStartUtc] datetime2(3) NULL,
+                            [AbsoluteEndUtc] datetime2(3) NULL,
+                            [RelativeAnchor] nvarchar(20) NULL,
+                            [RelativeStartOffsetSec] bigint NULL,
+                            [RelativeEndOffsetSec] bigint NULL,
+
+                            [ReferenceMode] nvarchar(30) NOT NULL
+                                CONSTRAINT [DF_ChartDefinition_ReferenceMode]
+                                DEFAULT (N'None'),
+                            [ReferenceDateTimeUtc] datetime2(3) NULL,
+                            [ReferenceBlockSeconds] bigint NULL,
+                            [UseMeanReference] bit NOT NULL
+                                CONSTRAINT [DF_ChartDefinition_UseMeanReference]
+                                DEFAULT (1),
+
+                            [IsEnabled] bit NOT NULL
+                                CONSTRAINT [DF_ChartDefinition_IsEnabled]
+                                DEFAULT (1),
+                            [ChartOrder] int NOT NULL,
+
+                            [ReportPlacementReference] nvarchar(200) NULL,
+
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_ChartDefinition_IsDeleted]
+                                DEFAULT (0),
+
+                            [CreatedUtc] datetime2(3) NOT NULL
+                                CONSTRAINT [DF_ChartDefinition_CreatedUtc]
+                                DEFAULT (SYSUTCDATETIME()),
+                            [UpdatedUtc] datetime2(3) NOT NULL
+                                CONSTRAINT [DF_ChartDefinition_UpdatedUtc]
+                                DEFAULT (SYSUTCDATETIME()),
+
+                            CONSTRAINT [PK_ChartDefinition]
+                                PRIMARY KEY CLUSTERED ([ChartDefinition_ID]),
+
+                            CONSTRAINT [UQ_ChartDefinition_Guid]
+                                UNIQUE ([ChartDefinitionGuid]),
+
+                            CONSTRAINT [UQ_ChartDefinition_Project_ChartNumber]
+                                UNIQUE ([Project_ID], [ChartNumber]),
+
+                            CONSTRAINT [FK_ChartDefinition_Project]
+                                FOREIGN KEY ([Project_ID])
+                                REFERENCES [dbo].[Project] ([Project_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION,
+
+                            CONSTRAINT [FK_ChartDefinition_ChartType]
+                                FOREIGN KEY ([ChartType_ID])
+                                REFERENCES [dbo].[ChartType] ([ChartType_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION,
+
+                            CONSTRAINT [CK_ChartDefinition_ChartNumber]
+                                CHECK ([ChartNumber] > 0),
+
+                            CONSTRAINT [CK_ChartDefinition_ChartOrder]
+                                CHECK ([ChartOrder] > 0),
+
+                            CONSTRAINT [CK_ChartDefinition_PngDimensions]
+                                CHECK
+                                (
+                                    [PngWidthPixels] > 0
+                                    AND [PngHeightPixels] > 0
+                                ),
+
+                            CONSTRAINT [CK_ChartDefinition_YAxis]
+                                CHECK
+                                (
+                                    [UseAutomaticYAxis] = 1
+                                    OR
+                                    (
+                                        [FixedYAxisMinimum] IS NOT NULL
+                                        AND [FixedYAxisMaximum] IS NOT NULL
+                                        AND [FixedYAxisMinimum] < [FixedYAxisMaximum]
+                                    )
+                                ),
+
+                            CONSTRAINT [CK_ChartDefinition_TimeWindowMode]
+                                CHECK
+                                (
+                                    [ChartTimeWindowMode] IN
+                                    (
+                                        N'Absolute',
+                                        N'Relative'
+                                    )
+                                ),
+
+                            CONSTRAINT [CK_ChartDefinition_RelativeAnchor]
+                                CHECK
+                                (
+                                    [RelativeAnchor] IS NULL
+                                    OR [RelativeAnchor] IN
+                                    (
+                                        N'ReportStart',
+                                        N'ReportEnd'
+                                    )
+                                ),
+
+                            CONSTRAINT [CK_ChartDefinition_ReferenceMode]
+                                CHECK
+                                (
+                                    [ReferenceMode] IN
+                                    (
+                                        N'None',
+                                        N'FixedDateTime'
+                                    )
+                                ),
+
+                            CONSTRAINT [CK_ChartDefinition_TimeWindowValues]
+                                CHECK
+                                (
+                                    (
+                                        [ChartTimeWindowMode] = N'Absolute'
+                                        AND [AbsoluteStartUtc] IS NOT NULL
+                                        AND [AbsoluteEndUtc] IS NOT NULL
+                                        AND [AbsoluteStartUtc] < [AbsoluteEndUtc]
+                                    )
+                                    OR
+                                    (
+                                        [ChartTimeWindowMode] = N'Relative'
+                                        AND [RelativeAnchor] IS NOT NULL
+                                        AND [RelativeStartOffsetSec] IS NOT NULL
+                                        AND [RelativeEndOffsetSec] IS NOT NULL
+                                        AND [RelativeStartOffsetSec] < [RelativeEndOffsetSec]
+                                    )
+                                ),
+
+                            CONSTRAINT [CK_ChartDefinition_ReferenceValues]
+                                CHECK
+                                (
+                                    [ReferenceMode] = N'None'
+                                    OR
+                                    (
+                                        [ReferenceMode] = N'FixedDateTime'
+                                        AND [ReferenceDateTimeUtc] IS NOT NULL
+                                        AND [ReferenceBlockSeconds] IS NOT NULL
+                                        AND [ReferenceBlockSeconds] > 0
+                                    )
+                                )
+                        );
+
+                        CREATE INDEX [IX_ChartDefinition_Project_Order]
+                            ON [dbo].[ChartDefinition]
+                            (
+                                [Project_ID],
+                                [IsDeleted],
+                                [IsEnabled],
+                                [ChartOrder]
+                            );
+
+                    END;
+
+                    /* =============================================================
+                       CHART DEFINITION SERIES
+                       One selected monitored entity/data element plotted on a
+                       committed chart.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.ChartDefinitionSeries', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[ChartDefinitionSeries]
+                        (
+                            [ChartDefinitionSeries_ID] int IDENTITY(1,1) NOT NULL,
+                            [ChartDefinition_ID] int NOT NULL,
+                            [EntityId] int NOT NULL,
+                            [EntityDisplayName] nvarchar(200) NOT NULL,
+                            [DataElementKey] nvarchar(100) NOT NULL,
+                            [LegendText] nvarchar(300) NOT NULL,
+                            [ColourHex] nvarchar(20) NULL,
+                            [LineWidth] decimal(10,3) NOT NULL
+                                CONSTRAINT [DF_ChartDefinitionSeries_LineWidth]
+                                DEFAULT (2.0),
+                            [MarkerSize] decimal(10,3) NOT NULL
+                                CONSTRAINT [DF_ChartDefinitionSeries_MarkerSize]
+                                DEFAULT (4.0),
+                            [DisplayOrder] int NOT NULL,
+
+                            CONSTRAINT [PK_ChartDefinitionSeries]
+                                PRIMARY KEY CLUSTERED ([ChartDefinitionSeries_ID]),
+
+                            CONSTRAINT [FK_ChartDefinitionSeries_ChartDefinition]
+                                FOREIGN KEY ([ChartDefinition_ID])
+                                REFERENCES [dbo].[ChartDefinition] ([ChartDefinition_ID])
+                                ON DELETE CASCADE
+                                ON UPDATE NO ACTION,
+
+                            CONSTRAINT [UQ_ChartDefinitionSeries_Order]
+                                UNIQUE ([ChartDefinition_ID], [DisplayOrder]),
+
+                            CONSTRAINT [CK_ChartDefinitionSeries_EntityId]
+                                CHECK ([EntityId] > 0),
+
+                            CONSTRAINT [CK_ChartDefinitionSeries_DisplayOrder]
+                                CHECK ([DisplayOrder] > 0),
+
+                            CONSTRAINT [CK_ChartDefinitionSeries_LineWidth]
+                                CHECK ([LineWidth] > 0),
+
+                            CONSTRAINT [CK_ChartDefinitionSeries_MarkerSize]
+                                CHECK ([MarkerSize] >= 0)
+                        );
+
+                        CREATE INDEX [IX_ChartDefinitionSeries_Definition]
+                            ON [dbo].[ChartDefinitionSeries]
+                            (
+                                [ChartDefinition_ID],
+                                [DisplayOrder]
+                            );
+
+                    END;
+
+                    /* =============================================================
+                       CHART DEFINITION TRIGGER BAND
+                       Persistent Green / Yellow / Amber / Red chart background
+                       configuration.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.ChartDefinitionTriggerBand', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[ChartDefinitionTriggerBand]
+                        (
+                            [ChartDefinitionTriggerBand_ID] int IDENTITY(1,1) NOT NULL,
+                            [ChartDefinition_ID] int NOT NULL,
+                            [BandName] nvarchar(100) NOT NULL,
+                            [MinimumValue] decimal(18,6) NOT NULL,
+                            [MaximumValue] decimal(18,6) NOT NULL,
+                            [IsSymmetric] bit NOT NULL
+                                CONSTRAINT [DF_ChartDefinitionTriggerBand_IsSymmetric]
+                                DEFAULT (0),
+                            [ColourHex] nvarchar(20) NOT NULL,
+                            [Opacity] decimal(6,5) NOT NULL,
+                            [DrawBoundaryLines] bit NOT NULL
+                                CONSTRAINT [DF_ChartDefinitionTriggerBand_DrawBoundaryLines]
+                                DEFAULT (0),
+                            [DisplayOrder] int NOT NULL,
+
+                            CONSTRAINT [PK_ChartDefinitionTriggerBand]
+                                PRIMARY KEY CLUSTERED ([ChartDefinitionTriggerBand_ID]),
+
+                            CONSTRAINT [FK_ChartDefinitionTriggerBand_ChartDefinition]
+                                FOREIGN KEY ([ChartDefinition_ID])
+                                REFERENCES [dbo].[ChartDefinition] ([ChartDefinition_ID])
+                                ON DELETE CASCADE
+                                ON UPDATE NO ACTION,
+
+                            CONSTRAINT [UQ_ChartDefinitionTriggerBand_Order]
+                                UNIQUE ([ChartDefinition_ID], [DisplayOrder]),
+
+                            CONSTRAINT [CK_ChartDefinitionTriggerBand_Range]
+                                CHECK ([MinimumValue] < [MaximumValue]),
+
+                            CONSTRAINT [CK_ChartDefinitionTriggerBand_Opacity]
+                                CHECK
+                                (
+                                    [Opacity] >= 0
+                                    AND [Opacity] <= 1
+                                ),
+
+                            CONSTRAINT [CK_ChartDefinitionTriggerBand_DisplayOrder]
+                                CHECK ([DisplayOrder] > 0)
+                        );
+
+                    END;
 
                     COMMIT TRANSACTION;
 
@@ -6799,6 +7816,8 @@ namespace GNA_DLRreport
                 txtActiveProject.Text =
                     databaseProjectName;
 
+                UpdateConfigurationWorkflowTabAvailability();
+
                 #endregion
 
 
@@ -7802,6 +8821,8 @@ namespace GNA_DLRreport
                 txtActiveProject.Text =
                     "No active project";
 
+                UpdateConfigurationWorkflowTabAvailability();
+
                 return;
             }
 
@@ -7850,6 +8871,8 @@ namespace GNA_DLRreport
                 txtActiveProject.Text =
                     "No active project";
 
+                UpdateConfigurationWorkflowTabAvailability();
+
                 return;
             }
 
@@ -7870,6 +8893,8 @@ namespace GNA_DLRreport
 
             txtActiveProject.Text =
                 _activeProjectName;
+
+            UpdateConfigurationWorkflowTabAvailability();
 
             #endregion
         }
