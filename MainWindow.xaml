@@ -1,4 +1,4 @@
-<Window x:Class="GNA_DLRreport.MainWindow"
+﻿<Window x:Class="GNA_DLRreport.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -75,7 +75,7 @@
 
                 <!-- #region HOUSEKEEPING TAB -->
 
-                <TabItem Header="Housekeeping">
+                <TabItem Header="Database">
 
                     <Grid Margin="20">
 
@@ -192,6 +192,7 @@
                                         Height="30"
                                         HorizontalAlignment="Left"
                                         Content="Create DB"
+                                        ToolTip="Create or recreate DBTrackGeometry including all monitoring and chart-definition repository tables."
                                         Click="btnCreateDb_Click"/>
 
                                 <!-- #endregion -->
@@ -1375,7 +1376,11 @@
 
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="120"/>
-                                        <ColumnDefinition Width="350"/>
+                                        <ColumnDefinition Width="260"/>
+                                        <ColumnDefinition Width="15"/>
+                                        <ColumnDefinition Width="130"/>
+                                        <ColumnDefinition Width="15"/>
+                                        <ColumnDefinition Width="105"/>
                                         <ColumnDefinition Width="15"/>
                                         <ColumnDefinition Width="130"/>
                                         <ColumnDefinition Width="*"/>
@@ -1391,8 +1396,21 @@
                                              MaxLength="200"
                                              VerticalContentAlignment="Center"/>
 
+                                    <DatePicker x:Name="dpProjectStartDate"
+                                                Grid.Column="3"
+                                                Height="28"
+                                                SelectedDateFormat="Short"
+                                                VerticalContentAlignment="Center"
+                                                CalendarClosed="dpProjectStartDate_CalendarClosed"/>
+
+                                    <Button x:Name="btnProjectStartCalendar"
+                                            Grid.Column="5"
+                                            Height="30"
+                                            Content="Project Start"
+                                            Click="btnProjectStartCalendar_Click"/>
+
                                     <Button x:Name="btnAddProject"
-                                            Grid.Column="3"
+                                            Grid.Column="7"
                                             Height="30"
                                             Content="Add Project"
                                             Click="btnAddProject_Click"/>
@@ -1414,7 +1432,9 @@
                                           SelectionMode="Single"
                                           SelectionUnit="FullRow"
                                           HeadersVisibility="Column"
-                                          GridLinesVisibility="Horizontal">
+                                          GridLinesVisibility="Horizontal"
+                                          SelectionChanged="dgProjects_SelectionChanged"
+                                          MaxHeight="420">
 
                                     <DataGrid.Columns>
 
@@ -1503,6 +1523,29 @@
                                         <!-- #endregion -->
 
 
+                                        <!-- #region PROJECT START DATE -->
+
+                                        <DataGridTemplateColumn Header="Project Start Date"
+                                                                Width="145"
+                                                                IsReadOnly="True">
+
+                                            <DataGridTemplateColumn.CellTemplate>
+
+                                                <DataTemplate>
+
+                                                    <TextBlock Loaded="ProjectStartDateTextBlock_Loaded"
+                                                               HorizontalAlignment="Center"
+                                                               VerticalAlignment="Center"/>
+
+                                                </DataTemplate>
+
+                                            </DataGridTemplateColumn.CellTemplate>
+
+                                        </DataGridTemplateColumn>
+
+                                        <!-- #endregion -->
+
+
                                         <!-- #region DELETED PROJECT -->
 
                                         <DataGridTemplateColumn Header="Deleted"
@@ -1584,6 +1627,670 @@
                             </Grid>
 
                         </Border>
+
+                        <!-- #endregion -->
+
+                    </Grid>
+
+                </TabItem>
+
+                <!-- #endregion -->
+
+
+                <!-- #region CHART TAB -->
+
+                <TabItem x:Name="tabCharts"
+                         Header="Charts"
+                         IsEnabled="False">
+
+                    <Grid Margin="20">
+
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="12"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- #region CHART COMMAND BAR -->
+
+                        <GroupBox Grid.Row="0"
+                                  Header="Chart Management"
+                                  Padding="12">
+
+                            <Grid>
+
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120"/>
+                                    <ColumnDefinition Width="255"/>
+                                    <ColumnDefinition Width="12"/>
+                                    <ColumnDefinition Width="80"/>
+                                    <ColumnDefinition Width="80"/>
+                                    <ColumnDefinition Width="80"/>
+                                    <ColumnDefinition Width="80"/>
+                                    <ColumnDefinition Width="95"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Column="0"
+                                           VerticalAlignment="Center"
+                                           Text="Existing charts:"/>
+
+                                <ComboBox x:Name="cmbExistingChart"
+                                          Grid.Column="1"
+                                          Height="28"
+                                          DisplayMemberPath="DisplayText"/>
+
+                                <Button x:Name="btnChartNew"
+                                        Grid.Column="3"
+                                        Height="30"
+                                        Content="New"
+                                        Click="btnChartNew_Click"/>
+
+                                <Button x:Name="btnChartLoad"
+                                        Grid.Column="4"
+                                        Height="30"
+                                        Margin="6,0,0,0"
+                                        Content="Load"
+                                        Click="btnChartLoad_Click"/>
+
+                                <Button x:Name="btnChartCopy"
+                                        Grid.Column="5"
+                                        Height="30"
+                                        Margin="6,0,0,0"
+                                        Content="Copy"
+                                        Click="btnChartCopy_Click"/>
+
+                                <Button x:Name="btnChartDelete"
+                                        Grid.Column="6"
+                                        Height="30"
+                                        Margin="6,0,0,0"
+                                        Content="Delete"
+                                        Click="btnChartDelete_Click"/>
+
+                                <Button x:Name="btnChartCommit"
+                                        Grid.Column="7"
+                                        Height="30"
+                                        Margin="6,0,0,0"
+                                        Content="Commit"
+                                        Click="btnChartCommit_Click"/>
+
+                            </Grid>
+
+                        </GroupBox>
+
+                        <!-- #endregion -->
+
+
+                        <!-- #region CHART CONFIGURATION TABS -->
+
+                        <TabControl x:Name="tabChartConfiguration"
+                                    Grid.Row="2">
+
+                            <!-- #region DEFINITION -->
+
+                            <TabItem Header="Definition">
+                                <Grid Margin="12">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/><RowDefinition Height="12"/>
+                                        <RowDefinition Height="Auto"/><RowDefinition Height="12"/>
+                                        <RowDefinition Height="Auto"/><RowDefinition Height="12"/>
+                                        <RowDefinition Height="Auto"/><RowDefinition Height="*"/>
+                                    </Grid.RowDefinitions>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="150"/>
+                                        <ColumnDefinition Width="360"/>
+                                        <ColumnDefinition Width="25"/>
+                                        <ColumnDefinition Width="120"/>
+                                        <ColumnDefinition Width="180"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="Chart number:"/>
+                                    <TextBox x:Name="txtChartNumber" Grid.Row="0" Grid.Column="1" Width="120" Height="28"
+                                             HorizontalAlignment="Left" IsReadOnly="True" VerticalContentAlignment="Center" Text="New"/>
+
+                                    <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="Chart name:"/>
+                                    <TextBox x:Name="txtChartName" Grid.Row="2" Grid.Column="1" Height="28"
+                                             MaxLength="200" VerticalContentAlignment="Center"/>
+
+                                    <TextBlock Grid.Row="4" Grid.Column="0" VerticalAlignment="Center" Text="Chart type:"/>
+                                    <ComboBox x:Name="cmbChartType" Grid.Row="4" Grid.Column="1" Height="28"
+                                              DisplayMemberPath="DisplayName"
+                                              SelectionChanged="cmbChartType_SelectionChanged"/>
+
+                                    <TextBlock Grid.Row="6" Grid.Column="0" VerticalAlignment="Center" Text="Source:"/>
+                                    <TextBox x:Name="txtChartDataSource" Grid.Row="6" Grid.Column="1" Height="28"
+                                             IsReadOnly="True" VerticalContentAlignment="Center"/>
+
+                                    <TextBlock Grid.Row="6" Grid.Column="3" VerticalAlignment="Center" Text="Unit:"/>
+                                    <TextBox x:Name="txtChartUnit" Grid.Row="6" Grid.Column="4" Width="112" Height="28"
+                                             HorizontalAlignment="Left" IsReadOnly="True" VerticalContentAlignment="Center"/>
+                                </Grid>
+</TabItem>
+
+                            <!-- #endregion -->
+
+
+                            <!-- #region SERIES -->
+
+                            <TabItem Header="Series">
+
+                                <Grid Margin="12">
+
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="10"/>
+                                        <RowDefinition Height="*"/>
+                                        <RowDefinition Height="10"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+
+                                    <Grid Grid.Row="0">
+
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="140"/>
+                                            <ColumnDefinition Width="300"/>
+                                            <ColumnDefinition Width="20"/>
+                                            <ColumnDefinition Width="140"/>
+                                            <ColumnDefinition Width="260"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <TextBlock Grid.Column="0"
+                                                   VerticalAlignment="Center"
+                                                   Text="Entity:"/>
+
+                                        <ComboBox x:Name="cmbChartSeriesEntity"
+                                                  Grid.Column="1"
+                                                  Height="28"/>
+
+                                        <TextBlock Grid.Column="3"
+                                                   VerticalAlignment="Center"
+                                                   Text="Data element:"/>
+
+                                        <ComboBox x:Name="cmbChartDataElement"
+                                                  Grid.Column="4"
+                                                  Height="28"/>
+
+                                    </Grid>
+
+                                    <DataGrid x:Name="dgChartSeries"
+                                              Grid.Row="2"
+                                              AutoGenerateColumns="False"
+                                              CanUserAddRows="False"
+                                              CanUserDeleteRows="False"
+                                              HeadersVisibility="Column">
+
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Order" Width="70" Binding="{Binding DisplayOrder}"/>
+                                            <DataGridTextColumn Header="Entity" Width="220" Binding="{Binding EntityDisplayName}"/>
+                                            <DataGridTextColumn Header="Data Element" Width="180" Binding="{Binding DataElementDisplayName}"/>
+                                            <DataGridTextColumn Header="Legend" Width="*" Binding="{Binding LegendText}"/>
+                                            <DataGridTextColumn Header="Colour" Width="110" Binding="{Binding ColourHex}"/>
+                                            <DataGridTextColumn Header="Line" Width="80" Binding="{Binding LineWidth}"/>
+                                            <DataGridTextColumn Header="Marker" Width="80" Binding="{Binding MarkerSize}"/>
+                                        </DataGrid.Columns>
+
+                                    </DataGrid>
+
+                                    <StackPanel Grid.Row="4"
+                                                Orientation="Horizontal"
+                                                HorizontalAlignment="Right">
+
+                                        <Button x:Name="btnChartAddSeries"
+                                                Width="100"
+                                                Height="30"
+                                                Content="Add Series"
+                                                Click="btnChartAddSeries_Click"/>
+
+                                        <Button x:Name="btnChartRemoveSeries"
+                                                Width="110"
+                                                Height="30"
+                                                Margin="8,0,0,0"
+                                                Content="Remove Series"
+                                                Click="btnChartRemoveSeries_Click"/>
+
+                                        <Button x:Name="btnChartSeriesUp"
+                                                Width="90"
+                                                Height="30"
+                                                Margin="8,0,0,0"
+                                                Content="Move Up"
+                                                Click="btnChartSeriesUp_Click"/>
+
+                                        <Button x:Name="btnChartSeriesDown"
+                                                Width="90"
+                                                Height="30"
+                                                Margin="8,0,0,0"
+                                                Content="Move Down"
+                                                Click="btnChartSeriesDown_Click"/>
+
+                                    </StackPanel>
+
+                                </Grid>
+
+                            </TabItem>
+
+                            <!-- #endregion -->
+
+
+                            <!-- #region TIME AND REFERENCE -->
+
+                            <TabItem Header="Time &amp; Reference">
+                                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                    <Grid Margin="12">
+                                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                                        <GroupBox Grid.Row="0" Header="Chart Dates" Padding="12">
+                                            <Grid>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/><RowDefinition Height="12"/>
+                                                    <RowDefinition Height="Auto"/><RowDefinition Height="12"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                </Grid.RowDefinitions>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="170"/>
+                                                    <ColumnDefinition Width="160"/>
+                                                    <ColumnDefinition Width="15"/>
+                                                    <ColumnDefinition Width="120"/>
+                                                    <ColumnDefinition Width="15"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+
+                                                <TextBlock Grid.Row="0"
+                                                           Grid.Column="0"
+                                                           VerticalAlignment="Center"
+                                                           Text="Report start date:"/>
+
+                                                <DatePicker x:Name="dpChartStartDate" Grid.Row="0" Grid.Column="1"
+                                                            Height="28" SelectedDateFormat="Short"/>
+                                                <Button x:Name="btnChartProjectStart" Grid.Row="0" Grid.Column="3"
+                                                        Height="30" Content="Project start date"
+                                                        Click="btnChartProjectStart_Click"/>
+
+                                                <TextBlock Grid.Row="2"
+                                                           Grid.Column="0"
+                                                           VerticalAlignment="Center"
+                                                           Text="Report end date:"/>
+
+                                                <DatePicker x:Name="dpChartEndDate" Grid.Row="2" Grid.Column="1"
+                                                            Height="28" SelectedDateFormat="Short"/>
+                                                <Button x:Name="btnChartUseNow" Grid.Row="2" Grid.Column="3"
+                                                        Height="30" Content="Now"
+                                                        Click="btnChartUseNow_Click"/>
+
+                                                <TextBlock Grid.Row="4" Grid.Column="0" VerticalAlignment="Center"
+                                                           Text="Report Duration (days):"/>
+                                                <TextBox x:Name="txtChartRecentDays" Grid.Row="4" Grid.Column="1"
+                                                         Width="80" Height="28" HorizontalAlignment="Left"
+                                                         VerticalContentAlignment="Center" Text="14"/>
+                                                <Button x:Name="btnChartRecentPeriod" Grid.Row="4" Grid.Column="3"
+                                                        Height="30" Content="Update Start"
+                                                        Click="btnChartRecentPeriod_Click"/>
+                                            </Grid>
+                                        </GroupBox>
+                                    </Grid>
+                                </ScrollViewer>
+</TabItem>
+
+                            <!-- #endregion -->
+
+
+                            <!-- #region TRIGGER BANDS -->
+
+                            <TabItem Header="Trigger Bands">
+                                <Grid Margin="12">
+
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="10"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="10"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="14"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="14"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="*"/>
+                                    </Grid.RowDefinitions>
+
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="145"/>
+                                        <ColumnDefinition Width="100"/>
+                                        <ColumnDefinition Width="20"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBlock Grid.Row="0" Grid.Column="0"
+                                               VerticalAlignment="Center"
+                                               Text="Green trigger:"/>
+
+                                    <TextBox x:Name="txtChartGreenTrigger"
+                                             Grid.Row="0" Grid.Column="1"
+                                             Height="28"
+                                             VerticalContentAlignment="Center"
+                                             Text="2"/>
+
+                                    <TextBlock Grid.Row="2" Grid.Column="0"
+                                               VerticalAlignment="Center"
+                                               Text="Amber trigger:"/>
+
+                                    <TextBox x:Name="txtChartAmberTrigger"
+                                             Grid.Row="2" Grid.Column="1"
+                                             Height="28"
+                                             VerticalContentAlignment="Center"
+                                             Text="5"/>
+
+                                    <TextBlock Grid.Row="4" Grid.Column="0"
+                                               VerticalAlignment="Center"
+                                               Text="Red trigger:"/>
+
+                                    <TextBox x:Name="txtChartRedTrigger"
+                                             Grid.Row="4" Grid.Column="1"
+                                             Height="28"
+                                             VerticalContentAlignment="Center"
+                                             Text="10"/>
+
+                                    <TextBlock Grid.Row="6" Grid.Column="0"
+                                               VerticalAlignment="Center"
+                                               Text="Current unit:"/>
+
+                                    <TextBox x:Name="txtChartTriggerUnit"
+                                             Grid.Row="6" Grid.Column="1"
+                                             Width="90"
+                                             Height="28"
+                                             HorizontalAlignment="Left"
+                                             IsReadOnly="True"
+                                             VerticalContentAlignment="Center"/>
+
+                                    <TextBlock Grid.Row="8"
+                                               Grid.Column="0"
+                                               Grid.ColumnSpan="4"
+                                               TextWrapping="Wrap"
+                                               Foreground="DimGray"
+                                               Text="Bands are mirrored about zero:&#x0a;Light Green from 0 to ±Green&#x0a;Light Yellow from ±Green to ±Amber&#x0a;Light Red from ±Amber to ±Red&#x0a;Light Grey from ±Red to the Vertical Axis limits&#x0a;A black zero line is drawn through the central Light Green zone"/>
+
+                                </Grid>
+</TabItem>
+
+                            <!-- #endregion -->
+
+
+                            <!-- #region AXES AND TITLES -->
+
+                            <TabItem Header="Axes &amp; Titles">
+                                <ScrollViewer VerticalScrollBarVisibility="Auto">
+
+                                    <Grid Margin="12">
+
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="14"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+
+                                        <GroupBox Grid.Row="0"
+                                                  Header="Vertical Axis"
+                                                  Padding="12">
+
+                                            <Grid>
+
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="10"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                </Grid.RowDefinitions>
+
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="150"/>
+                                                    <ColumnDefinition Width="100"/>
+                                                    <ColumnDefinition Width="25"/>
+                                                    <ColumnDefinition Width="150"/>
+                                                    <ColumnDefinition Width="100"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+
+                                                <CheckBox x:Name="chkChartAutomaticYAxis"
+                                                          Grid.Row="0"
+                                                          Grid.Column="0"
+                                                          Grid.ColumnSpan="2"
+                                                          Content="Automatic Vertical Axis"
+                                                          IsChecked="True"
+                                                          Checked="chkChartAutomaticYAxis_Changed"
+                                                          Unchecked="chkChartAutomaticYAxis_Changed"/>
+
+                                                <TextBlock Grid.Row="2" Grid.Column="0"
+                                                           VerticalAlignment="Center"
+                                                           Text="Minimum:"/>
+
+                                                <TextBox x:Name="txtChartYAxisMinimum"
+                                                         Grid.Row="2" Grid.Column="1"
+                                                         Height="28"
+                                                         IsEnabled="False"
+                                                         VerticalContentAlignment="Center"/>
+
+                                                <TextBlock Grid.Row="2" Grid.Column="3"
+                                                           VerticalAlignment="Center"
+                                                           Text="Maximum:"/>
+
+                                                <TextBox x:Name="txtChartYAxisMaximum"
+                                                         Grid.Row="2" Grid.Column="4"
+                                                         Height="28"
+                                                         IsEnabled="False"
+                                                         VerticalContentAlignment="Center"/>
+
+                                            </Grid>
+
+                                        </GroupBox>
+
+                                        <GroupBox Grid.Row="2"
+                                                  Header="Titles and Legend"
+                                                  Padding="12">
+
+                                            <Grid>
+
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="10"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="10"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                </Grid.RowDefinitions>
+
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="120"/>
+                                                    <ColumnDefinition Width="240"/>
+                                                    <ColumnDefinition Width="20"/>
+                                                    <ColumnDefinition Width="120"/>
+                                                    <ColumnDefinition Width="170"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+
+                                                <TextBlock Grid.Row="0" Grid.Column="0"
+                                                           VerticalAlignment="Center"
+                                                           Text="Chart Title:"/>
+
+                                                <TextBox x:Name="txtChartTitleOverride"
+                                                         Grid.Row="0" Grid.Column="1"
+                                                         Height="28"
+                                                         VerticalContentAlignment="Center"/>
+
+                                                <TextBlock Grid.Row="2" Grid.Column="0"
+                                                           VerticalAlignment="Center"
+                                                           Text="Vertical Axis:"/>
+
+                                                <TextBox x:Name="txtChartYAxisTitle"
+                                                         Grid.Row="2" Grid.Column="1"
+                                                         Height="28"
+                                                         VerticalContentAlignment="Center"/>
+
+                                                <CheckBox x:Name="chkChartShowLegend"
+                                                          Grid.Row="0" Grid.Column="3"
+                                                          Content="Show Legend"
+                                                          IsChecked="True"/>
+
+                                                <ComboBox x:Name="cmbChartLegendPosition"
+                                                          Grid.Row="0" Grid.Column="4"
+                                                          Height="28"
+                                                          SelectedIndex="0">
+                                                    <ComboBoxItem Content="Below Title"/>
+                                                    <ComboBoxItem Content="Below Chart"/>
+                                                    <ComboBoxItem Content="Right of Chart"/>
+                                                    <ComboBoxItem Content="Left of Chart"/>
+                                                </ComboBox>
+
+                                                <TextBlock Grid.Row="4"
+                                                           Grid.Column="0"
+                                                           Grid.ColumnSpan="5"
+                                                           Foreground="DimGray"
+                                                           Text="Horizontal Axis: Date / Time. Display time is fixed to Local Time."/>
+
+                                            </Grid>
+
+                                        </GroupBox>
+
+                                    </Grid>
+
+                                </ScrollViewer>
+</TabItem>
+
+                            <!-- #endregion -->
+
+
+                            <!-- #region APPEARANCE -->
+
+                            <TabItem Header="Appearance">
+
+                                <Grid Margin="12">
+
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="12"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="12"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="*"/>
+                                    </Grid.RowDefinitions>
+
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="160"/>
+                                        <ColumnDefinition Width="150"/>
+                                        <ColumnDefinition Width="30"/>
+                                        <ColumnDefinition Width="160"/>
+                                        <ColumnDefinition Width="150"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBlock Grid.Row="0"
+                                               Grid.Column="0"
+                                               VerticalAlignment="Center"
+                                               Text="PNG width (px):"/>
+
+                                    <TextBox x:Name="txtChartPngWidth"
+                                             Grid.Row="0"
+                                             Grid.Column="1"
+                                             Height="28"
+                                             VerticalContentAlignment="Center"
+                                             Text="3000"/>
+
+                                    <TextBlock Grid.Row="0"
+                                               Grid.Column="3"
+                                               VerticalAlignment="Center"
+                                               Text="PNG height (px):"/>
+
+                                    <TextBox x:Name="txtChartPngHeight"
+                                             Grid.Row="0"
+                                             Grid.Column="4"
+                                             Height="28"
+                                             VerticalContentAlignment="Center"
+                                             Text="1000"/>
+
+                                    <TextBlock Grid.Row="2"
+                                               Grid.Column="0"
+                                               VerticalAlignment="Center"
+                                               Text="Default line width:"/>
+
+                                    <TextBox x:Name="txtChartDefaultLineWidth"
+                                             Grid.Row="2"
+                                             Grid.Column="1"
+                                             Height="28"
+                                             VerticalContentAlignment="Center"
+                                             Text="2"/>
+
+                                    <TextBlock Grid.Row="2"
+                                               Grid.Column="3"
+                                               VerticalAlignment="Center"
+                                               Text="Default marker size:"/>
+
+                                    <TextBox x:Name="txtChartDefaultMarkerSize"
+                                             Grid.Row="2"
+                                             Grid.Column="4"
+                                             Height="28"
+                                             VerticalContentAlignment="Center"
+                                             Text="4"/>
+
+                                    <CheckBox x:Name="chkChartGridLines"
+                                              Grid.Row="4"
+                                              Grid.Column="0"
+                                              Grid.ColumnSpan="2"
+                                              Content="Show major gridlines"
+                                              IsChecked="True"/>
+
+                                </Grid>
+
+                            </TabItem>
+
+                            <!-- #endregion -->
+
+
+                            <!-- #region PREVIEW -->
+
+                            <TabItem Header="Preview">
+                                <Grid Margin="12">
+
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="12"/>
+                                        <RowDefinition Height="*"/>
+                                        <RowDefinition Height="12"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+
+                                    <Button x:Name="btnChartRefreshPreview"
+                                            Grid.Row="0"
+                                            Width="150"
+                                            Height="30"
+                                            HorizontalAlignment="Left"
+                                            Content="Refresh Preview"
+                                            Click="btnChartPreview_Click"/>
+
+                                    <Border Grid.Row="2"
+                                            BorderBrush="DarkGray"
+                                            BorderThickness="1"
+                                            Background="White"
+                                            Padding="4">
+
+                                        <Grid>
+                                            <TextBlock x:Name="txtChartPreviewPlaceholder"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center"
+                                                       TextAlignment="Center"
+                                                       Foreground="DimGray"
+                                                       FontSize="16"
+                                                       Text="ScottPlot preview surface&#x0a;The complete chart will be rendered here at final report proportions."/>
+                                        </Grid>
+
+                                    </Border>
+
+                                    <TextBlock x:Name="txtChartStatus"
+                                               Grid.Row="4"
+                                               TextWrapping="Wrap"
+                                               Text="Create or select a chart definition."/>
+
+                                </Grid>
+</TabItem>
+
+                            <!-- #endregion -->
+
+                        </TabControl>
 
                         <!-- #endregion -->
 

@@ -115,6 +115,21 @@ namespace GNA_DLRreport
             new();
 
 
+        // Project start dates are stored separately from ProjectConfigurationItem
+        // so this replacement file does not require changes to the existing model
+        // class used elsewhere in the solution.
+        private readonly Dictionary<int, DateTime> _projectStartDates =
+            new();
+
+        private DateTime _pendingProjectStartDate =
+            DateTime.Today;
+
+        private bool _isUpdatingProjectStartDateControl;
+
+
+        private int? _projectStartCalendarTargetProjectId;
+
+
         // ---------------------------------------------------------------------
         // MULTI-INSTANCE RUNTIME STATE RULE
         //
@@ -160,6 +175,115 @@ namespace GNA_DLRreport
 
         private const string ProjectLockResourcePrefix =
             "GNA_DLRreport:Project:";
+
+        #endregion
+
+
+        #region Chart Configuration State
+
+        private const int DefaultChartRecentDays =
+            14;
+
+        // Fixed report colours. These are intentionally not exposed in the UI.
+        private const string ChartGreenBandColourHex =
+            "#DFF2D8";
+
+        private const string ChartAmberBandColourHex =
+            "#FFF2CC";
+
+        private const string ChartRedBandColourHex =
+            "#F4CCCC";
+
+        private const string ChartAboveRedBandColourHex =
+            "#E7E6E6";
+
+        private const string ChartZeroAxisColourHex =
+            "#000000";
+
+        private readonly ObservableCollection<ChartTypeUiItem> _chartTypes =
+            new();
+
+        private readonly ObservableCollection<ChartSeriesUiItem> _chartSeries =
+            new();
+
+
+        private readonly ObservableCollection<ExistingChartUiItem> _existingCharts =
+            new();
+
+        private int? _loadedChartDefinitionId;
+
+        private int? _loadedChartNumber;
+
+        private sealed class ExistingChartUiItem
+        {
+            public int ChartDefinitionId { get; init; }
+
+            public int ChartNumber { get; init; }
+
+            public string ChartName { get; init; } =
+                string.Empty;
+
+            public string ChartTypeKey { get; init; } =
+                string.Empty;
+
+            public string DisplayText =>
+                $"Chart_{ChartNumber:0000} - {ChartName}";
+        }
+
+        private sealed class ChartTypeUiItem
+        {
+            public string Key { get; init; } =
+                string.Empty;
+
+            public string DisplayName { get; init; } =
+                string.Empty;
+
+            public string SourceTable { get; init; } =
+                string.Empty;
+
+            public string EntityKind { get; init; } =
+                string.Empty;
+
+            public string VerticalAxisTitle { get; init; } =
+                string.Empty;
+
+            public string Unit { get; init; } =
+                string.Empty;
+
+            public bool IsFullyDefined { get; init; } =
+                true;
+
+            public IReadOnlyList<string> DataElements { get; init; } =
+                Array.Empty<string>();
+
+            public override string ToString()
+            {
+                return DisplayName;
+            }
+        }
+
+        private sealed class ChartSeriesUiItem
+        {
+            public int DisplayOrder { get; set; }
+
+            public string EntityDisplayName { get; set; } =
+                string.Empty;
+
+            public string DataElementDisplayName { get; set; } =
+                string.Empty;
+
+            public string LegendText { get; set; } =
+                string.Empty;
+
+            public string ColourHex { get; set; } =
+                string.Empty;
+
+            public double LineWidth { get; set; } =
+                2.0;
+
+            public double MarkerSize { get; set; } =
+                4.0;
+        }
 
         #endregion
 
@@ -282,6 +406,9 @@ namespace GNA_DLRreport
 
         private const int PrismArrayTypePrismCrackGauge =
             3;
+
+        private const int PrismArrayTypePrismTilt =
+            4;
 
         private const string PrismArrayDefinitionLockResourcePrefix =
             "GNA_DLRreport:PrismArrayDefinition:";
@@ -502,9 +629,11 @@ namespace GNA_DLRreport
         {
             #region Resolve Required Point Roles
 
-            return arrayType == PrismArrayTypePrismCrackGauge
-                ? PrismCrackGaugePointRoles
-                : PrismArrayPointRoles;
+            return
+                arrayType == PrismArrayTypePrismCrackGauge ||
+                arrayType == PrismArrayTypePrismTilt
+                    ? PrismCrackGaugePointRoles
+                    : PrismArrayPointRoles;
 
             #endregion
         }
@@ -3525,6 +3654,22 @@ namespace GNA_DLRreport
             dgProjects.ItemsSource =
                 _projectItems;
 
+            _pendingProjectStartDate =
+                DateTime.Today;
+
+            dpProjectStartDate.SelectedDate =
+                _pendingProjectStartDate;
+
+            #endregion
+
+
+            #region Initialise Chart Configuration
+
+            InitialiseChartConfigurationUi();
+
+            cmbExistingChart.ItemsSource =
+                _existingCharts;
+
             #endregion
 
 
@@ -3600,6 +3745,9 @@ namespace GNA_DLRreport
             tabGeotech.IsEnabled =
                 activeProjectAvailable;
 
+            tabCharts.IsEnabled =
+                activeProjectAvailable;
+
             #endregion
         }
 
@@ -3637,6 +3785,21 @@ namespace GNA_DLRreport
             await InitialiseStartupActiveProjectAsync();
 
             UpdateConfigurationWorkflowTabAvailability();
+
+            if (_activeProjectId.HasValue)
+            {
+                try
+                {
+                    await EnsureChartTypeCatalogueAsync();
+
+                    await RefreshExistingChartsAsync();
+                }
+                catch (Exception chartEx)
+                {
+                    txtDbConnectionStatus.Text =
+                        $"Chart catalogue unavailable: {chartEx.Message}";
+                }
+            }
 
             #endregion
         }
@@ -4583,6 +4746,9 @@ namespace GNA_DLRreport
                         (
                             [Project_ID] int IDENTITY(1,1) NOT NULL,
                             [ProjectName] nvarchar(200) NOT NULL,
+                            [ProjectStartDate] date NOT NULL
+                                CONSTRAINT [DF_Project_ProjectStartDate]
+                                DEFAULT (CONVERT(date, GETDATE())),
                             [IsDeleted] bit NOT NULL
                                 CONSTRAINT [DF_Project_IsDeleted]
                                 DEFAULT (0),
@@ -4829,10 +4995,10 @@ namespace GNA_DLRreport
                        Coordinates stored in metres. Missing values are SQL NULL.
                        ============================================================= */
 
-                    IF OBJECT_ID(N'dbo.CoordinatesEpoch', N'U') IS NULL
+                    IF OBJECT_ID(N'dbo.CoordinatesEpochs', N'U') IS NULL
                     BEGIN
 
-                        CREATE TABLE [dbo].[CoordinatesEpoch]
+                        CREATE TABLE [dbo].[CoordinatesEpochs]
                         (
                             [PointName_ID] int NOT NULL,
                             [UTCtime] datetime2(0) NOT NULL,
@@ -4840,22 +5006,22 @@ namespace GNA_DLRreport
                             [N] decimal(18,4) NULL,
                             [H] decimal(18,4) NULL,
                             [IsDeleted] bit NOT NULL
-                                CONSTRAINT [DF_CoordinatesEpoch_IsDeleted]
+                                CONSTRAINT [DF_CoordinatesEpochs_IsDeleted]
                                 DEFAULT (0),
 
-                            CONSTRAINT [PK_CoordinatesEpoch]
+                            CONSTRAINT [PK_CoordinatesEpochs]
                                 PRIMARY KEY CLUSTERED
                                 ([PointName_ID], [UTCtime]),
 
-                            CONSTRAINT [FK_CoordinatesEpoch_PointName]
+                            CONSTRAINT [FK_CoordinatesEpochs_PointName]
                                 FOREIGN KEY ([PointName_ID])
                                 REFERENCES [dbo].[PointName] ([PointName_ID])
                                 ON DELETE NO ACTION
                                 ON UPDATE NO ACTION
                         );
 
-                        CREATE INDEX [IX_CoordinatesEpoch_UTCtime]
-                            ON [dbo].[CoordinatesEpoch] ([UTCtime]);
+                        CREATE INDEX [IX_CoordinatesEpochs_UTCtime]
+                            ON [dbo].[CoordinatesEpochs] ([UTCtime]);
 
                     END;
 
@@ -4866,31 +5032,31 @@ namespace GNA_DLRreport
                        Missing values are SQL NULL. Value stored in metres.
                        ============================================================= */
 
-                    IF OBJECT_ID(N'dbo.ToRCurrent', N'U') IS NULL
+                    IF OBJECT_ID(N'dbo.ToREpochs', N'U') IS NULL
                     BEGIN
 
-                        CREATE TABLE [dbo].[ToRCurrent]
+                        CREATE TABLE [dbo].[ToREpochs]
                         (
                             [PointName_ID] int NOT NULL,
                             [UTCtime] datetime2(0) NOT NULL,
                             [ToR] decimal(18,4) NULL,
                             [IsDeleted] bit NOT NULL
-                                CONSTRAINT [DF_ToRCurrent_IsDeleted]
+                                CONSTRAINT [DF_ToREpochs_IsDeleted]
                                 DEFAULT (0),
 
-                            CONSTRAINT [PK_ToRCurrent]
+                            CONSTRAINT [PK_ToREpochs]
                                 PRIMARY KEY CLUSTERED
                                 ([PointName_ID], [UTCtime]),
 
-                            CONSTRAINT [FK_ToRCurrent_PointName]
+                            CONSTRAINT [FK_ToREpochs_PointName]
                                 FOREIGN KEY ([PointName_ID])
                                 REFERENCES [dbo].[PointName] ([PointName_ID])
                                 ON DELETE NO ACTION
                                 ON UPDATE NO ACTION
                         );
 
-                        CREATE INDEX [IX_ToRCurrent_UTCtime]
-                            ON [dbo].[ToRCurrent] ([UTCtime]);
+                        CREATE INDEX [IX_ToREpochs_UTCtime]
+                            ON [dbo].[ToREpochs] ([UTCtime]);
 
                     END;
 
@@ -5018,7 +5184,8 @@ namespace GNA_DLRreport
                         VALUES
                             (1, N'Structural Array'),
                             (2, N'Tunnel Convergence'),
-                            (3, N'PrismCrackGauge');
+                            (3, N'PrismCrackGauge'),
+                            (4, N'PrismTilt (MperM)');
 
                     END;
 
@@ -5498,7 +5665,7 @@ namespace GNA_DLRreport
 
                     /* =============================================================
                        TOP-OF-RAIL DAILY
-                       UTC calendar-day arithmetic mean of non-NULL ToRCurrent.
+                       UTC calendar-day arithmetic mean of non-NULL ToREpochs.
                        Daily row timestamp is 12:00:00 UTC. If all epoch values are
                        NULL, retain a Daily row with ToR = NULL.
                        ============================================================= */
@@ -5998,7 +6165,7 @@ namespace GNA_DLRreport
                     END;
 
                     /* =============================================================
-                       PRISM CRACK GAUGE EPOCH
+                       PRISM CRACK GAUGE EPOCHS
                        Derived A-B crack-gauge geometry for each report epoch.
 
                        All measurements are stored in metres:
@@ -6010,10 +6177,10 @@ namespace GNA_DLRreport
                        written to this table by the database export workflow.
                        ============================================================= */
 
-                    IF OBJECT_ID(N'dbo.PrismCrackGaugeEpoch', N'U') IS NULL
+                    IF OBJECT_ID(N'dbo.PrismCrackGaugeEpochs', N'U') IS NULL
                     BEGIN
 
-                        CREATE TABLE [dbo].[PrismCrackGaugeEpoch]
+                        CREATE TABLE [dbo].[PrismCrackGaugeEpochs]
                         (
                             [Array_ID] int NOT NULL,
                             [UTCtime] datetime2(0) NOT NULL,
@@ -6021,28 +6188,28 @@ namespace GNA_DLRreport
                             [d3D] decimal(18,4) NULL,
                             [dH] decimal(18,4) NULL,
                             [IsDeleted] bit NOT NULL
-                                CONSTRAINT [DF_PrismCrackGaugeEpoch_IsDeleted]
+                                CONSTRAINT [DF_PrismCrackGaugeEpochs_IsDeleted]
                                 DEFAULT (0),
 
-                            CONSTRAINT [PK_PrismCrackGaugeEpoch]
+                            CONSTRAINT [PK_PrismCrackGaugeEpochs]
                                 PRIMARY KEY CLUSTERED
                                 ([Array_ID], [UTCtime]),
 
-                            CONSTRAINT [FK_PrismCrackGaugeEpoch_PrismArray]
+                            CONSTRAINT [FK_PrismCrackGaugeEpochs_PrismArray]
                                 FOREIGN KEY ([Array_ID])
                                 REFERENCES [dbo].[PrismArray] ([Array_ID])
                                 ON DELETE NO ACTION
                                 ON UPDATE NO ACTION
                         );
 
-                        CREATE INDEX [IX_PrismCrackGaugeEpoch_UTCtime]
-                            ON [dbo].[PrismCrackGaugeEpoch] ([UTCtime]);
+                        CREATE INDEX [IX_PrismCrackGaugeEpochs_UTCtime]
+                            ON [dbo].[PrismCrackGaugeEpochs] ([UTCtime]);
 
                     END;
 
                     /* =============================================================
                        PRISM CRACK GAUGE DAILY
-                       UTC calendar-day summary of PrismCrackGaugeEpoch data.
+                       UTC calendar-day summary of PrismCrackGaugeEpochs data.
 
                        All measurements are stored in metres. Daily values are
                        populated by the Track Geometry database-writing workflow.
@@ -6079,14 +6246,94 @@ namespace GNA_DLRreport
                     END;
 
                     /* =============================================================
-                       TILT EPOCH
+                       PRISM TILT EPOCHS
+                       Two-point PrismTilt array results generated by
+                       TrackGeometryReport.
+
+                       TiltX_MperM and TiltY_MperM are stored in metres/metre
+                       (m/m) to six decimal places.
+
+                       Array_ID references dbo.PrismArray. PrismTilt arrays use
+                       point roles A and B in the Arrays configuration workflow.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.PrismTiltEpochs', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[PrismTiltEpochs]
+                        (
+                            [Array_ID] int NOT NULL,
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [TiltX_MperM] decimal(18,6) NULL,
+                            [TiltY_MperM] decimal(18,6) NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_PrismTiltEpochs_IsDeleted]
+                                DEFAULT (0),
+
+                            CONSTRAINT [PK_PrismTiltEpochs]
+                                PRIMARY KEY CLUSTERED
+                                ([Array_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_PrismTiltEpochs_PrismArray]
+                                FOREIGN KEY ([Array_ID])
+                                REFERENCES [dbo].[PrismArray] ([Array_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_PrismTiltEpochs_UTCtime]
+                            ON [dbo].[PrismTiltEpochs] ([UTCtime]);
+
+                    END;
+
+                    /* =============================================================
+                       PRISM TILT DAILY
+                       Daily PrismTilt values generated by TrackGeometryReport.
+
+                       TiltX_MperM and TiltY_MperM are stored in metres/metre
+                       (m/m) to six decimal places.
+
+                       UTCtime follows the existing daily-table convention.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.PrismTiltDaily', N'U') IS NULL
+                    BEGIN
+
+                        CREATE TABLE [dbo].[PrismTiltDaily]
+                        (
+                            [Array_ID] int NOT NULL,
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [TiltX_MperM] decimal(18,6) NULL,
+                            [TiltY_MperM] decimal(18,6) NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_PrismTiltDaily_IsDeleted]
+                                DEFAULT (0),
+
+                            CONSTRAINT [PK_PrismTiltDaily]
+                                PRIMARY KEY CLUSTERED
+                                ([Array_ID], [UTCtime]),
+
+                            CONSTRAINT [FK_PrismTiltDaily_PrismArray]
+                                FOREIGN KEY ([Array_ID])
+                                REFERENCES [dbo].[PrismArray] ([Array_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION
+                        );
+
+                        CREATE INDEX [IX_PrismTiltDaily_UTCtime]
+                            ON [dbo].[PrismTiltDaily] ([UTCtime]);
+
+                    END;
+
+                    /* =============================================================
+                       TILT EPOCHS
                        All Tilt values are stored to six decimal places.
                        ============================================================= */
 
-                    IF OBJECT_ID(N'dbo.TiltEpoch', N'U') IS NULL
+                    IF OBJECT_ID(N'dbo.TiltEpochs', N'U') IS NULL
                     BEGIN
 
-                        CREATE TABLE [dbo].[TiltEpoch]
+                        CREATE TABLE [dbo].[TiltEpochs]
                         (
                             [SensorID] int NOT NULL,
                             [UTCtime] datetime2(0) NOT NULL,
@@ -6094,23 +6341,23 @@ namespace GNA_DLRreport
                             [TiltB] decimal(18,6) NOT NULL,
                             [TiltC] decimal(18,6) NOT NULL,
                             [IsDeleted] bit NOT NULL
-                                CONSTRAINT [DF_TiltEpoch_IsDeleted]
+                                CONSTRAINT [DF_TiltEpochs_IsDeleted]
                                 DEFAULT (0),
                             [ReplacementName] nvarchar(50) NOT NULL,
 
-                            CONSTRAINT [PK_TiltEpoch]
+                            CONSTRAINT [PK_TiltEpochs]
                                 PRIMARY KEY CLUSTERED
                                 ([SensorID], [UTCtime]),
 
-                            CONSTRAINT [FK_TiltEpoch_GeotecSensors]
+                            CONSTRAINT [FK_TiltEpochs_GeotecSensors]
                                 FOREIGN KEY ([SensorID])
                                 REFERENCES [dbo].[GeotecSensors] ([SensorID])
                                 ON DELETE NO ACTION
                                 ON UPDATE NO ACTION
                         );
 
-                        CREATE INDEX [IX_TiltEpoch_UTCtime]
-                            ON [dbo].[TiltEpoch] ([UTCtime]);
+                        CREATE INDEX [IX_TiltEpochs_UTCtime]
+                            ON [dbo].[TiltEpochs] ([UTCtime]);
 
                     END;
 
@@ -6151,14 +6398,14 @@ namespace GNA_DLRreport
                     END;
 
                     /* =============================================================
-                       VIBRATION EPOCH
+                       VIBRATION EPOCHS
                        All Vibration values are stored to six decimal places.
                        ============================================================= */
 
-                    IF OBJECT_ID(N'dbo.VibrationEpoch', N'U') IS NULL
+                    IF OBJECT_ID(N'dbo.VibrationEpochs', N'U') IS NULL
                     BEGIN
 
-                        CREATE TABLE [dbo].[VibrationEpoch]
+                        CREATE TABLE [dbo].[VibrationEpochs]
                         (
                             [SensorID] int NOT NULL,
                             [UTCtime] datetime2(0) NOT NULL,
@@ -6166,23 +6413,23 @@ namespace GNA_DLRreport
                             [PPV] decimal(18,6) NOT NULL,
                             [PPA] decimal(18,6) NOT NULL,
                             [IsDeleted] bit NOT NULL
-                                CONSTRAINT [DF_VibrationEpoch_IsDeleted]
+                                CONSTRAINT [DF_VibrationEpochs_IsDeleted]
                                 DEFAULT (0),
                             [ReplacementName] nvarchar(50) NOT NULL,
 
-                            CONSTRAINT [PK_VibrationEpoch]
+                            CONSTRAINT [PK_VibrationEpochs]
                                 PRIMARY KEY CLUSTERED
                                 ([SensorID], [UTCtime]),
 
-                            CONSTRAINT [FK_VibrationEpoch_GeotecSensors]
+                            CONSTRAINT [FK_VibrationEpochs_GeotecSensors]
                                 FOREIGN KEY ([SensorID])
                                 REFERENCES [dbo].[GeotecSensors] ([SensorID])
                                 ON DELETE NO ACTION
                                 ON UPDATE NO ACTION
                         );
 
-                        CREATE INDEX [IX_VibrationEpoch_UTCtime]
-                            ON [dbo].[VibrationEpoch] ([UTCtime]);
+                        CREATE INDEX [IX_VibrationEpochs_UTCtime]
+                            ON [dbo].[VibrationEpochs] ([UTCtime]);
 
                     END;
 
@@ -6311,7 +6558,8 @@ namespace GNA_DLRreport
                                         N'Point',
                                         N'PrismPair',
                                         N'Track',
-                                        N'PrismArray'
+                                        N'PrismArray',
+                                        N'Sensor'
                                     )
                                 )
                         );
@@ -6383,6 +6631,7 @@ namespace GNA_DLRreport
 
                             [Project_ID] int NOT NULL,
                             [ChartNumber] int NOT NULL,
+                            [ChartName] nvarchar(200) NOT NULL,
                             [ChartType_ID] int NOT NULL,
 
                             [AutoTitleTemplate] nvarchar(500) NOT NULL,
@@ -6571,6 +6820,15 @@ namespace GNA_DLRreport
                                 [IsEnabled],
                                 [ChartOrder]
                             );
+
+                        CREATE UNIQUE INDEX
+                            [UX_ChartDefinition_Active_Project_ChartName]
+                            ON [dbo].[ChartDefinition]
+                            (
+                                [Project_ID],
+                                [ChartName]
+                            )
+                            WHERE [IsDeleted] = 0;
 
                     END;
 
@@ -7243,6 +7501,59 @@ namespace GNA_DLRreport
             {
                 await LoadProjectsAsync();
 
+                #region Populate Active Project Edit Controls
+
+                if (_activeProjectId.HasValue)
+                {
+                    ProjectConfigurationItem? activeProject =
+                        null;
+
+                    foreach (ProjectConfigurationItem projectItem
+                        in _projectItems)
+                    {
+                        if (projectItem.Project_ID == _activeProjectId.Value)
+                        {
+                            activeProject =
+                                projectItem;
+
+                            break;
+                        }
+                    }
+
+                    if (activeProject is not null)
+                    {
+                        dgProjects.SelectedItem =
+                            activeProject;
+
+                        txtNewProjectName.Text =
+                            activeProject.ProjectName;
+
+                        if (_projectStartDates.TryGetValue(
+                            key: activeProject.Project_ID,
+                            value: out DateTime activeProjectStartDate))
+                        {
+                            _pendingProjectStartDate =
+                                activeProjectStartDate.Date;
+
+                            _isUpdatingProjectStartDateControl =
+                                true;
+
+                            try
+                            {
+                                dpProjectStartDate.SelectedDate =
+                                    _pendingProjectStartDate;
+                            }
+                            finally
+                            {
+                                _isUpdatingProjectStartDateControl =
+                                    false;
+                            }
+                        }
+                    }
+                }
+
+                #endregion
+
                 txtProjectManagementStatus.Text =
                     $"{_projectItems.Count} project(s) loaded.";
             }
@@ -7284,6 +7595,311 @@ namespace GNA_DLRreport
         }
 
 
+
+
+        #region Project Start Date
+
+        private void dgProjects_SelectionChanged(
+            object sender,
+            SelectionChangedEventArgs e)
+        {
+            #region Synchronise Project Start Date Picker
+
+            if (_isUpdatingProjectStartDateControl)
+            {
+                return;
+            }
+
+            if (dgProjects.SelectedItem
+                is not ProjectConfigurationItem selectedProject)
+            {
+                return;
+            }
+
+            if (!_projectStartDates.TryGetValue(
+                key: selectedProject.Project_ID,
+                value: out DateTime projectStartDate))
+            {
+                projectStartDate =
+                    DateTime.Today;
+            }
+
+            _pendingProjectStartDate =
+                projectStartDate.Date;
+
+            _isUpdatingProjectStartDateControl =
+                true;
+
+            try
+            {
+                dpProjectStartDate.SelectedDate =
+                    _pendingProjectStartDate;
+            }
+            finally
+            {
+                _isUpdatingProjectStartDateControl =
+                    false;
+            }
+
+            #endregion
+        }
+
+
+        private async void dpProjectStartDate_SelectedDateChanged(
+            object sender,
+            SelectionChangedEventArgs e)
+        {
+            // This handler is intentionally available for future XAML use.
+            // The current DatePicker is used both for a new project and for an
+            // existing selected project. Existing-project persistence occurs
+            // explicitly through the calendar-selection workflow below.
+            await Task.CompletedTask;
+        }
+
+
+        private void ProjectStartDateTextBlock_Loaded(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Populate Project Start Date Cell
+
+            if (sender is not TextBlock dateTextBlock ||
+                dateTextBlock.DataContext
+                    is not ProjectConfigurationItem projectItem)
+            {
+                return;
+            }
+
+            if (_projectStartDates.TryGetValue(
+                key: projectItem.Project_ID,
+                value: out DateTime projectStartDate))
+            {
+                dateTextBlock.Text =
+                    projectStartDate.ToString(
+                        format: "yyyy-MM-dd",
+                        provider: CultureInfo.InvariantCulture);
+            }
+            else
+            {
+                dateTextBlock.Text =
+                    DateTime.Today.ToString(
+                        format: "yyyy-MM-dd",
+                        provider: CultureInfo.InvariantCulture);
+            }
+
+            #endregion
+        }
+
+
+        private async Task UpdateSelectedProjectStartDateAsync(
+            DateTime projectStartDate)
+        {
+            #region Validate Selected Project
+
+            if (dgProjects.SelectedItem
+                is not ProjectConfigurationItem selectedProject)
+            {
+                _pendingProjectStartDate =
+                    projectStartDate.Date;
+
+                txtProjectManagementStatus.Text =
+                    $"Project start date for new project: {_pendingProjectStartDate:yyyy-MM-dd}.";
+
+                return;
+            }
+
+            if (selectedProject.Project_ID <= 0)
+            {
+                throw new InvalidOperationException(
+                    "Selected project is invalid.");
+            }
+
+            #endregion
+
+
+            #region Update Database
+
+            const string updateSql = """
+                UPDATE [dbo].[Project]
+                SET [ProjectStartDate] = @ProjectStartDate
+                WHERE [Project_ID] = @Project_ID;
+                """;
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand updateCommand =
+                new(
+                    cmdText: updateSql,
+                    connection: databaseConnection);
+
+            updateCommand.Parameters.Add(
+                parameterName: "@ProjectStartDate",
+                sqlDbType: System.Data.SqlDbType.Date)
+                .Value =
+                    projectStartDate.Date;
+
+            updateCommand.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    selectedProject.Project_ID;
+
+            int affectedRows =
+                await updateCommand.ExecuteNonQueryAsync();
+
+            if (affectedRows != 1)
+            {
+                throw new InvalidOperationException(
+                    "Project start date was not updated.");
+            }
+
+            #endregion
+
+
+            #region Refresh Runtime State
+
+            _projectStartDates[selectedProject.Project_ID] =
+                projectStartDate.Date;
+
+            _pendingProjectStartDate =
+                projectStartDate.Date;
+
+            dgProjects.Items.Refresh();
+
+            txtProjectManagementStatus.Text =
+                $"Project '{selectedProject.ProjectName}' start date set to " +
+                $"{projectStartDate:yyyy-MM-dd}.";
+
+            #endregion
+        }
+
+
+        private async void btnProjectStartCalendar_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Resolve Project Start Calendar Target
+
+            bool creatingNewProject =
+                !string.IsNullOrWhiteSpace(
+                    value: txtNewProjectName.Text);
+
+            if (!creatingNewProject &&
+                dgProjects.SelectedItem
+                    is ProjectConfigurationItem selectedProject)
+            {
+                _projectStartCalendarTargetProjectId =
+                    selectedProject.Project_ID;
+
+                if (_projectStartDates.TryGetValue(
+                    key: selectedProject.Project_ID,
+                    value: out DateTime existingStartDate))
+                {
+                    dpProjectStartDate.SelectedDate =
+                        existingStartDate.Date;
+                }
+                else
+                {
+                    dpProjectStartDate.SelectedDate =
+                        DateTime.Today;
+                }
+            }
+            else
+            {
+                _projectStartCalendarTargetProjectId =
+                    null;
+
+                dpProjectStartDate.SelectedDate =
+                    _pendingProjectStartDate.Date;
+            }
+
+            dpProjectStartDate.Focus();
+
+            dpProjectStartDate.IsDropDownOpen =
+                true;
+
+            #endregion
+        }
+
+
+        private async void dpProjectStartDate_CalendarClosed(
+            object? sender,
+            RoutedEventArgs e)
+        {
+            #region Read Selected Project Start Date
+
+            DateTime selectedDate =
+                dpProjectStartDate.SelectedDate?.Date
+                ?? DateTime.Today;
+
+            #endregion
+
+
+            #region Apply To Existing Project Or New Project
+
+            try
+            {
+                if (_projectStartCalendarTargetProjectId.HasValue)
+                {
+                    int targetProjectId =
+                        _projectStartCalendarTargetProjectId.Value;
+
+                    ProjectConfigurationItem? targetProject =
+                        null;
+
+                    foreach (ProjectConfigurationItem projectItem
+                        in _projectItems)
+                    {
+                        if (projectItem.Project_ID == targetProjectId)
+                        {
+                            targetProject =
+                                projectItem;
+
+                            break;
+                        }
+                    }
+
+                    if (targetProject is null)
+                    {
+                        throw new InvalidOperationException(
+                            "The selected project is no longer available.");
+                    }
+
+                    dgProjects.SelectedItem =
+                        targetProject;
+
+                    await UpdateSelectedProjectStartDateAsync(
+                        projectStartDate: selectedDate);
+                }
+                else
+                {
+                    _pendingProjectStartDate =
+                        selectedDate;
+
+                    txtProjectManagementStatus.Text =
+                        $"Project start date for new project: {selectedDate:yyyy-MM-dd}.";
+                }
+            }
+            catch (Exception ex)
+            {
+                txtProjectManagementStatus.Text =
+                    $"Unable to update project start date: {ex.Message}";
+            }
+            finally
+            {
+                _projectStartCalendarTargetProjectId =
+                    null;
+            }
+
+            #endregion
+        }
+
+        #endregion
 
 
         #region Add Project
@@ -7337,9 +7953,14 @@ namespace GNA_DLRreport
             {
                 #region Add Or Restore Project
 
+                DateTime projectStartDate =
+                    dpProjectStartDate.SelectedDate?.Date
+                    ?? DateTime.Today;
+
                 bool projectAddedOrRestored =
                     await AddOrRestoreProjectAsync(
-                        projectName: projectName);
+                        projectName: projectName,
+                        projectStartDate: projectStartDate);
 
                 #endregion
 
@@ -7349,6 +7970,23 @@ namespace GNA_DLRreport
                 if (projectAddedOrRestored)
                 {
                     txtNewProjectName.Clear();
+
+                    _pendingProjectStartDate =
+                        DateTime.Today;
+
+                    _isUpdatingProjectStartDateControl =
+                        true;
+
+                    try
+                    {
+                        dpProjectStartDate.SelectedDate =
+                            _pendingProjectStartDate;
+                    }
+                    finally
+                    {
+                        _isUpdatingProjectStartDateControl =
+                            false;
+                    }
 
                     await LoadProjectsAsync();
                 }
@@ -7408,7 +8046,8 @@ namespace GNA_DLRreport
 
 
         private async Task<bool> AddOrRestoreProjectAsync(
-            string projectName)
+            string projectName,
+            DateTime projectStartDate)
         {
             #region Validate Project Name
 
@@ -7430,6 +8069,9 @@ namespace GNA_DLRreport
                     message: "Project name cannot exceed 200 characters.",
                     paramName: nameof(projectName));
             }
+
+            DateTime validatedProjectStartDate =
+                projectStartDate.Date;
 
             #endregion
 
@@ -7539,7 +8181,9 @@ namespace GNA_DLRreport
 
                 const string restoreProjectSql = """
             UPDATE [dbo].[Project]
-            SET [IsDeleted] = 0
+            SET
+                [IsDeleted] = 0,
+                [ProjectStartDate] = @ProjectStartDate
             WHERE [Project_ID] = @Project_ID
               AND [IsDeleted] = 1;
             """;
@@ -7552,6 +8196,12 @@ namespace GNA_DLRreport
                 restoreProjectCommand.Parameters.AddWithValue(
                     parameterName: "@Project_ID",
                     value: existingProjectId.Value);
+
+                restoreProjectCommand.Parameters.Add(
+                    parameterName: "@ProjectStartDate",
+                    sqlDbType: System.Data.SqlDbType.Date)
+                    .Value =
+                        validatedProjectStartDate;
 
                 int restoredRows =
                     await restoreProjectCommand.ExecuteNonQueryAsync();
@@ -7585,11 +8235,13 @@ namespace GNA_DLRreport
         INSERT INTO [dbo].[Project]
         (
             [ProjectName],
+            [ProjectStartDate],
             [IsDeleted]
         )
         VALUES
         (
             @ProjectName,
+            @ProjectStartDate,
             0
         );
         """;
@@ -7602,6 +8254,12 @@ namespace GNA_DLRreport
             insertProjectCommand.Parameters.AddWithValue(
                 parameterName: "@ProjectName",
                 value: validatedProjectName);
+
+            insertProjectCommand.Parameters.Add(
+                parameterName: "@ProjectStartDate",
+                sqlDbType: System.Data.SqlDbType.Date)
+                .Value =
+                    validatedProjectStartDate;
 
             int insertedRows =
                 await insertProjectCommand.ExecuteNonQueryAsync();
@@ -7878,6 +8536,18 @@ namespace GNA_DLRreport
                         txtPrismArrayStatus.Text =
                             $"Unable to load arrays: {arrayEx.Message}";
                     }
+                }
+
+                try
+                {
+                    await EnsureChartTypeCatalogueAsync();
+
+                    await RefreshExistingChartsAsync();
+                }
+                catch (Exception chartEx)
+                {
+                    txtChartStatus.Text =
+                        $"Unable to load chart list: {chartEx.Message}";
                 }
 
                 txtProjectManagementStatus.Text =
@@ -8726,6 +9396,7 @@ namespace GNA_DLRreport
                 SELECT
                     [Project_ID],
                     [ProjectName],
+                    [ProjectStartDate],
                     [IsDeleted]
                 FROM [dbo].[Project]
                 ORDER BY
@@ -8738,6 +9409,8 @@ namespace GNA_DLRreport
             #region Clear Existing Project List
 
             _projectItems.Clear();
+
+            _projectStartDates.Clear();
 
             #endregion
 
@@ -8769,9 +9442,17 @@ namespace GNA_DLRreport
                     reader.GetString(
                         i: 1);
 
+                DateTime projectStartDate =
+                    reader.GetDateTime(
+                        i: 2)
+                    .Date;
+
                 bool isDeleted =
                     reader.GetBoolean(
-                        i: 2);
+                        i: 3);
+
+                _projectStartDates[projectId] =
+                    projectStartDate;
 
                 ProjectConfigurationItem projectItem =
                     new()
@@ -8898,6 +9579,3026 @@ namespace GNA_DLRreport
 
             #endregion
         }
+        #endregion
+
+
+        #region Chart Configuration UI
+
+        private void InitialiseChartConfigurationUi()
+        {
+            #region Populate Chart Type Catalogue
+
+            _chartTypes.Clear();
+
+            AddChartTypeUiItem(
+                key: "TiltDegrees",
+                displayName: "Tilt - Degrees",
+                sourceTable: "TiltEpochs",
+                entityKind: "Sensor",
+                verticalAxisTitle: "Rotation",
+                unit: "decimal degrees",
+                dataElements: new[] { "TiltA", "TiltB", "TiltC" });
+
+            AddChartTypeUiItem(
+                key: "TiltMmPerM",
+                displayName: "Tilt - mm/m",
+                sourceTable: "TiltEpochs",
+                entityKind: "Sensor",
+                verticalAxisTitle: "Displacement",
+                unit: "mm/m",
+                dataElements: new[] { "TiltA", "TiltB", "TiltC" },
+                isFullyDefined: false);
+
+            AddChartTypeUiItem(
+                key: "PrismTiltMmPerM",
+                displayName: "Prism Tilt - mm/m",
+                sourceTable: "PrismTiltEpochs",
+                entityKind: "PrismArray",
+                verticalAxisTitle: "Displacement",
+                unit: "mm/m",
+                dataElements: new[] { "TiltX", "TiltY" });
+
+            AddChartTypeUiItem(
+                key: "CrackMeter",
+                displayName: "Crack Meter",
+                sourceTable: "PrismCrackGaugeEpochs",
+                entityKind: "PrismArray",
+                verticalAxisTitle: "Displacement",
+                unit: "mm",
+                dataElements: new[] { "d2D", "d3D", "dH" });
+
+            AddChartTypeUiItem(
+                key: "Displacement",
+                displayName: "Displacement",
+                sourceTable: "CoordinatesEpochs",
+                entityKind: "Point",
+                verticalAxisTitle: "Displacement",
+                unit: "mm",
+                dataElements: new[] { "dE", "dN", "d2D" });
+
+
+            AddChartTypeUiItem(
+                key: "StructuralArray",
+                displayName: "Structural Array",
+                sourceTable: "StructuralArrayEpochs",
+                entityKind: "PrismArray",
+                verticalAxisTitle: "Displacement",
+                unit: "mm",
+                dataElements: new[] { "dE", "dN", "dH", "d2D", "d3D" });
+
+            AddChartTypeUiItem(
+                key: "Cant",
+                displayName: "Cant",
+                sourceTable: "CantEpochs",
+                entityKind: "PrismPair",
+                verticalAxisTitle: "Cant",
+                unit: "mm",
+                dataElements: new[] { "Cant" });
+
+            AddChartTypeUiItem(
+                key: "ShortTwistMmPer3m",
+                displayName: "Short Twist - mm/3m",
+                sourceTable: "ShortTwistEpochs",
+                entityKind: "PrismPair",
+                verticalAxisTitle: "Twist / 3m",
+                unit: "mm/3m",
+                dataElements: new[] { "ShortTwist" });
+
+            AddChartTypeUiItem(
+                key: "ShortTwistRatio",
+                displayName: "Short Twist - Ratio",
+                sourceTable: "ShortTwistEpochs",
+                entityKind: "PrismPair",
+                verticalAxisTitle: "Twist / 3m",
+                unit: "ratio",
+                dataElements: new[] { "ShortTwistRatio" });
+
+            AddChartTypeUiItem(
+                key: "LongTwistMmPer15m",
+                displayName: "Long Twist - mm/15m",
+                sourceTable: "LongTwistEpochs",
+                entityKind: "PrismPair",
+                verticalAxisTitle: "Twist / 15m",
+                unit: "mm/15m",
+                dataElements: new[] { "LongTwist" });
+
+            AddChartTypeUiItem(
+                key: "LongTwistRatio",
+                displayName: "Long Twist - Ratio",
+                sourceTable: "LongTwistEpochs",
+                entityKind: "PrismPair",
+                verticalAxisTitle: "Twist / 15m",
+                unit: "ratio",
+                dataElements: new[] { "LongTwistRatio" });
+
+            AddChartTypeUiItem(
+                key: "Slew",
+                displayName: "Slew",
+                sourceTable: "SlewEpochs",
+                entityKind: "Point",
+                verticalAxisTitle: "Slew",
+                unit: "mm",
+                dataElements: new[] { "Slew" },
+                isFullyDefined: false);
+
+            AddChartTypeUiItem(
+                key: "LevelDh",
+                displayName: "Level - dH",
+                sourceTable: "DhEpochs",
+                entityKind: "Point",
+                verticalAxisTitle: "dH",
+                unit: "mm",
+                dataElements: new[] { "dH" });
+
+            AddChartTypeUiItem(
+                key: "Top",
+                displayName: "Top",
+                sourceTable: "TopEpochs",
+                entityKind: "Point",
+                verticalAxisTitle: "dH",
+                unit: "mm",
+                dataElements: new[] { "Top" });
+
+            AddChartTypeUiItem(
+                key: "ToRLevel",
+                displayName: "ToR Level",
+                sourceTable: "ToREpochs",
+                entityKind: "Point",
+                verticalAxisTitle: "dH",
+                unit: "mm",
+                dataElements: new[] { "ToR - Reference ToR" });
+
+            AddChartTypeUiItem(
+                key: "ConvergenceArray",
+                displayName: "Convergence Array",
+                sourceTable: "TunnelConvergenceEpochs",
+                entityKind: "PrismArray",
+                verticalAxisTitle: "Displacement",
+                unit: "mm",
+                dataElements: new[]
+                {
+                    "dAB", "dAC", "dAD", "dAE", "dBC",
+                    "dBD", "dBE", "dCD", "dCE", "dDE"
+                });
+
+            AddChartTypeUiItem(
+                key: "CrownData",
+                displayName: "Crown Data",
+                sourceTable: "StructuralArrayEpochs",
+                entityKind: "PrismArray",
+                verticalAxisTitle: "Displacement",
+                unit: "mm",
+                dataElements: new[] { "dE", "dN", "dH", "d2D", "d3D" });
+
+            List<ChartTypeUiItem> sortedChartTypes =
+                _chartTypes
+                    .OrderBy(
+                        keySelector: item => item.DisplayName,
+                        comparer: StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+            cmbChartType.ItemsSource =
+                sortedChartTypes;
+
+            if (sortedChartTypes.Count > 0)
+            {
+                cmbChartType.SelectedIndex =
+                    0;
+            }
+
+            #endregion
+
+
+            #region Initialise Chart Dates
+
+            dpChartEndDate.SelectedDate =
+                DateTime.Today;
+
+            dpChartStartDate.SelectedDate =
+                DateTime.Today.AddDays(
+                    value: -DefaultChartRecentDays);
+
+            txtChartRecentDays.Text =
+                DefaultChartRecentDays.ToString(
+                    provider: CultureInfo.InvariantCulture);
+
+            #endregion
+
+
+            #region Initialise Chart Series
+
+            dgChartSeries.ItemsSource =
+                _chartSeries;
+
+            #endregion
+
+
+            #region Initialise Y Axis Controls
+
+            UpdateChartYAxisControlState();
+
+            #endregion
+        }
+
+
+        private void AddChartTypeUiItem(
+            string key,
+            string displayName,
+            string sourceTable,
+            string entityKind,
+            string verticalAxisTitle,
+            string unit,
+            IReadOnlyList<string> dataElements,
+            bool isFullyDefined = true)
+        {
+            _chartTypes.Add(
+                item:
+                    new ChartTypeUiItem
+                    {
+                        Key = key,
+                        DisplayName = displayName,
+                        SourceTable = sourceTable,
+                        EntityKind = entityKind,
+                        VerticalAxisTitle = verticalAxisTitle,
+                        Unit = unit,
+                        DataElements = dataElements,
+                        IsFullyDefined = isFullyDefined
+                    });
+        }
+
+
+        private void cmbChartType_SelectionChanged(
+            object sender,
+            SelectionChangedEventArgs e)
+        {
+            #region Apply Selected Chart Type
+
+            if (cmbChartType.SelectedItem
+                is not ChartTypeUiItem selectedType)
+            {
+                txtChartDataSource.Text =
+                    string.Empty;
+
+                txtChartUnit.Text =
+                    string.Empty;
+
+                txtChartTriggerUnit.Text =
+                    string.Empty;
+
+                cmbChartDataElement.ItemsSource =
+                    null;
+
+                return;
+            }
+
+            txtChartDataSource.Text =
+                $"{selectedType.SourceTable} ({selectedType.EntityKind})";
+
+            txtChartUnit.Text =
+                selectedType.Unit;
+
+            txtChartTriggerUnit.Text =
+                selectedType.Unit;
+
+            txtChartYAxisTitle.Text =
+                selectedType.VerticalAxisTitle;
+
+            cmbChartDataElement.ItemsSource =
+                selectedType.DataElements;
+
+            if (selectedType.DataElements.Count > 0)
+            {
+                cmbChartDataElement.SelectedIndex =
+                    0;
+            }
+
+            if (!selectedType.IsFullyDefined)
+            {
+                txtChartStatus.Text =
+                    $"'{selectedType.DisplayName}' is available for configuration, " +
+                    "but its final engineering conversion/label rule remains to be confirmed.";
+            }
+            else
+            {
+                txtChartStatus.Text =
+                    $"Chart type '{selectedType.DisplayName}' selected.";
+            }
+
+            #endregion
+        }
+
+
+        private void btnChartNew_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Reset New Chart Definition
+
+            _loadedChartDefinitionId =
+                null;
+
+            _loadedChartNumber =
+                null;
+
+            cmbExistingChart.SelectedItem =
+                null;
+
+            txtChartNumber.Text =
+                "New";
+
+            txtChartName.Clear();
+
+            _chartSeries.Clear();
+
+            if (_chartTypes.Count > 0)
+            {
+                cmbChartType.SelectedIndex =
+                    0;
+            }
+
+            dpChartEndDate.SelectedDate =
+                DateTime.Today;
+
+            dpChartStartDate.SelectedDate =
+                DateTime.Today.AddDays(
+                    value: -DefaultChartRecentDays);
+
+            txtChartRecentDays.Text =
+                DefaultChartRecentDays.ToString(
+                    provider: CultureInfo.InvariantCulture);
+
+            txtChartGreenTrigger.Text =
+                "2";
+
+            txtChartAmberTrigger.Text =
+                "5";
+
+            txtChartRedTrigger.Text =
+                "10";
+
+            chkChartAutomaticYAxis.IsChecked =
+                true;
+
+            txtChartYAxisMinimum.Clear();
+
+            txtChartYAxisMaximum.Clear();
+
+            txtChartTitleOverride.Clear();
+
+            chkChartShowLegend.IsChecked =
+                true;
+
+            cmbChartLegendPosition.SelectedIndex =
+                0;
+
+            txtChartPngWidth.Text =
+                "3000";
+
+            txtChartPngHeight.Text =
+                "1000";
+
+            txtChartDefaultLineWidth.Text =
+                "2";
+
+            txtChartDefaultMarkerSize.Text =
+                "4";
+
+            chkChartGridLines.IsChecked =
+                true;
+
+            txtChartStatus.Text =
+                "New chart definition ready.";
+
+            txtChartName.Focus();
+
+            #endregion
+        }
+
+
+        private async void btnChartLoad_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Load Selected Existing Chart
+
+            try
+            {
+                if (!_activeProjectId.HasValue)
+                {
+                    throw new InvalidOperationException(
+                        "Select an active project.");
+                }
+
+                await RefreshExistingChartsAsync();
+
+                if (cmbExistingChart.SelectedItem
+                    is not ExistingChartUiItem selectedChart)
+                {
+                    txtChartStatus.Text =
+                        "Select an existing chart.";
+
+                    return;
+                }
+
+                await LoadChartDefinitionIntoEditorAsync(
+                    chartDefinitionId: selectedChart.ChartDefinitionId);
+
+                txtChartStatus.Text =
+                    $"Loaded {selectedChart.DisplayText}.";
+            }
+            catch (Exception ex)
+            {
+                txtChartStatus.Text =
+                    $"Unable to load chart: {ex.Message}";
+            }
+
+            #endregion
+        }
+
+
+        private void btnChartCopy_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Copy Current Chart Definition
+
+            if (string.IsNullOrWhiteSpace(
+                value: txtChartName.Text))
+            {
+                txtChartStatus.Text =
+                    "Load or define a chart before creating a copy.";
+
+                return;
+            }
+
+            // All current editor settings already represent the source chart.
+            // Creating a copy therefore preserves all settings and only removes
+            // the database identity and changes the name.
+
+            _loadedChartDefinitionId =
+                null;
+
+            _loadedChartNumber =
+                null;
+
+            cmbExistingChart.SelectedItem =
+                null;
+
+            txtChartNumber.Text =
+                "New";
+
+            string sourceName =
+                txtChartName.Text.Trim();
+
+            txtChartName.Text =
+                $"{sourceName}-Copy";
+
+            txtChartStatus.Text =
+                "Chart copied. All settings retained; edit the copy and Commit.";
+
+            txtChartName.Focus();
+
+            txtChartName.SelectAll();
+
+            #endregion
+        }
+
+
+        private async void btnChartDelete_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Validate Delete Target
+
+            ExistingChartUiItem? selectedChart =
+                cmbExistingChart.SelectedItem
+                    as ExistingChartUiItem;
+
+            int? chartDefinitionId =
+                selectedChart?.ChartDefinitionId
+                ?? _loadedChartDefinitionId;
+
+            if (!chartDefinitionId.HasValue)
+            {
+                txtChartStatus.Text =
+                    "Select or load a chart to delete.";
+
+                return;
+            }
+
+            string chartName =
+                selectedChart?.ChartName
+                ?? txtChartName.Text.Trim();
+
+            MessageBoxResult confirmation =
+                MessageBox.Show(
+                    owner: this,
+                    messageBoxText:
+                        $"Delete chart '{chartName}'?",
+                    caption:
+                        "Delete Chart",
+                    button:
+                        MessageBoxButton.YesNo,
+                    icon:
+                        MessageBoxImage.Warning,
+                    defaultResult:
+                        MessageBoxResult.No);
+
+            if (confirmation != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            #endregion
+
+
+            #region Soft Delete Chart
+
+            try
+            {
+                await SoftDeleteChartDefinitionAsync(
+                    chartDefinitionId: chartDefinitionId.Value);
+
+                await RefreshExistingChartsAsync();
+
+                btnChartNew_Click(
+                    sender: this,
+                    e: new RoutedEventArgs());
+
+                txtChartStatus.Text =
+                    $"Chart '{chartName}' deleted.";
+            }
+            catch (Exception ex)
+            {
+                txtChartStatus.Text =
+                    $"Unable to delete chart: {ex.Message}";
+            }
+
+            #endregion
+        }
+
+
+        private async void btnChartCommit_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Validate Chart Definition For Commit
+
+            if (!TryValidateChartConfiguration(
+                validationMessage: out string validationMessage))
+            {
+                txtChartStatus.Text =
+                    validationMessage;
+
+                return;
+            }
+
+            #endregion
+
+
+            try
+            {
+                #region Ensure Catalogue Exists
+
+                await EnsureChartTypeCatalogueAsync();
+
+                #endregion
+
+
+                #region Resolve Duplicate Chart Name
+
+                string chartName =
+                    txtChartName.Text.Trim();
+
+                ExistingChartUiItem? duplicateChart =
+                    await FindChartByNameAsync(
+                        chartName: chartName,
+                        excludeChartDefinitionId: _loadedChartDefinitionId);
+
+                int? targetChartDefinitionId =
+                    _loadedChartDefinitionId;
+
+                int? targetChartNumber =
+                    _loadedChartNumber;
+
+                if (duplicateChart is not null)
+                {
+                    MessageBoxResult replaceResult =
+                        MessageBox.Show(
+                            owner: this,
+                            messageBoxText:
+                                "Duplicate chart found\n\n" +
+                                $"Replace '{duplicateChart.ChartName}'?",
+                            caption:
+                                "Duplicate chart found",
+                            button:
+                                MessageBoxButton.YesNo,
+                            icon:
+                                MessageBoxImage.Warning,
+                            defaultResult:
+                                MessageBoxResult.No);
+
+                    if (replaceResult != MessageBoxResult.Yes)
+                    {
+                        txtChartStatus.Text =
+                            "Commit rejected. Chart name unchanged.";
+
+                        txtChartName.Focus();
+
+                        txtChartName.SelectAll();
+
+                        return;
+                    }
+
+                    // Replace means the existing duplicate chart is overwritten.
+                    // If another chart was loaded and renamed to this duplicate
+                    // name, retire the former loaded definition so the project
+                    // still has one active chart with the requested name.
+
+                    if (_loadedChartDefinitionId.HasValue &&
+                        _loadedChartDefinitionId.Value != duplicateChart.ChartDefinitionId)
+                    {
+                        await SoftDeleteChartDefinitionAsync(
+                            chartDefinitionId:
+                                _loadedChartDefinitionId.Value);
+                    }
+
+                    targetChartDefinitionId =
+                        duplicateChart.ChartDefinitionId;
+
+                    targetChartNumber =
+                        duplicateChart.ChartNumber;
+                }
+
+                #endregion
+
+
+                #region Commit Or Update Chart
+
+                (int ChartDefinitionId, int ChartNumber) commitResult =
+                    await SaveChartDefinitionAsync(
+                        chartDefinitionId:
+                            targetChartDefinitionId,
+                        chartNumber:
+                            targetChartNumber);
+
+                _loadedChartDefinitionId =
+                    commitResult.ChartDefinitionId;
+
+                _loadedChartNumber =
+                    commitResult.ChartNumber;
+
+                txtChartNumber.Text =
+                    $"Chart_{commitResult.ChartNumber:0000}";
+
+                await RefreshExistingChartsAsync(
+                    selectedChartDefinitionId:
+                        commitResult.ChartDefinitionId);
+
+                txtChartStatus.Text =
+                    $"Chart '{chartName}' committed.";
+
+                #endregion
+            }
+            catch (Exception ex)
+            {
+                txtChartStatus.Text =
+                    $"Commit failed: {ex.Message}";
+            }
+        }
+
+
+        #region Chart Repository Persistence
+
+        private async Task EnsureChartTypeCatalogueAsync()
+        {
+            #region Open Database
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            #endregion
+
+
+            #region Ensure Each Chart Type Exists
+
+            const string mergeSql = """
+                IF NOT EXISTS
+                (
+                    SELECT 1
+                    FROM [dbo].[ChartType]
+                    WHERE [ChartTypeKey] = @ChartTypeKey
+                )
+                BEGIN
+                    INSERT INTO [dbo].[ChartType]
+                    (
+                        [ChartTypeKey],
+                        [DisplayName],
+                        [DataSourceTable],
+                        [TimestampColumnName],
+                        [EntityIdColumnName],
+                        [EntityKind],
+                        [DefaultTitleTemplate],
+                        [DefaultYAxisTitle],
+                        [DefaultXAxisTitle],
+                        [SupportsReferenceAdjustment],
+                        [SupportsTriggerBands],
+                        [DefaultTriggerBandsSymmetric],
+                        [IsEnabled],
+                        [DisplayOrder]
+                    )
+                    VALUES
+                    (
+                        @ChartTypeKey,
+                        @DisplayName,
+                        @DataSourceTable,
+                        N'UTCtime',
+                        @EntityIdColumnName,
+                        @EntityKind,
+                        N'{ChartType} - {Sensors}',
+                        @DefaultYAxisTitle,
+                        N'Date / Time',
+                        0,
+                        1,
+                        1,
+                        1,
+                        @DisplayOrder
+                    );
+                END
+                ELSE
+                BEGIN
+                    UPDATE [dbo].[ChartType]
+                    SET
+                        [DisplayName] = @DisplayName,
+                        [DataSourceTable] = @DataSourceTable,
+                        [TimestampColumnName] = N'UTCtime',
+                        [EntityIdColumnName] = @EntityIdColumnName,
+                        [EntityKind] = @EntityKind,
+                        [DefaultYAxisTitle] = @DefaultYAxisTitle,
+                        [SupportsReferenceAdjustment] = 0,
+                        [SupportsTriggerBands] = 1,
+                        [DefaultTriggerBandsSymmetric] = 1,
+                        [IsEnabled] = 1,
+                        [DisplayOrder] = @DisplayOrder
+                    WHERE [ChartTypeKey] = @ChartTypeKey;
+                END;
+                """;
+
+            int displayOrder =
+                0;
+
+            foreach (ChartTypeUiItem chartType
+                in _chartTypes.OrderBy(
+                    keySelector: item => item.DisplayName,
+                    comparer: StringComparer.OrdinalIgnoreCase))
+            {
+                displayOrder++;
+
+                await using SqlCommand command =
+                    new(
+                        cmdText: mergeSql,
+                        connection: databaseConnection);
+
+                command.Parameters.Add(
+                    parameterName: "@ChartTypeKey",
+                    sqlDbType: System.Data.SqlDbType.NVarChar,
+                    size: 100)
+                    .Value =
+                        chartType.Key;
+
+                command.Parameters.Add(
+                    parameterName: "@DisplayName",
+                    sqlDbType: System.Data.SqlDbType.NVarChar,
+                    size: 200)
+                    .Value =
+                        chartType.DisplayName;
+
+                command.Parameters.Add(
+                    parameterName: "@DataSourceTable",
+                    sqlDbType: System.Data.SqlDbType.NVarChar,
+                    size: 128)
+                    .Value =
+                        chartType.SourceTable;
+
+                command.Parameters.Add(
+                    parameterName: "@EntityIdColumnName",
+                    sqlDbType: System.Data.SqlDbType.NVarChar,
+                    size: 128)
+                    .Value =
+                        GetChartEntityIdColumnName(
+                            entityKind:
+                                chartType.EntityKind);
+
+                command.Parameters.Add(
+                    parameterName: "@EntityKind",
+                    sqlDbType: System.Data.SqlDbType.NVarChar,
+                    size: 30)
+                    .Value =
+                        chartType.EntityKind;
+
+                command.Parameters.Add(
+                    parameterName: "@DefaultYAxisTitle",
+                    sqlDbType: System.Data.SqlDbType.NVarChar,
+                    size: 200)
+                    .Value =
+                        chartType.VerticalAxisTitle;
+
+                command.Parameters.Add(
+                    parameterName: "@DisplayOrder",
+                    sqlDbType: System.Data.SqlDbType.Int)
+                    .Value =
+                        displayOrder;
+
+                await command.ExecuteNonQueryAsync();
+            }
+
+            #endregion
+        }
+
+
+        private static string GetChartEntityIdColumnName(
+            string entityKind)
+        {
+            return entityKind switch
+            {
+                "Sensor" => "SensorID",
+                "Point" => "PointName_ID",
+                "PrismPair" => "PrismPair_ID",
+                "Track" => "Track_ID",
+                "PrismArray" => "Array_ID",
+
+                _ => throw new InvalidOperationException(
+                    $"Unsupported chart entity kind '{entityKind}'.")
+            };
+        }
+
+
+        #region Displacement Chart Engineering Conversion
+
+        private static double CalculateDisplacementChartValueMm(
+            string dataElement,
+            decimal currentE,
+            decimal currentN,
+            decimal referenceE,
+            decimal referenceN)
+        {
+            #region Calculate Coordinate Differences
+
+            double deltaE =
+                (double)(currentE - referenceE);
+
+            double deltaN =
+                (double)(currentN - referenceN);
+
+            #endregion
+
+
+            #region Convert Selected Element To Millimetres
+
+            return dataElement switch
+            {
+                "dE" =>
+                    deltaE * 1000.0,
+
+                "dN" =>
+                    deltaN * 1000.0,
+
+                "d2D" =>
+                    Math.Sqrt(
+                        (deltaE * deltaE) +
+                        (deltaN * deltaN)) *
+                    1000.0,
+
+                _ => throw new InvalidOperationException(
+                    $"Unsupported Displacement data element '{dataElement}'.")
+            };
+
+            #endregion
+        }
+
+        #endregion
+
+
+        private async Task RefreshExistingChartsAsync(
+            int? selectedChartDefinitionId = null)
+        {
+            #region Clear Existing Chart List
+
+            _existingCharts.Clear();
+
+            if (!_activeProjectId.HasValue)
+            {
+                return;
+            }
+
+            #endregion
+
+
+            #region Load Existing Charts
+
+            const string sql = """
+                SELECT
+                    CD.[ChartDefinition_ID],
+                    CD.[ChartNumber],
+                    CD.[ChartName],
+                    CT.[ChartTypeKey]
+                FROM [dbo].[ChartDefinition] AS CD
+                INNER JOIN [dbo].[ChartType] AS CT
+                    ON CT.[ChartType_ID] = CD.[ChartType_ID]
+                WHERE
+                    CD.[Project_ID] = @Project_ID
+                    AND CD.[IsDeleted] = 0
+                ORDER BY
+                    CD.[ChartNumber],
+                    CD.[ChartName];
+                """;
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand command =
+                new(
+                    cmdText: sql,
+                    connection: databaseConnection);
+
+            command.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    _activeProjectId.Value;
+
+            await using SqlDataReader reader =
+                await command.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                ExistingChartUiItem item =
+                    new()
+                    {
+                        ChartDefinitionId =
+                            reader.GetInt32(0),
+
+                        ChartNumber =
+                            reader.GetInt32(1),
+
+                        ChartName =
+                            reader.GetString(2),
+
+                        ChartTypeKey =
+                            reader.GetString(3)
+                    };
+
+                _existingCharts.Add(
+                    item: item);
+            }
+
+            #endregion
+
+
+            #region Restore Selection
+
+            if (selectedChartDefinitionId.HasValue)
+            {
+                foreach (ExistingChartUiItem item
+                    in _existingCharts)
+                {
+                    if (item.ChartDefinitionId ==
+                        selectedChartDefinitionId.Value)
+                    {
+                        cmbExistingChart.SelectedItem =
+                            item;
+
+                        break;
+                    }
+                }
+            }
+
+            #endregion
+        }
+
+
+        private async Task<ExistingChartUiItem?> FindChartByNameAsync(
+            string chartName,
+            int? excludeChartDefinitionId)
+        {
+            #region Validate Lookup
+
+            if (!_activeProjectId.HasValue)
+            {
+                throw new InvalidOperationException(
+                    "Select an active project.");
+            }
+
+            string validatedChartName =
+                chartName.Trim();
+
+            #endregion
+
+
+            #region Find Duplicate
+
+            const string sql = """
+                SELECT TOP (1)
+                    CD.[ChartDefinition_ID],
+                    CD.[ChartNumber],
+                    CD.[ChartName],
+                    CT.[ChartTypeKey]
+                FROM [dbo].[ChartDefinition] AS CD
+                INNER JOIN [dbo].[ChartType] AS CT
+                    ON CT.[ChartType_ID] = CD.[ChartType_ID]
+                WHERE
+                    CD.[Project_ID] = @Project_ID
+                    AND CD.[IsDeleted] = 0
+                    AND UPPER(CD.[ChartName]) = UPPER(@ChartName)
+                    AND
+                    (
+                        @ExcludeChartDefinition_ID IS NULL
+                        OR CD.[ChartDefinition_ID] <> @ExcludeChartDefinition_ID
+                    );
+                """;
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand command =
+                new(
+                    cmdText: sql,
+                    connection: databaseConnection);
+
+            command.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    _activeProjectId.Value;
+
+            command.Parameters.Add(
+                parameterName: "@ChartName",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 200)
+                .Value =
+                    validatedChartName;
+
+            command.Parameters.Add(
+                parameterName: "@ExcludeChartDefinition_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    excludeChartDefinitionId.HasValue
+                        ? excludeChartDefinitionId.Value
+                        : DBNull.Value;
+
+            await using SqlDataReader reader =
+                await command.ExecuteReaderAsync();
+
+            if (!await reader.ReadAsync())
+            {
+                return null;
+            }
+
+            return new ExistingChartUiItem
+            {
+                ChartDefinitionId =
+                    reader.GetInt32(0),
+
+                ChartNumber =
+                    reader.GetInt32(1),
+
+                ChartName =
+                    reader.GetString(2),
+
+                ChartTypeKey =
+                    reader.GetString(3)
+            };
+
+            #endregion
+        }
+
+
+        private async Task LoadChartDefinitionIntoEditorAsync(
+            int chartDefinitionId)
+        {
+            #region Define Chart Query
+
+            const string chartSql = """
+                SELECT
+                    CD.[ChartDefinition_ID],
+                    CD.[ChartNumber],
+                    CD.[ChartName],
+                    CT.[ChartTypeKey],
+                    CD.[YAxisTitle],
+                    CD.[YAxisUnit],
+                    CD.[UseAutomaticYAxis],
+                    CD.[FixedYAxisMinimum],
+                    CD.[FixedYAxisMaximum],
+                    CD.[ShowLegend],
+                    CD.[LegendPosition],
+                    CD.[PngWidthPixels],
+                    CD.[PngHeightPixels],
+                    CD.[AbsoluteStartUtc],
+                    CD.[AbsoluteEndUtc],
+                    CD.[TitleOverride]
+                FROM [dbo].[ChartDefinition] AS CD
+                INNER JOIN [dbo].[ChartType] AS CT
+                    ON CT.[ChartType_ID] = CD.[ChartType_ID]
+                WHERE
+                    CD.[ChartDefinition_ID] = @ChartDefinition_ID
+                    AND CD.[Project_ID] = @Project_ID
+                    AND CD.[IsDeleted] = 0;
+                """;
+
+            #endregion
+
+
+            #region Load Chart Header
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand chartCommand =
+                new(
+                    cmdText: chartSql,
+                    connection: databaseConnection);
+
+            chartCommand.Parameters.Add(
+                parameterName: "@ChartDefinition_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    chartDefinitionId;
+
+            chartCommand.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    _activeProjectId
+                    ?? throw new InvalidOperationException(
+                        "Select an active project.");
+
+            await using SqlDataReader reader =
+                await chartCommand.ExecuteReaderAsync();
+
+            if (!await reader.ReadAsync())
+            {
+                throw new InvalidOperationException(
+                    "Chart definition not found.");
+            }
+
+            int chartNumber =
+                reader.GetInt32(1);
+
+            string chartName =
+                reader.GetString(2);
+
+            string chartTypeKey =
+                reader.GetString(3);
+
+            string verticalAxisTitle =
+                reader.GetString(4);
+
+            bool automaticVerticalAxis =
+                reader.GetBoolean(6);
+
+            decimal? fixedMinimum =
+                reader.IsDBNull(7)
+                    ? null
+                    : reader.GetDecimal(7);
+
+            decimal? fixedMaximum =
+                reader.IsDBNull(8)
+                    ? null
+                    : reader.GetDecimal(8);
+
+            bool showLegend =
+                reader.GetBoolean(9);
+
+            string legendPosition =
+                reader.GetString(10);
+
+            int pngWidth =
+                reader.GetInt32(11);
+
+            int pngHeight =
+                reader.GetInt32(12);
+
+            DateTime absoluteStart =
+                reader.GetDateTime(13);
+
+            DateTime absoluteEndExclusive =
+                reader.GetDateTime(14);
+
+            string chartTitle =
+                reader.IsDBNull(15)
+                    ? string.Empty
+                    : reader.GetString(15);
+
+            await reader.DisposeAsync();
+
+            #endregion
+
+
+            #region Apply Chart Header To Editor
+
+            _loadedChartDefinitionId =
+                chartDefinitionId;
+
+            _loadedChartNumber =
+                chartNumber;
+
+            txtChartNumber.Text =
+                $"Chart_{chartNumber:0000}";
+
+            txtChartName.Text =
+                chartName;
+
+            foreach (ChartTypeUiItem chartType
+                in _chartTypes)
+            {
+                if (string.Equals(
+                    a: chartType.Key,
+                    b: chartTypeKey,
+                    comparisonType: StringComparison.OrdinalIgnoreCase))
+                {
+                    cmbChartType.SelectedItem =
+                        chartType;
+
+                    break;
+                }
+            }
+
+            txtChartYAxisTitle.Text =
+                verticalAxisTitle;
+
+            chkChartAutomaticYAxis.IsChecked =
+                automaticVerticalAxis;
+
+            txtChartYAxisMinimum.Text =
+                fixedMinimum?.ToString(
+                    provider: CultureInfo.InvariantCulture)
+                ?? string.Empty;
+
+            txtChartYAxisMaximum.Text =
+                fixedMaximum?.ToString(
+                    provider: CultureInfo.InvariantCulture)
+                ?? string.Empty;
+
+            chkChartShowLegend.IsChecked =
+                showLegend;
+
+            SelectLegendPosition(
+                legendPosition: legendPosition);
+
+            txtChartPngWidth.Text =
+                pngWidth.ToString(
+                    provider: CultureInfo.InvariantCulture);
+
+            txtChartPngHeight.Text =
+                pngHeight.ToString(
+                    provider: CultureInfo.InvariantCulture);
+
+            dpChartStartDate.SelectedDate =
+                absoluteStart.Date;
+
+            dpChartEndDate.SelectedDate =
+                absoluteEndExclusive.Date.AddDays(
+                    value: -1);
+
+            txtChartRecentDays.Text =
+                Math.Max(
+                    val1: 1,
+                    val2:
+                        (dpChartEndDate.SelectedDate.Value -
+                         dpChartStartDate.SelectedDate.Value).Days)
+                    .ToString(
+                        provider: CultureInfo.InvariantCulture);
+
+            txtChartTitleOverride.Text =
+                chartTitle;
+
+            #endregion
+
+
+            #region Load Trigger Levels
+
+            await LoadChartTriggerLevelsAsync(
+                chartDefinitionId:
+                    chartDefinitionId,
+                databaseConnection:
+                    databaseConnection);
+
+            #endregion
+
+
+            #region Load Series
+
+            await LoadChartSeriesAsync(
+                chartDefinitionId:
+                    chartDefinitionId,
+                databaseConnection:
+                    databaseConnection);
+
+            #endregion
+        }
+
+
+        private void SelectLegendPosition(
+            string legendPosition)
+        {
+            for (int index = 0;
+                 index < cmbChartLegendPosition.Items.Count;
+                 index++)
+            {
+                if (cmbChartLegendPosition.Items[index]
+                    is ComboBoxItem item &&
+                    string.Equals(
+                        a: item.Content?.ToString(),
+                        b: legendPosition,
+                        comparisonType: StringComparison.OrdinalIgnoreCase))
+                {
+                    cmbChartLegendPosition.SelectedIndex =
+                        index;
+
+                    return;
+                }
+            }
+
+            cmbChartLegendPosition.SelectedIndex =
+                0;
+        }
+
+
+        private async Task LoadChartTriggerLevelsAsync(
+            int chartDefinitionId,
+            SqlConnection databaseConnection)
+        {
+            #region Load Positive Trigger Bands
+
+            const string sql = """
+                SELECT
+                    [BandName],
+                    [MaximumValue]
+                FROM [dbo].[ChartDefinitionTriggerBand]
+                WHERE
+                    [ChartDefinition_ID] = @ChartDefinition_ID
+                    AND [MinimumValue] >= 0
+                ORDER BY [DisplayOrder];
+                """;
+
+            decimal? green =
+                null;
+
+            decimal? amber =
+                null;
+
+            decimal? red =
+                null;
+
+            await using SqlCommand command =
+                new(
+                    cmdText: sql,
+                    connection: databaseConnection);
+
+            command.Parameters.Add(
+                parameterName: "@ChartDefinition_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    chartDefinitionId;
+
+            await using SqlDataReader reader =
+                await command.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                string bandName =
+                    reader.GetString(0);
+
+                decimal maximum =
+                    reader.GetDecimal(1);
+
+                if (string.Equals(
+                    a: bandName,
+                    b: "Green",
+                    comparisonType: StringComparison.OrdinalIgnoreCase))
+                {
+                    green =
+                        maximum;
+                }
+                else if (string.Equals(
+                    a: bandName,
+                    b: "Amber",
+                    comparisonType: StringComparison.OrdinalIgnoreCase))
+                {
+                    amber =
+                        maximum;
+                }
+                else if (string.Equals(
+                    a: bandName,
+                    b: "Red",
+                    comparisonType: StringComparison.OrdinalIgnoreCase))
+                {
+                    red =
+                        maximum;
+                }
+            }
+
+            txtChartGreenTrigger.Text =
+                (green ?? 2m).ToString(
+                    provider: CultureInfo.InvariantCulture);
+
+            txtChartAmberTrigger.Text =
+                (amber ?? 5m).ToString(
+                    provider: CultureInfo.InvariantCulture);
+
+            txtChartRedTrigger.Text =
+                (red ?? 10m).ToString(
+                    provider: CultureInfo.InvariantCulture);
+
+            #endregion
+        }
+
+
+        private async Task LoadChartSeriesAsync(
+            int chartDefinitionId,
+            SqlConnection databaseConnection)
+        {
+            #region Load Series Rows
+
+            _chartSeries.Clear();
+
+            const string sql = """
+                SELECT
+                    [EntityDisplayName],
+                    [DataElementKey],
+                    [LegendText],
+                    [ColourHex],
+                    [LineWidth],
+                    [MarkerSize],
+                    [DisplayOrder]
+                FROM [dbo].[ChartDefinitionSeries]
+                WHERE [ChartDefinition_ID] = @ChartDefinition_ID
+                ORDER BY [DisplayOrder];
+                """;
+
+            await using SqlCommand command =
+                new(
+                    cmdText: sql,
+                    connection: databaseConnection);
+
+            command.Parameters.Add(
+                parameterName: "@ChartDefinition_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    chartDefinitionId;
+
+            await using SqlDataReader reader =
+                await command.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                _chartSeries.Add(
+                    item:
+                        new ChartSeriesUiItem
+                        {
+                            DisplayOrder =
+                                reader.GetInt32(6),
+
+                            EntityDisplayName =
+                                reader.GetString(0),
+
+                            DataElementDisplayName =
+                                reader.GetString(1),
+
+                            LegendText =
+                                reader.GetString(2),
+
+                            ColourHex =
+                                reader.IsDBNull(3)
+                                    ? string.Empty
+                                    : reader.GetString(3),
+
+                            LineWidth =
+                                Convert.ToDouble(
+                                    value: reader.GetDecimal(4),
+                                    provider: CultureInfo.InvariantCulture),
+
+                            MarkerSize =
+                                Convert.ToDouble(
+                                    value: reader.GetDecimal(5),
+                                    provider: CultureInfo.InvariantCulture)
+                        });
+            }
+
+            #endregion
+        }
+
+
+        private async Task<(int ChartDefinitionId, int ChartNumber)>
+            SaveChartDefinitionAsync(
+                int? chartDefinitionId,
+                int? chartNumber)
+        {
+            #region Validate Active Project And Selected Type
+
+            if (!_activeProjectId.HasValue)
+            {
+                throw new InvalidOperationException(
+                    "Select an active project.");
+            }
+
+            if (cmbChartType.SelectedItem
+                is not ChartTypeUiItem chartType)
+            {
+                throw new InvalidOperationException(
+                    "Select a chart type.");
+            }
+
+            #endregion
+
+
+            #region Read Editor Values
+
+            string chartName =
+                txtChartName.Text.Trim();
+
+            DateTime absoluteStartUtc =
+                DateTime.SpecifyKind(
+                    value:
+                        dpChartStartDate.SelectedDate!.Value.Date,
+                    kind:
+                        DateTimeKind.Utc);
+
+            DateTime absoluteEndUtc =
+                DateTime.SpecifyKind(
+                    value:
+                        dpChartEndDate.SelectedDate!.Value.Date.AddDays(1),
+                    kind:
+                        DateTimeKind.Utc);
+
+            bool automaticVerticalAxis =
+                chkChartAutomaticYAxis.IsChecked == true;
+
+            decimal? verticalMinimum =
+                automaticVerticalAxis
+                    ? null
+                    : decimal.Parse(
+                        s: txtChartYAxisMinimum.Text,
+                        style: NumberStyles.Float,
+                        provider: CultureInfo.InvariantCulture);
+
+            decimal? verticalMaximum =
+                automaticVerticalAxis
+                    ? null
+                    : decimal.Parse(
+                        s: txtChartYAxisMaximum.Text,
+                        style: NumberStyles.Float,
+                        provider: CultureInfo.InvariantCulture);
+
+            decimal greenTrigger =
+                decimal.Parse(
+                    s: txtChartGreenTrigger.Text,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture);
+
+            decimal amberTrigger =
+                decimal.Parse(
+                    s: txtChartAmberTrigger.Text,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture);
+
+            decimal redTrigger =
+                decimal.Parse(
+                    s: txtChartRedTrigger.Text,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture);
+
+            int pngWidth =
+                int.Parse(
+                    s: txtChartPngWidth.Text,
+                    provider: CultureInfo.InvariantCulture);
+
+            int pngHeight =
+                int.Parse(
+                    s: txtChartPngHeight.Text,
+                    provider: CultureInfo.InvariantCulture);
+
+            string legendPosition =
+                GetSelectedLegendPosition();
+
+            #endregion
+
+
+            #region Open Transaction
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            using SqlTransaction transaction =
+                databaseConnection.BeginTransaction(
+                    iso:
+                        System.Data.IsolationLevel.Serializable);
+
+            #endregion
+
+
+            try
+            {
+                #region Resolve Chart Type ID
+
+                const string chartTypeSql = """
+                    SELECT [ChartType_ID]
+                    FROM [dbo].[ChartType] WITH (UPDLOCK, HOLDLOCK)
+                    WHERE [ChartTypeKey] = @ChartTypeKey;
+                    """;
+
+                await using SqlCommand chartTypeCommand =
+                    new(
+                        cmdText: chartTypeSql,
+                        connection: databaseConnection,
+                        transaction: transaction);
+
+                chartTypeCommand.Parameters.Add(
+                    parameterName: "@ChartTypeKey",
+                    sqlDbType: System.Data.SqlDbType.NVarChar,
+                    size: 100)
+                    .Value =
+                        chartType.Key;
+
+                object? chartTypeIdValue =
+                    await chartTypeCommand.ExecuteScalarAsync();
+
+                if (chartTypeIdValue is null ||
+                    chartTypeIdValue == DBNull.Value)
+                {
+                    throw new InvalidOperationException(
+                        "Chart type is not registered in the database.");
+                }
+
+                int chartTypeId =
+                    Convert.ToInt32(
+                        value: chartTypeIdValue,
+                        provider: CultureInfo.InvariantCulture);
+
+                #endregion
+
+
+                #region Resolve Chart Number
+
+                int resolvedChartNumber;
+
+                if (chartDefinitionId.HasValue &&
+                    chartNumber.HasValue)
+                {
+                    resolvedChartNumber =
+                        chartNumber.Value;
+                }
+                else
+                {
+                    const string nextNumberSql = """
+                        SELECT ISNULL(MAX([ChartNumber]), 0) + 1
+                        FROM [dbo].[ChartDefinition] WITH (UPDLOCK, HOLDLOCK)
+                        WHERE [Project_ID] = @Project_ID;
+                        """;
+
+                    await using SqlCommand numberCommand =
+                        new(
+                            cmdText: nextNumberSql,
+                            connection: databaseConnection,
+                            transaction: transaction);
+
+                    numberCommand.Parameters.Add(
+                        parameterName: "@Project_ID",
+                        sqlDbType: System.Data.SqlDbType.Int)
+                        .Value =
+                            _activeProjectId.Value;
+
+                    resolvedChartNumber =
+                        Convert.ToInt32(
+                            value:
+                                await numberCommand.ExecuteScalarAsync(),
+                            provider:
+                                CultureInfo.InvariantCulture);
+                }
+
+                #endregion
+
+
+                #region Insert Or Update Chart Definition
+
+                int resolvedChartDefinitionId;
+
+                if (chartDefinitionId.HasValue)
+                {
+                    const string updateSql = """
+                        UPDATE [dbo].[ChartDefinition]
+                        SET
+                            [ChartName] = @ChartName,
+                            [ChartType_ID] = @ChartType_ID,
+                            [AutoTitleTemplate] = @AutoTitleTemplate,
+                            [TitleOverride] = @TitleOverride,
+                            [YAxisTitle] = @YAxisTitle,
+                            [YAxisUnit] = @YAxisUnit,
+                            [XAxisTitle] = N'Date / Time',
+                            [DisplayTimeZoneId] = N'Local Time',
+                            [UseAutomaticYAxis] = @UseAutomaticYAxis,
+                            [FixedYAxisMinimum] = @FixedYAxisMinimum,
+                            [FixedYAxisMaximum] = @FixedYAxisMaximum,
+                            [ReferenceLineValue] = 0,
+                            [ShowLegend] = @ShowLegend,
+                            [LegendPosition] = @LegendPosition,
+                            [PngWidthPixels] = @PngWidthPixels,
+                            [PngHeightPixels] = @PngHeightPixels,
+                            [ChartTimeWindowMode] = N'Absolute',
+                            [AbsoluteStartUtc] = @AbsoluteStartUtc,
+                            [AbsoluteEndUtc] = @AbsoluteEndUtc,
+                            [RelativeAnchor] = NULL,
+                            [RelativeStartOffsetSec] = NULL,
+                            [RelativeEndOffsetSec] = NULL,
+                            [ReferenceMode] = N'None',
+                            [ReferenceDateTimeUtc] = NULL,
+                            [ReferenceBlockSeconds] = NULL,
+                            [UseMeanReference] = 1,
+                            [IsEnabled] = 1,
+                            [ChartOrder] = @ChartOrder,
+                            [UpdatedUtc] = SYSUTCDATETIME()
+                        WHERE
+                            [ChartDefinition_ID] = @ChartDefinition_ID
+                            AND [Project_ID] = @Project_ID
+                            AND [IsDeleted] = 0;
+                        """;
+
+                    await using SqlCommand updateCommand =
+                        new(
+                            cmdText: updateSql,
+                            connection: databaseConnection,
+                            transaction: transaction);
+
+                    AddChartDefinitionParameters(
+                        command: updateCommand,
+                        chartName: chartName,
+                        chartTypeId: chartTypeId,
+                        chartType: chartType,
+                        automaticVerticalAxis: automaticVerticalAxis,
+                        verticalMinimum: verticalMinimum,
+                        verticalMaximum: verticalMaximum,
+                        legendPosition: legendPosition,
+                        absoluteStartUtc: absoluteStartUtc,
+                        absoluteEndUtc: absoluteEndUtc,
+                        pngWidth: pngWidth,
+                        pngHeight: pngHeight,
+                        chartOrder: resolvedChartNumber);
+
+                    updateCommand.Parameters.Add(
+                        parameterName: "@ChartDefinition_ID",
+                        sqlDbType: System.Data.SqlDbType.Int)
+                        .Value =
+                            chartDefinitionId.Value;
+
+                    int updatedRows =
+                        await updateCommand.ExecuteNonQueryAsync();
+
+                    if (updatedRows != 1)
+                    {
+                        throw new InvalidOperationException(
+                            "Chart update failed.");
+                    }
+
+                    resolvedChartDefinitionId =
+                        chartDefinitionId.Value;
+                }
+                else
+                {
+                    const string insertSql = """
+                        INSERT INTO [dbo].[ChartDefinition]
+                        (
+                            [Project_ID],
+                            [ChartNumber],
+                            [ChartName],
+                            [ChartType_ID],
+                            [AutoTitleTemplate],
+                            [TitleOverride],
+                            [YAxisTitle],
+                            [YAxisUnit],
+                            [XAxisTitle],
+                            [DisplayTimeZoneId],
+                            [UseAutomaticYAxis],
+                            [FixedYAxisMinimum],
+                            [FixedYAxisMaximum],
+                            [ReferenceLineValue],
+                            [ShowLegend],
+                            [LegendPosition],
+                            [PngWidthPixels],
+                            [PngHeightPixels],
+                            [ChartTimeWindowMode],
+                            [AbsoluteStartUtc],
+                            [AbsoluteEndUtc],
+                            [ReferenceMode],
+                            [UseMeanReference],
+                            [IsEnabled],
+                            [ChartOrder],
+                            [IsDeleted]
+                        )
+                        OUTPUT INSERTED.[ChartDefinition_ID]
+                        VALUES
+                        (
+                            @Project_ID,
+                            @ChartNumber,
+                            @ChartName,
+                            @ChartType_ID,
+                            @AutoTitleTemplate,
+                            @TitleOverride,
+                            @YAxisTitle,
+                            @YAxisUnit,
+                            N'Date / Time',
+                            N'Local Time',
+                            @UseAutomaticYAxis,
+                            @FixedYAxisMinimum,
+                            @FixedYAxisMaximum,
+                            0,
+                            @ShowLegend,
+                            @LegendPosition,
+                            @PngWidthPixels,
+                            @PngHeightPixels,
+                            N'Absolute',
+                            @AbsoluteStartUtc,
+                            @AbsoluteEndUtc,
+                            N'None',
+                            1,
+                            1,
+                            @ChartOrder,
+                            0
+                        );
+                        """;
+
+                    await using SqlCommand insertCommand =
+                        new(
+                            cmdText: insertSql,
+                            connection: databaseConnection,
+                            transaction: transaction);
+
+                    AddChartDefinitionParameters(
+                        command: insertCommand,
+                        chartName: chartName,
+                        chartTypeId: chartTypeId,
+                        chartType: chartType,
+                        automaticVerticalAxis: automaticVerticalAxis,
+                        verticalMinimum: verticalMinimum,
+                        verticalMaximum: verticalMaximum,
+                        legendPosition: legendPosition,
+                        absoluteStartUtc: absoluteStartUtc,
+                        absoluteEndUtc: absoluteEndUtc,
+                        pngWidth: pngWidth,
+                        pngHeight: pngHeight,
+                        chartOrder: resolvedChartNumber);
+
+                    insertCommand.Parameters.Add(
+                        parameterName: "@ChartNumber",
+                        sqlDbType: System.Data.SqlDbType.Int)
+                        .Value =
+                            resolvedChartNumber;
+
+                    object? newIdValue =
+                        await insertCommand.ExecuteScalarAsync();
+
+                    if (newIdValue is null ||
+                        newIdValue == DBNull.Value)
+                    {
+                        throw new InvalidOperationException(
+                            "Chart insert failed.");
+                    }
+
+                    resolvedChartDefinitionId =
+                        Convert.ToInt32(
+                            value: newIdValue,
+                            provider: CultureInfo.InvariantCulture);
+                }
+
+                #endregion
+
+
+                #region Replace Trigger Bands
+
+                await ReplaceChartTriggerBandsAsync(
+                    chartDefinitionId:
+                        resolvedChartDefinitionId,
+                    greenTrigger:
+                        greenTrigger,
+                    amberTrigger:
+                        amberTrigger,
+                    redTrigger:
+                        redTrigger,
+                    verticalMinimum:
+                        verticalMinimum,
+                    verticalMaximum:
+                        verticalMaximum,
+                    databaseConnection:
+                        databaseConnection,
+                    transaction:
+                        transaction);
+
+                #endregion
+
+
+                #region Replace Series
+
+                await ReplaceChartSeriesAsync(
+                    chartDefinitionId:
+                        resolvedChartDefinitionId,
+                    databaseConnection:
+                        databaseConnection,
+                    transaction:
+                        transaction);
+
+                #endregion
+
+
+                #region Commit Transaction
+
+                transaction.Commit();
+
+                return
+                (
+                    ChartDefinitionId:
+                        resolvedChartDefinitionId,
+
+                    ChartNumber:
+                        resolvedChartNumber
+                );
+
+                #endregion
+            }
+            catch
+            {
+                try
+                {
+                    transaction.Rollback();
+                }
+                catch
+                {
+                    // Preserve original exception.
+                }
+
+                throw;
+            }
+        }
+
+
+        private void AddChartDefinitionParameters(
+            SqlCommand command,
+            string chartName,
+            int chartTypeId,
+            ChartTypeUiItem chartType,
+            bool automaticVerticalAxis,
+            decimal? verticalMinimum,
+            decimal? verticalMaximum,
+            string legendPosition,
+            DateTime absoluteStartUtc,
+            DateTime absoluteEndUtc,
+            int pngWidth,
+            int pngHeight,
+            int chartOrder)
+        {
+            command.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    _activeProjectId
+                    ?? throw new InvalidOperationException(
+                        "Select an active project.");
+
+            command.Parameters.Add(
+                parameterName: "@ChartName",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 200)
+                .Value =
+                    chartName;
+
+            command.Parameters.Add(
+                parameterName: "@ChartType_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    chartTypeId;
+
+            command.Parameters.Add(
+                parameterName: "@AutoTitleTemplate",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 500)
+                .Value =
+                    "{ChartType} - {Sensors}";
+
+            command.Parameters.Add(
+                parameterName: "@TitleOverride",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 500)
+                .Value =
+                    string.IsNullOrWhiteSpace(
+                        value: txtChartTitleOverride.Text)
+                        ? DBNull.Value
+                        : txtChartTitleOverride.Text.Trim();
+
+            command.Parameters.Add(
+                parameterName: "@YAxisTitle",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 200)
+                .Value =
+                    string.IsNullOrWhiteSpace(
+                        value: txtChartYAxisTitle.Text)
+                        ? chartType.VerticalAxisTitle
+                        : txtChartYAxisTitle.Text.Trim();
+
+            command.Parameters.Add(
+                parameterName: "@YAxisUnit",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 50)
+                .Value =
+                    chartType.Unit;
+
+            command.Parameters.Add(
+                parameterName: "@UseAutomaticYAxis",
+                sqlDbType: System.Data.SqlDbType.Bit)
+                .Value =
+                    automaticVerticalAxis;
+
+            command.Parameters.Add(
+                parameterName: "@FixedYAxisMinimum",
+                sqlDbType: System.Data.SqlDbType.Decimal)
+                .Value =
+                    verticalMinimum.HasValue
+                        ? verticalMinimum.Value
+                        : DBNull.Value;
+
+            command.Parameters["@FixedYAxisMinimum"].Precision =
+                18;
+
+            command.Parameters["@FixedYAxisMinimum"].Scale =
+                6;
+
+            command.Parameters.Add(
+                parameterName: "@FixedYAxisMaximum",
+                sqlDbType: System.Data.SqlDbType.Decimal)
+                .Value =
+                    verticalMaximum.HasValue
+                        ? verticalMaximum.Value
+                        : DBNull.Value;
+
+            command.Parameters["@FixedYAxisMaximum"].Precision =
+                18;
+
+            command.Parameters["@FixedYAxisMaximum"].Scale =
+                6;
+
+            command.Parameters.Add(
+                parameterName: "@ShowLegend",
+                sqlDbType: System.Data.SqlDbType.Bit)
+                .Value =
+                    chkChartShowLegend.IsChecked == true;
+
+            command.Parameters.Add(
+                parameterName: "@LegendPosition",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 50)
+                .Value =
+                    legendPosition;
+
+            command.Parameters.Add(
+                parameterName: "@PngWidthPixels",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    pngWidth;
+
+            command.Parameters.Add(
+                parameterName: "@PngHeightPixels",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    pngHeight;
+
+            command.Parameters.Add(
+                parameterName: "@AbsoluteStartUtc",
+                sqlDbType: System.Data.SqlDbType.DateTime2)
+                .Value =
+                    absoluteStartUtc;
+
+            command.Parameters.Add(
+                parameterName: "@AbsoluteEndUtc",
+                sqlDbType: System.Data.SqlDbType.DateTime2)
+                .Value =
+                    absoluteEndUtc;
+
+            command.Parameters.Add(
+                parameterName: "@ChartOrder",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    chartOrder;
+        }
+
+
+        private string GetSelectedLegendPosition()
+        {
+            if (cmbChartLegendPosition.SelectedItem
+                is ComboBoxItem item)
+            {
+                return item.Content?.ToString()?.Trim()
+                    ?? "Below Title";
+            }
+
+            return "Below Title";
+        }
+
+
+        private async Task ReplaceChartTriggerBandsAsync(
+            int chartDefinitionId,
+            decimal greenTrigger,
+            decimal amberTrigger,
+            decimal redTrigger,
+            decimal? verticalMinimum,
+            decimal? verticalMaximum,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Delete Existing Bands
+
+            const string deleteSql = """
+                DELETE FROM [dbo].[ChartDefinitionTriggerBand]
+                WHERE [ChartDefinition_ID] = @ChartDefinition_ID;
+                """;
+
+            await using (SqlCommand deleteCommand =
+                new(
+                    cmdText: deleteSql,
+                    connection: databaseConnection,
+                    transaction: transaction))
+            {
+                deleteCommand.Parameters.Add(
+                    parameterName: "@ChartDefinition_ID",
+                    sqlDbType: System.Data.SqlDbType.Int)
+                    .Value =
+                        chartDefinitionId;
+
+                await deleteCommand.ExecuteNonQueryAsync();
+            }
+
+            #endregion
+
+
+            #region Determine Band Extent
+
+            decimal positiveExtent =
+                verticalMaximum.HasValue
+                    ? Math.Max(
+                        redTrigger,
+                        verticalMaximum.Value)
+                    : redTrigger * 2m;
+
+            decimal negativeExtent =
+                verticalMinimum.HasValue
+                    ? Math.Min(
+                        -redTrigger,
+                        verticalMinimum.Value)
+                    : -positiveExtent;
+
+            #endregion
+
+
+            #region Insert Mirrored Bands
+
+            List<(string Name, decimal Minimum, decimal Maximum, string Colour, int Order)>
+                bands =
+                    new()
+                    {
+                        ("Grey", negativeExtent, -redTrigger, ChartAboveRedBandColourHex, 1),
+                        ("Red", -redTrigger, -amberTrigger, ChartRedBandColourHex, 2),
+                        ("Amber", -amberTrigger, -greenTrigger, ChartAmberBandColourHex, 3),
+                        ("Green", -greenTrigger, 0m, ChartGreenBandColourHex, 4),
+                        ("Green", 0m, greenTrigger, ChartGreenBandColourHex, 5),
+                        ("Amber", greenTrigger, amberTrigger, ChartAmberBandColourHex, 6),
+                        ("Red", amberTrigger, redTrigger, ChartRedBandColourHex, 7),
+                        ("Grey", redTrigger, positiveExtent, ChartAboveRedBandColourHex, 8)
+                    };
+
+            const string insertSql = """
+                INSERT INTO [dbo].[ChartDefinitionTriggerBand]
+                (
+                    [ChartDefinition_ID],
+                    [BandName],
+                    [MinimumValue],
+                    [MaximumValue],
+                    [IsSymmetric],
+                    [ColourHex],
+                    [Opacity],
+                    [DrawBoundaryLines],
+                    [DisplayOrder]
+                )
+                VALUES
+                (
+                    @ChartDefinition_ID,
+                    @BandName,
+                    @MinimumValue,
+                    @MaximumValue,
+                    0,
+                    @ColourHex,
+                    1.0,
+                    0,
+                    @DisplayOrder
+                );
+                """;
+
+            foreach ((string Name, decimal Minimum, decimal Maximum, string Colour, int Order)
+                band in bands)
+            {
+                if (band.Minimum >= band.Maximum)
+                {
+                    continue;
+                }
+
+                await using SqlCommand insertCommand =
+                    new(
+                        cmdText: insertSql,
+                        connection: databaseConnection,
+                        transaction: transaction);
+
+                insertCommand.Parameters.Add(
+                    parameterName: "@ChartDefinition_ID",
+                    sqlDbType: System.Data.SqlDbType.Int)
+                    .Value =
+                        chartDefinitionId;
+
+                insertCommand.Parameters.Add(
+                    parameterName: "@BandName",
+                    sqlDbType: System.Data.SqlDbType.NVarChar,
+                    size: 100)
+                    .Value =
+                        band.Name;
+
+                SqlParameter minimumParameter =
+                    insertCommand.Parameters.Add(
+                        parameterName: "@MinimumValue",
+                        sqlDbType: System.Data.SqlDbType.Decimal);
+
+                minimumParameter.Precision =
+                    18;
+
+                minimumParameter.Scale =
+                    6;
+
+                minimumParameter.Value =
+                    band.Minimum;
+
+                SqlParameter maximumParameter =
+                    insertCommand.Parameters.Add(
+                        parameterName: "@MaximumValue",
+                        sqlDbType: System.Data.SqlDbType.Decimal);
+
+                maximumParameter.Precision =
+                    18;
+
+                maximumParameter.Scale =
+                    6;
+
+                maximumParameter.Value =
+                    band.Maximum;
+
+                insertCommand.Parameters.Add(
+                    parameterName: "@ColourHex",
+                    sqlDbType: System.Data.SqlDbType.NVarChar,
+                    size: 20)
+                    .Value =
+                        band.Colour;
+
+                insertCommand.Parameters.Add(
+                    parameterName: "@DisplayOrder",
+                    sqlDbType: System.Data.SqlDbType.Int)
+                    .Value =
+                        band.Order;
+
+                await insertCommand.ExecuteNonQueryAsync();
+            }
+
+            #endregion
+        }
+
+
+        private async Task ReplaceChartSeriesAsync(
+            int chartDefinitionId,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Delete Existing Series
+
+            const string deleteSql = """
+                DELETE FROM [dbo].[ChartDefinitionSeries]
+                WHERE [ChartDefinition_ID] = @ChartDefinition_ID;
+                """;
+
+            await using (SqlCommand deleteCommand =
+                new(
+                    cmdText: deleteSql,
+                    connection: databaseConnection,
+                    transaction: transaction))
+            {
+                deleteCommand.Parameters.Add(
+                    parameterName: "@ChartDefinition_ID",
+                    sqlDbType: System.Data.SqlDbType.Int)
+                    .Value =
+                        chartDefinitionId;
+
+                await deleteCommand.ExecuteNonQueryAsync();
+            }
+
+            #endregion
+
+
+            #region Insert Configured Series
+
+            // Entity database lookup is intentionally not yet implemented.
+            // Placeholder series with no real EntityId are therefore not written.
+            // Once the Series entity selector is connected to DBTrackGeometry,
+            // this method will persist the selected EntityId values.
+
+            #endregion
+        }
+
+
+        private async Task SoftDeleteChartDefinitionAsync(
+            int chartDefinitionId)
+        {
+            #region Soft Delete Chart
+
+            const string sql = """
+                UPDATE [dbo].[ChartDefinition]
+                SET
+                    [IsDeleted] = 1,
+                    [UpdatedUtc] = SYSUTCDATETIME()
+                WHERE
+                    [ChartDefinition_ID] = @ChartDefinition_ID
+                    AND [Project_ID] = @Project_ID
+                    AND [IsDeleted] = 0;
+                """;
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand command =
+                new(
+                    cmdText: sql,
+                    connection: databaseConnection);
+
+            command.Parameters.Add(
+                parameterName: "@ChartDefinition_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    chartDefinitionId;
+
+            command.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    _activeProjectId
+                    ?? throw new InvalidOperationException(
+                        "Select an active project.");
+
+            int affectedRows =
+                await command.ExecuteNonQueryAsync();
+
+            if (affectedRows != 1)
+            {
+                throw new InvalidOperationException(
+                    "Chart delete failed.");
+            }
+
+            #endregion
+        }
+
+        #endregion
+
+
+        private void btnChartPreview_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Validate Preview Configuration
+
+            if (!TryValidateChartConfiguration(
+                validationMessage: out string validationMessage))
+            {
+                txtChartStatus.Text =
+                    validationMessage;
+
+                return;
+            }
+
+            DateTime previewStartInclusive =
+                dpChartStartDate.SelectedDate!.Value.Date;
+
+            DateTime previewEndExclusive =
+                dpChartEndDate.SelectedDate!.Value.Date.AddDays(
+                    value: 1);
+
+            DateTime previewDisplayEnd =
+                previewEndExclusive.AddMinutes(
+                    value: -1);
+
+            ChartTypeUiItem selectedType =
+                (ChartTypeUiItem)cmbChartType.SelectedItem!;
+
+            txtChartPreviewPlaceholder.Text =
+                $"Chart preview configuration validated\n\n" +
+                $"{selectedType.DisplayName}\n" +
+                $"{previewStartInclusive:yyyy-MM-dd 00:00} to " +
+                $"{previewDisplayEnd:yyyy-MM-dd HH:mm}\n" +
+                $"{_chartSeries.Count} configured series\n\n" +
+                "Preview data window fixed from the selected Start Date and End Date.\n" +
+                "ScottPlot rendering will use this same resolved window.";
+
+            txtChartStatus.Text =
+                "Preview configuration validated.";
+
+            tabChartConfiguration.SelectedIndex =
+                6;
+
+            #endregion
+        }
+
+
+        private bool TryValidateChartConfiguration(
+            out string validationMessage)
+        {
+            #region Validate Chart Header
+
+            if (!_activeProjectId.HasValue)
+            {
+                validationMessage =
+                    "Select an active project.";
+
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(
+                value: txtChartName.Text))
+            {
+                validationMessage =
+                    "Enter a chart name.";
+
+                return false;
+            }
+
+            if (cmbChartType.SelectedItem
+                is not ChartTypeUiItem)
+            {
+                validationMessage =
+                    "Select a chart type.";
+
+                return false;
+            }
+
+            #endregion
+
+
+            #region Validate Absolute Date Window
+
+            if (!dpChartStartDate.SelectedDate.HasValue ||
+                !dpChartEndDate.SelectedDate.HasValue)
+            {
+                validationMessage =
+                    "Select both chart start and end dates.";
+
+                return false;
+            }
+
+            DateTime startDate =
+                dpChartStartDate.SelectedDate.Value.Date;
+
+            DateTime endDate =
+                dpChartEndDate.SelectedDate.Value.Date;
+
+            if (startDate > endDate)
+            {
+                validationMessage =
+                    "Chart start date cannot be later than chart end date.";
+
+                return false;
+            }
+
+            #endregion
+
+
+            #region Validate Trigger Levels
+
+            if (!TryReadPositiveDecimal(
+                text: txtChartGreenTrigger.Text,
+                valueName: "Green trigger",
+                value: out decimal greenTrigger,
+                validationMessage: out validationMessage))
+            {
+                return false;
+            }
+
+            if (!TryReadPositiveDecimal(
+                text: txtChartAmberTrigger.Text,
+                valueName: "Amber trigger",
+                value: out decimal amberTrigger,
+                validationMessage: out validationMessage))
+            {
+                return false;
+            }
+
+            if (!TryReadPositiveDecimal(
+                text: txtChartRedTrigger.Text,
+                valueName: "Red trigger",
+                value: out decimal redTrigger,
+                validationMessage: out validationMessage))
+            {
+                return false;
+            }
+
+            if (amberTrigger <= greenTrigger)
+            {
+                validationMessage =
+                    "Amber trigger must be greater than Green trigger.";
+
+                return false;
+            }
+
+            if (redTrigger <= amberTrigger)
+            {
+                validationMessage =
+                    "Red trigger must be greater than Amber trigger.";
+
+                return false;
+            }
+
+            #endregion
+
+
+            #region Validate Fixed Y Axis
+
+            if (chkChartAutomaticYAxis.IsChecked != true)
+            {
+                if (!decimal.TryParse(
+                    s: txtChartYAxisMinimum.Text,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture,
+                    result: out decimal yMinimum))
+                {
+                    validationMessage =
+                        "Enter a valid Vertical Axis minimum.";
+
+                    return false;
+                }
+
+                if (!decimal.TryParse(
+                    s: txtChartYAxisMaximum.Text,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture,
+                    result: out decimal yMaximum))
+                {
+                    validationMessage =
+                        "Enter a valid Vertical Axis maximum.";
+
+                    return false;
+                }
+
+                if (yMinimum >= yMaximum)
+                {
+                    validationMessage =
+                        "Vertical Axis minimum must be less than Vertical Axis maximum.";
+
+                    return false;
+                }
+
+                if (-redTrigger < yMinimum ||
+                    redTrigger > yMaximum)
+                {
+                    validationMessage =
+                        "The fixed Vertical Axis extents must include both Red trigger limits.";
+
+                    return false;
+                }
+            }
+
+            #endregion
+
+
+            #region Validate Output Dimensions
+
+            if (!int.TryParse(
+                s: txtChartPngWidth.Text,
+                style: NumberStyles.Integer,
+                provider: CultureInfo.InvariantCulture,
+                result: out int pngWidth) ||
+                pngWidth <= 0)
+            {
+                validationMessage =
+                    "Enter a valid positive PNG width.";
+
+                return false;
+            }
+
+            if (!int.TryParse(
+                s: txtChartPngHeight.Text,
+                style: NumberStyles.Integer,
+                provider: CultureInfo.InvariantCulture,
+                result: out int pngHeight) ||
+                pngHeight <= 0)
+            {
+                validationMessage =
+                    "Enter a valid positive PNG height.";
+
+                return false;
+            }
+
+            #endregion
+
+
+            validationMessage =
+                string.Empty;
+
+            return true;
+        }
+
+
+        private static bool TryReadPositiveDecimal(
+            string text,
+            string valueName,
+            out decimal value,
+            out string validationMessage)
+        {
+            if (!decimal.TryParse(
+                s: text,
+                style: NumberStyles.Float,
+                provider: CultureInfo.InvariantCulture,
+                result: out value) ||
+                value <= 0)
+            {
+                validationMessage =
+                    $"{valueName} must be a positive number.";
+
+                return false;
+            }
+
+            validationMessage =
+                string.Empty;
+
+            return true;
+        }
+
+
+        private void btnChartRecentPeriod_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Apply Recent Period
+
+            if (!int.TryParse(
+                s: txtChartRecentDays.Text,
+                style: NumberStyles.Integer,
+                provider: CultureInfo.InvariantCulture,
+                result: out int recentDays) ||
+                recentDays <= 0)
+            {
+                txtChartStatus.Text =
+                    "Recent days must be a positive whole number.";
+
+                return;
+            }
+
+            DateTime endDate =
+                dpChartEndDate.SelectedDate?.Date
+                ?? DateTime.Today;
+
+            dpChartEndDate.SelectedDate =
+                endDate;
+
+            dpChartStartDate.SelectedDate =
+                endDate.AddDays(
+                    value: -recentDays);
+
+            txtChartStatus.Text =
+                $"Chart Start updated to {recentDays} day(s) before End Date.";
+
+            #endregion
+        }
+
+
+        private async void btnChartProjectStart_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Apply Active Project Start Date
+
+            try
+            {
+                DateTime projectStartDate =
+                    await GetActiveProjectStartDateAsync();
+
+                dpChartStartDate.SelectedDate =
+                    projectStartDate.Date;
+
+                txtChartStatus.Text =
+                    $"Report start date set to project start date: " +
+                    $"{projectStartDate:yyyy-MM-dd}.";
+            }
+            catch (Exception ex)
+            {
+                txtChartStatus.Text =
+                    $"Unable to read project start date: {ex.Message}";
+            }
+
+            #endregion
+        }
+
+
+        private void btnChartUseNow_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            dpChartEndDate.SelectedDate =
+                DateTime.Today;
+
+            dpChartEndDate.Focus();
+
+            txtChartStatus.Text =
+                "Chart end date set to Now.";
+        }
+        private async Task<DateTime> GetActiveProjectStartDateAsync()
+        {
+            #region Validate Active Project
+
+            if (!_activeProjectId.HasValue)
+            {
+                throw new InvalidOperationException(
+                    "Select an active project.");
+            }
+
+            #endregion
+
+
+            #region Read Project Start Date
+
+            const string sql = """
+                SELECT [ProjectStartDate]
+                FROM [dbo].[Project]
+                WHERE
+                    [Project_ID] = @Project_ID
+                    AND [IsDeleted] = 0;
+                """;
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand command =
+                new(
+                    cmdText: sql,
+                    connection: databaseConnection);
+
+            command.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    _activeProjectId.Value;
+
+            object? value =
+                await command.ExecuteScalarAsync();
+
+            if (value is null ||
+                value == DBNull.Value)
+            {
+                // ProjectStartDate is NOT NULL in the new schema, but retain a
+                // defensive default for databases created before this revision.
+                return DateTime.Today;
+            }
+
+            return Convert.ToDateTime(
+                value: value,
+                provider: CultureInfo.InvariantCulture)
+                .Date;
+
+            #endregion
+        }
+
+
+        private void chkChartAutomaticYAxis_Changed(
+            object sender,
+            RoutedEventArgs e)
+        {
+            UpdateChartYAxisControlState();
+        }
+
+
+        private void UpdateChartYAxisControlState()
+        {
+            if (!IsInitialized)
+            {
+                return;
+            }
+
+            bool fixedAxis =
+                chkChartAutomaticYAxis.IsChecked != true;
+
+            txtChartYAxisMinimum.IsEnabled =
+                fixedAxis;
+
+            txtChartYAxisMaximum.IsEnabled =
+                fixedAxis;
+        }
+
+
+        private void btnChartAddSeries_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Add Series Placeholder
+
+            if (cmbChartDataElement.SelectedItem
+                is not string dataElement)
+            {
+                txtChartStatus.Text =
+                    "Select a data element.";
+
+                return;
+            }
+
+            string entityDisplayName =
+                cmbChartSeriesEntity.SelectedItem?.ToString()?.Trim()
+                ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(entityDisplayName))
+            {
+                entityDisplayName =
+                    "<Select entity in data retrieval pass>";
+            }
+
+            _chartSeries.Add(
+                item:
+                    new ChartSeriesUiItem
+                    {
+                        DisplayOrder =
+                            _chartSeries.Count + 1,
+
+                        EntityDisplayName =
+                            entityDisplayName,
+
+                        DataElementDisplayName =
+                            dataElement,
+
+                        LegendText =
+                            $"{entityDisplayName} - {dataElement}",
+
+                        ColourHex =
+                            string.Empty,
+
+                        LineWidth =
+                            ParsePositiveDoubleOrDefault(
+                                text: txtChartDefaultLineWidth.Text,
+                                defaultValue: 2.0),
+
+                        MarkerSize =
+                            ParseNonNegativeDoubleOrDefault(
+                                text: txtChartDefaultMarkerSize.Text,
+                                defaultValue: 4.0)
+                    });
+
+            txtChartStatus.Text =
+                "Series added. Entity population from DBTrackGeometry will be connected in the data-retrieval pass.";
+
+            #endregion
+        }
+
+
+        private void btnChartRemoveSeries_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (dgChartSeries.SelectedItem
+                is not ChartSeriesUiItem selectedSeries)
+            {
+                return;
+            }
+
+            _chartSeries.Remove(
+                item: selectedSeries);
+
+            RenumberChartSeries();
+        }
+
+
+        private void btnChartSeriesUp_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            MoveSelectedChartSeries(
+                direction: -1);
+        }
+
+
+        private void btnChartSeriesDown_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            MoveSelectedChartSeries(
+                direction: 1);
+        }
+
+
+        private void MoveSelectedChartSeries(
+            int direction)
+        {
+            if (dgChartSeries.SelectedItem
+                is not ChartSeriesUiItem selectedSeries)
+            {
+                return;
+            }
+
+            int oldIndex =
+                _chartSeries.IndexOf(
+                    item: selectedSeries);
+
+            int newIndex =
+                oldIndex + direction;
+
+            if (newIndex < 0 ||
+                newIndex >= _chartSeries.Count)
+            {
+                return;
+            }
+
+            _chartSeries.Move(
+                oldIndex: oldIndex,
+                newIndex: newIndex);
+
+            RenumberChartSeries();
+
+            dgChartSeries.SelectedItem =
+                selectedSeries;
+        }
+
+
+        private void RenumberChartSeries()
+        {
+            for (int index = 0;
+                 index < _chartSeries.Count;
+                 index++)
+            {
+                _chartSeries[index].DisplayOrder =
+                    index + 1;
+            }
+
+            dgChartSeries.Items.Refresh();
+        }
+
+
+        private static double ParsePositiveDoubleOrDefault(
+            string text,
+            double defaultValue)
+        {
+            return double.TryParse(
+                s: text,
+                style: NumberStyles.Float,
+                provider: CultureInfo.InvariantCulture,
+                result: out double value) &&
+                value > 0
+                    ? value
+                    : defaultValue;
+        }
+
+
+        private static double ParseNonNegativeDoubleOrDefault(
+            string text,
+            double defaultValue)
+        {
+            return double.TryParse(
+                s: text,
+                style: NumberStyles.Float,
+                provider: CultureInfo.InvariantCulture,
+                result: out double value) &&
+                value >= 0
+                    ? value
+                    : defaultValue;
+        }
+
         #endregion
 
 
