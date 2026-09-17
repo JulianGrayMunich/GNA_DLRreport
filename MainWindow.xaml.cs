@@ -1,4 +1,4 @@
-﻿#region System Preparation
+#region System Preparation
 
 using System;
 using System.Collections.Generic;
@@ -11,6 +11,11 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using Line = System.Windows.Shapes.Line;
+using Rectangle = System.Windows.Shapes.Rectangle;
+using IOPath = System.IO.Path;
 using GNAgeneraltools;
 using Microsoft.Data.SqlClient;
 using Microsoft.Win32;
@@ -210,6 +215,62 @@ namespace GNA_DLRreport
         private readonly ObservableCollection<ExistingChartUiItem> _existingCharts =
             new();
 
+
+        private readonly ObservableCollection<ChartTemplateUiItem> _chartTemplates =
+            new();
+
+        private const int DefaultChartWidthMm = 150;
+
+        private const int DefaultChartHeightMm = 80;
+
+        private const int DefaultChartResolutionDpi = 300;
+
+        private const string DefaultChartFontFamily = "Arial";
+
+        private const string ChartStartDateModeReportStart = "ReportStart";
+
+        private const string ChartStartDateModeProjectStart = "ProjectStart";
+
+        private IChartPreviewRenderer _chartPreviewRenderer = null!;
+
+        private interface IChartPreviewRenderer
+        {
+            void Render();
+        }
+
+        private sealed class WpfCanvasChartPreviewRenderer : IChartPreviewRenderer
+        {
+            private readonly MainWindow _owner;
+
+            public WpfCanvasChartPreviewRenderer(
+                MainWindow owner)
+            {
+                _owner = owner ?? throw new ArgumentNullException(
+                    paramName: nameof(owner));
+            }
+
+            public void Render()
+            {
+                _owner.RenderBlankChartCanvas();
+            }
+        }
+
+        private int? _loadedChartTemplateId;
+
+        private sealed class ChartTemplateUiItem
+        {
+            public int ChartTemplateId { get; init; }
+
+            public string TemplateName { get; init; } =
+                string.Empty;
+
+            public string ChartTypeKey { get; init; } =
+                string.Empty;
+
+            public string DisplayText =>
+                TemplateName;
+        }
+
         private int? _loadedChartDefinitionId;
 
         private int? _loadedChartNumber;
@@ -264,6 +325,8 @@ namespace GNA_DLRreport
 
         private sealed class ChartSeriesUiItem
         {
+            public int EntityId { get; set; }
+
             public int DisplayOrder { get; set; }
 
             public string EntityDisplayName { get; set; } =
@@ -284,6 +347,45 @@ namespace GNA_DLRreport
             public double MarkerSize { get; set; } =
                 4.0;
         }
+
+        private sealed class ChartEntityUiItem
+        {
+            public int EntityId { get; init; }
+
+            public string DisplayName { get; init; } =
+                string.Empty;
+
+            public override string ToString()
+            {
+                return DisplayName;
+            }
+        }
+
+        private sealed record ChartPreviewPoint(
+            DateTime UtcTime,
+            double Value);
+
+        private sealed class ChartPreviewSeries
+        {
+            public string LegendText { get; init; } =
+                string.Empty;
+
+            public Brush Stroke { get; init; } =
+                Brushes.Blue;
+
+            public double LineWidth { get; init; } =
+                2.0;
+
+            public List<ChartPreviewPoint> Points { get; } =
+                new();
+        }
+
+        private readonly List<ChartPreviewSeries> _chartPreviewSeries =
+            new();
+
+        private DateTime _chartPreviewStartUtc;
+
+        private DateTime _chartPreviewEndUtcExclusive;
 
         #endregion
 
@@ -466,6 +568,8 @@ namespace GNA_DLRreport
 
         private int? _selectedPrismArrayType;
 
+        private int? _editingPrismArrayId;
+
         private string _pendingPrismArrayName =
             string.Empty;
 
@@ -510,7 +614,13 @@ namespace GNA_DLRreport
             public string ArrayName { get; init; } =
                 string.Empty;
 
-            public bool IsDeleted { get; init; }
+            public bool IsDeleted { get; set; }
+
+            public bool IsIncluded
+            {
+                get => !IsDeleted;
+                set => IsDeleted = !value;
+            }
         }
 
 
@@ -713,6 +823,9 @@ namespace GNA_DLRreport
             _selectedPrismArrayType =
                 null;
 
+            _editingPrismArrayId =
+                null;
+
             _pendingPrismArrayName =
                 string.Empty;
 
@@ -736,6 +849,9 @@ namespace GNA_DLRreport
 
             if (IsInitialized)
             {
+                cmbPrismArrayType.SelectedIndex =
+                    -1;
+
                 ClearPrismArrayDefinitionControls();
 
                 dgCommittedPrismArrays.SelectedItem =
@@ -776,11 +892,11 @@ namespace GNA_DLRreport
 
             #region Clear Pending Definition
 
-            _selectedPrismArrayType =
-                null;
-
             _pendingPrismArrayName =
                 string.Empty;
+
+            _editingPrismArrayId =
+                null;
 
             _prismArrayAssignments.Clear();
 
@@ -848,6 +964,17 @@ namespace GNA_DLRreport
 
         private async Task LoadPrismArrayTypesAsync()
         {
+            #region Preserve Current Array Type Selection
+
+            int? preservedArrayTypeId =
+                cmbPrismArrayType.SelectedItem
+                    is PrismArrayTypeItem selectedArrayType
+                        ? selectedArrayType.ArrayType_ID
+                        : _selectedPrismArrayType;
+
+            #endregion
+
+
             #region Define Array Type Query
 
             const string arrayTypeSql = """
@@ -926,8 +1053,16 @@ namespace GNA_DLRreport
             cmbPrismArrayType.ItemsSource =
                 _prismArrayTypes;
 
-            cmbPrismArrayType.SelectedIndex =
-                -1;
+            if (preservedArrayTypeId.HasValue)
+            {
+                cmbPrismArrayType.SelectedValue =
+                    preservedArrayTypeId.Value;
+            }
+            else
+            {
+                cmbPrismArrayType.SelectedIndex =
+                    -1;
+            }
 
             #endregion
         }
@@ -1450,6 +1585,7 @@ namespace GNA_DLRreport
 
                 await ValidatePrismArrayDefinitionForCommitAsync(
                     projectId: projectId,
+                    existingArrayId: _editingPrismArrayId,
                     arrayName: arrayName,
                     arrayType: arrayType,
                     pointAssignments: pointAssignments,
@@ -1459,15 +1595,38 @@ namespace GNA_DLRreport
                 #endregion
 
 
-                #region Insert Array Definition
+                #region Insert Or Update Array Definition
 
-                int arrayId =
-                    await InsertPrismArrayAsync(
+                int arrayId;
+
+                if (_editingPrismArrayId.HasValue)
+                {
+                    arrayId =
+                        _editingPrismArrayId.Value;
+
+                    await UpdatePrismArrayAsync(
+                        arrayId: arrayId,
                         projectId: projectId,
                         arrayName: arrayName,
                         arrayType: arrayType,
                         databaseConnection: databaseConnection,
                         transaction: transaction);
+
+                    await DeletePrismArrayPointsAsync(
+                        arrayId: arrayId,
+                        databaseConnection: databaseConnection,
+                        transaction: transaction);
+                }
+                else
+                {
+                    arrayId =
+                        await InsertPrismArrayAsync(
+                            projectId: projectId,
+                            arrayName: arrayName,
+                            arrayType: arrayType,
+                            databaseConnection: databaseConnection,
+                            transaction: transaction);
+                }
 
                 #endregion
 
@@ -1640,6 +1799,7 @@ namespace GNA_DLRreport
 
         private static async Task ValidatePrismArrayDefinitionForCommitAsync(
             int projectId,
+            int? existingArrayId,
             string arrayName,
             int arrayType,
             Dictionary<char, int> pointAssignments,
@@ -1654,7 +1814,12 @@ namespace GNA_DLRreport
                 WHERE
                     [Project_ID] = @Project_ID
                     AND [ArrayName] = @ArrayName
-                    AND [IsDeleted] = 0;
+                    AND [IsDeleted] = 0
+                    AND
+                    (
+                        @ExistingArray_ID IS NULL
+                        OR [Array_ID] <> @ExistingArray_ID
+                    );
                 """;
 
             await using (SqlCommand arrayNameCommand =
@@ -1675,6 +1840,14 @@ namespace GNA_DLRreport
                     size: 200)
                     .Value =
                         arrayName;
+
+                arrayNameCommand.Parameters.Add(
+                    parameterName: "@ExistingArray_ID",
+                    sqlDbType: System.Data.SqlDbType.Int)
+                    .Value =
+                        existingArrayId.HasValue
+                            ? existingArrayId.Value
+                            : DBNull.Value;
 
                 int existingArrayCount =
                     Convert.ToInt32(
@@ -1718,6 +1891,11 @@ namespace GNA_DLRreport
                                 AND PA.[IsDeleted] = 0
                                 AND PA.[Project_ID] = @Project_ID
                                 AND PA.[ArrayType] = @ArrayType
+                                AND
+                                (
+                                    @ExistingArray_ID IS NULL
+                                    OR PA.[Array_ID] <> @ExistingArray_ID
+                                )
                         ) THEN 1
                         ELSE 0
                     END AS [AlreadyAllocatedToType]
@@ -1761,6 +1939,14 @@ namespace GNA_DLRreport
                 sqlDbType: System.Data.SqlDbType.Int)
                 .Value =
                     arrayType;
+
+            pointCommand.Parameters.Add(
+                parameterName: "@ExistingArray_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    existingArrayId.HasValue
+                        ? existingArrayId.Value
+                        : DBNull.Value;
 
             foreach (char pointRole
                 in PrismArrayPointRoles)
@@ -2002,6 +2188,101 @@ namespace GNA_DLRreport
             #endregion
         }
 
+
+        private static async Task UpdatePrismArrayAsync(
+            int arrayId,
+            int projectId,
+            string arrayName,
+            int arrayType,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Define Array Update
+
+            const string arraySql = """
+                UPDATE [dbo].[PrismArray]
+                SET
+                    [ArrayName] = @ArrayName,
+                    [ArrayType] = @ArrayType,
+                    [IsDeleted] = 0
+                WHERE
+                    [Array_ID] = @Array_ID
+                    AND [Project_ID] = @Project_ID;
+                """;
+
+            #endregion
+
+
+            #region Update Existing Array
+
+            await using SqlCommand arrayCommand =
+                new(
+                    cmdText: arraySql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            arrayCommand.Parameters.Add(
+                parameterName: "@Array_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value = arrayId;
+
+            arrayCommand.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value = projectId;
+
+            arrayCommand.Parameters.Add(
+                parameterName: "@ArrayName",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 200)
+                .Value = arrayName;
+
+            arrayCommand.Parameters.Add(
+                parameterName: "@ArrayType",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value = arrayType;
+
+            int affectedRows =
+                await arrayCommand.ExecuteNonQueryAsync();
+
+            if (affectedRows != 1)
+            {
+                throw new InvalidOperationException(
+                    "The selected array is no longer available for update.");
+            }
+
+            #endregion
+        }
+
+
+        private static async Task DeletePrismArrayPointsAsync(
+            int arrayId,
+            SqlConnection databaseConnection,
+            SqlTransaction transaction)
+        {
+            #region Replace Existing Point Assignments
+
+            const string deleteSql = """
+                DELETE FROM [dbo].[PrismArrayPoint]
+                WHERE [Array_ID] = @Array_ID;
+                """;
+
+            await using SqlCommand deleteCommand =
+                new(
+                    cmdText: deleteSql,
+                    connection: databaseConnection,
+                    transaction: transaction);
+
+            deleteCommand.Parameters.Add(
+                parameterName: "@Array_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value = arrayId;
+
+            await deleteCommand.ExecuteNonQueryAsync();
+
+            #endregion
+        }
+
         #endregion
 
 
@@ -2027,7 +2308,6 @@ namespace GNA_DLRreport
                     ON PAT.[ArrayType_ID] = PA.[ArrayType]
                 WHERE
                     PA.[Project_ID] = @Project_ID
-                    AND PA.[IsDeleted] = 0
                 ORDER BY
                     PA.[ArrayType],
                     PA.[ArrayName],
@@ -2148,7 +2428,6 @@ namespace GNA_DLRreport
                 WHERE
                     PA.[Array_ID] = @Array_ID
                     AND PA.[Project_ID] = @Project_ID
-                    AND PA.[IsDeleted] = 0
                 ORDER BY
                     PAP.[PointRole];
                 """;
@@ -2811,6 +3090,9 @@ namespace GNA_DLRreport
             if (cmbPrismArrayType.SelectedItem
                 is PrismArrayTypeItem selectedArrayType)
             {
+                _selectedPrismArrayType =
+                    selectedArrayType.ArrayType_ID;
+
                 IReadOnlyList<char> requiredPointRoles =
                     GetRequiredPrismArrayPointRoles(
                         arrayType: selectedArrayType.ArrayType_ID);
@@ -2875,10 +3157,10 @@ namespace GNA_DLRreport
         {
             #region Clear Definition Header
 
-            cmbPrismArrayType.SelectedIndex =
-                -1;
-
             txtPrismArrayName.Clear();
+
+            btnCommitPrismArray.Content =
+                "Commit Array";
 
             #endregion
 
@@ -3302,7 +3584,10 @@ namespace GNA_DLRreport
             confirmationBuilder.AppendLine();
 
             confirmationBuilder.Append(
-                value: "Commit this array?");
+                value:
+                    _editingPrismArrayId.HasValue
+                        ? "Update this array?"
+                        : "Commit this array?");
 
             string confirmationMessage =
                 confirmationBuilder.ToString();
@@ -3311,7 +3596,10 @@ namespace GNA_DLRreport
                 MessageBox.Show(
                     owner: this,
                     messageBoxText: confirmationMessage,
-                    caption: "Confirm Array",
+                    caption:
+                        _editingPrismArrayId.HasValue
+                            ? "Confirm Array Update"
+                            : "Confirm Array",
                     button: MessageBoxButton.YesNo,
                     icon: MessageBoxImage.Question,
                     defaultResult: MessageBoxResult.No);
@@ -3334,13 +3622,16 @@ namespace GNA_DLRreport
 
             try
             {
+                bool updatingExistingArray =
+                    _editingPrismArrayId.HasValue;
+
                 int arrayId =
                     await CommitCurrentPrismArrayDefinitionAsync();
 
-                cmbPrismArrayType.SelectedIndex =
-                    -1;
-
                 txtPrismArrayName.Clear();
+
+                btnCommitPrismArray.Content =
+                    "Commit Array";
 
                 UpdatePrismArrayAssignmentDisplay();
 
@@ -3360,7 +3651,9 @@ namespace GNA_DLRreport
                 }
 
                 txtPrismArrayStatus.Text =
-                    $"Array '{arrayName}' committed.";
+                    updatingExistingArray
+                        ? $"Array '{arrayName}' updated."
+                        : $"Array '{arrayName}' committed.";
             }
             catch (Exception ex)
             {
@@ -3379,7 +3672,7 @@ namespace GNA_DLRreport
         #endregion
 
 
-        #region Committed Array View And Delete
+        #region Existing Array Update
 
         private void dgCommittedPrismArrays_SelectionChanged(
             object sender,
@@ -3391,6 +3684,88 @@ namespace GNA_DLRreport
                 tabPrismArrays.IsSelected;
 
             #endregion
+        }
+
+
+        private async void PrismArrayIncludedCheckBox_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (sender is not CheckBox checkBox ||
+                checkBox.DataContext is not PrismArraySummaryItem array)
+            {
+                return;
+            }
+
+            bool includeArray =
+                checkBox.IsChecked == true;
+
+            const string sql = """
+                UPDATE [dbo].[PrismArray]
+                SET [IsDeleted] = @IsDeleted
+                WHERE
+                    [Array_ID] = @Array_ID
+                    AND [Project_ID] = @Project_ID;
+                """;
+
+            try
+            {
+                await using SqlConnection databaseConnection =
+                    new(
+                        connectionString: GetTrackGeometryConnectionString());
+
+                await databaseConnection.OpenAsync();
+
+                await using SqlCommand command =
+                    new(
+                        cmdText: sql,
+                        connection: databaseConnection);
+
+                command.Parameters.Add(
+                    parameterName: "@IsDeleted",
+                    sqlDbType: System.Data.SqlDbType.Bit)
+                    .Value = !includeArray;
+
+                command.Parameters.Add(
+                    parameterName: "@Array_ID",
+                    sqlDbType: System.Data.SqlDbType.Int)
+                    .Value = array.Array_ID;
+
+                command.Parameters.Add(
+                    parameterName: "@Project_ID",
+                    sqlDbType: System.Data.SqlDbType.Int)
+                    .Value = _activeProjectId
+                        ?? throw new InvalidOperationException(
+                            "Select an active project.");
+
+                int affectedRows =
+                    await command.ExecuteNonQueryAsync();
+
+                if (affectedRows != 1)
+                {
+                    throw new InvalidOperationException(
+                        "The array changed before its inclusion state could be saved.");
+                }
+
+                array.IsDeleted =
+                    !includeArray;
+
+                txtPrismArrayStatus.Text =
+                    includeArray
+                        ? $"Array '{array.ArrayName}' included."
+                        : $"Array '{array.ArrayName}' excluded.";
+            }
+            catch (Exception ex)
+            {
+                checkBox.IsChecked =
+                    !includeArray;
+
+                array.IsDeleted =
+                    includeArray;
+
+                txtPrismArrayStatus.Text =
+                    $"Unable to update array inclusion: {ex.Message}";
+            }
         }
 
 
@@ -3438,7 +3813,7 @@ namespace GNA_DLRreport
                         messageBoxText:
                             "No committed arrays.",
                         caption:
-                            "View Array",
+                            "Update Array",
                         button:
                             MessageBoxButton.OK,
                         icon:
@@ -3499,7 +3874,7 @@ namespace GNA_DLRreport
                     !selectionWindow.SelectedArrayId.HasValue)
                 {
                     txtPrismArrayStatus.Text =
-                        "Array review cancelled.";
+                        "Array update cancelled.";
 
                     return;
                 }
@@ -3520,86 +3895,42 @@ namespace GNA_DLRreport
                 #endregion
 
 
-                #region Display Array Details
+                #region Load Array Into Definition Editor
 
-                ArrayDetailsWindow detailsWindow =
-                    new(
-                        arrayId:
-                            details.Array_ID,
-                        arrayName:
-                            details.ArrayName,
-                        arrayTypeName:
-                            details.ArrayTypeName,
-                        pointA:
-                            details.Points['A'].ReplacementName,
-                        pointB:
-                            details.Points['B'].ReplacementName,
-                        pointC:
-                            details.Points['C'].ReplacementName,
-                        pointD:
-                            details.Points['D'].ReplacementName,
-                        pointE:
-                            details.Points['E'].ReplacementName)
-                    {
-                        Owner =
-                            this
-                    };
+                ResetPendingPrismArrayDefinition();
 
-                bool? detailsResult =
-                    detailsWindow.ShowDialog();
+                await ReloadPrismArrayConfigurationListsAsync();
 
-                if (detailsResult != true ||
-                    !detailsWindow.DeleteRequested)
+                cmbPrismArrayType.SelectedValue =
+                    details.ArrayType;
+
+                txtPrismArrayName.Text =
+                    details.ArrayName;
+
+                SetPendingPrismArrayDefinition(
+                    arrayType: details.ArrayType,
+                    arrayName: details.ArrayName);
+
+                _editingPrismArrayId =
+                    details.Array_ID;
+
+                foreach (char pointRole
+                    in GetRequiredPrismArrayPointRoles(
+                        arrayType: details.ArrayType))
                 {
-                    txtPrismArrayStatus.Text =
-                        $"Array '{details.ArrayName}' retained.";
-
-                    return;
+                    AssignPrismArrayPoint(
+                        pointRole: pointRole,
+                        pointNameId:
+                            details.Points[pointRole].PointName_ID);
                 }
 
-                #endregion
+                btnCommitPrismArray.Content =
+                    "Update Array";
 
-
-                #region Confirm Array Soft Delete
-
-                MessageBoxResult deleteConfirmation =
-                    MessageBox.Show(
-                        owner:
-                            this,
-                        messageBoxText:
-                            $"Delete array '{details.ArrayName}'?\n\n" +
-                            "The array will be marked as deleted. " +
-                            "Existing data will be retained.",
-                        caption:
-                            "Confirm Delete Array",
-                        button:
-                            MessageBoxButton.YesNo,
-                        icon:
-                            MessageBoxImage.Warning,
-                        defaultResult:
-                            MessageBoxResult.No);
-
-                if (deleteConfirmation != MessageBoxResult.Yes)
-                {
-                    txtPrismArrayStatus.Text =
-                        "Delete cancelled.";
-
-                    return;
-                }
-
-                #endregion
-
-
-                #region Soft Delete Array
-
-                await DeletePrismArrayAsync(
-                    arrayId:
-                        details.Array_ID);
-
-                await RefreshPrismArrayConfigurationUiAsync();
+                UpdatePrismArrayAssignmentDisplay();
 
                 txtPrismArrayStatus.Text =
-                    $"Array '{details.ArrayName}' deleted.";
+                    $"Array '{details.ArrayName}' loaded for update.";
 
                 #endregion
             }
@@ -3631,11 +3962,63 @@ namespace GNA_DLRreport
 
         #region Constructor
 
+        private static IReadOnlyList<TimeZoneInfo> GetInitialProjectTimeZones()
+        {
+            HashSet<string> supportedTimeZoneIds =
+                new(
+                    collection:
+                    [
+                        "GMT Standard Time",
+                        "W. Europe Standard Time",
+                        "Central Europe Standard Time",
+                        "Central European Standard Time",
+                        "Romance Standard Time",
+                        "E. Europe Standard Time",
+                        "FLE Standard Time",
+                        "GTB Standard Time",
+                        "AUS Eastern Standard Time",
+                        "E. Australia Standard Time",
+                        "Cen. Australia Standard Time",
+                        "W. Australia Standard Time",
+                        "Tasmania Standard Time",
+                        "Lord Howe Standard Time"
+                    ],
+                    comparer: StringComparer.OrdinalIgnoreCase);
+
+            return TimeZoneInfo.GetSystemTimeZones()
+                .Where(
+                    predicate:
+                        timeZone => supportedTimeZoneIds.Contains(
+                            item: timeZone.Id))
+                .OrderBy(
+                    keySelector: timeZone => timeZone.BaseUtcOffset)
+                .ThenBy(
+                    keySelector: timeZone => timeZone.DisplayName,
+                    comparer: StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+        }
+
         public MainWindow()
         {
             #region Initialise Window Components
 
             InitializeComponent();
+
+            _chartPreviewRenderer =
+                new WpfCanvasChartPreviewRenderer(
+                    owner: this);
+
+            cmbProjectTimeZone.ItemsSource =
+                TimeZoneInfo.GetSystemTimeZones()
+                    .OrderBy(
+                        keySelector: timeZone => timeZone.BaseUtcOffset)
+                    .ThenBy(
+                        keySelector: timeZone => timeZone.DisplayName,
+                        comparer: StringComparer.CurrentCultureIgnoreCase)
+                    .ToList();
+
+            cmbProjectTimeZone.SelectedValue =
+                TimeZoneInfo.Utc.Id;
 
             UpdateConfigurationWorkflowTabAvailability();
 
@@ -3669,6 +4052,9 @@ namespace GNA_DLRreport
 
             cmbExistingChart.ItemsSource =
                 _existingCharts;
+
+            cmbChartTemplate.ItemsSource =
+                _chartTemplates;
 
             #endregion
 
@@ -3792,7 +4178,11 @@ namespace GNA_DLRreport
                 {
                     await EnsureChartTypeCatalogueAsync();
 
+                    await EnsureChartTemplateTablesAsync();
+
                     await RefreshExistingChartsAsync();
+
+                    await RefreshChartTemplatesAsync();
                 }
                 catch (Exception chartEx)
                 {
@@ -4749,6 +5139,8 @@ namespace GNA_DLRreport
                             [ProjectStartDate] date NOT NULL
                                 CONSTRAINT [DF_Project_ProjectStartDate]
                                 DEFAULT (CONVERT(date, GETDATE())),
+                            [TimeZoneId] nvarchar(200) NULL,
+                            [DefaultReportOutputPath] nvarchar(1000) NULL,
                             [IsDeleted] bit NOT NULL
                                 CONSTRAINT [DF_Project_IsDeleted]
                                 DEFAULT (0),
@@ -4760,6 +5152,18 @@ namespace GNA_DLRreport
                                 UNIQUE ([ProjectName])
                         );
 
+                    END;
+
+                    IF COL_LENGTH(N'dbo.Project', N'TimeZoneId') IS NULL
+                    BEGIN
+                        ALTER TABLE [dbo].[Project]
+                            ADD [TimeZoneId] nvarchar(200) NULL;
+                    END;
+
+                    IF COL_LENGTH(N'dbo.Project', N'DefaultReportOutputPath') IS NULL
+                    BEGIN
+                        ALTER TABLE [dbo].[Project]
+                            ADD [DefaultReportOutputPath] nvarchar(1000) NULL;
                     END;
 
                     /* =============================================================
@@ -4827,6 +5231,7 @@ namespace GNA_DLRreport
                             [PointName] nvarchar(50) NOT NULL,
                             [ReplacementName] nvarchar(50) NOT NULL,
                             [Project_ID] int NOT NULL,
+                            [LatestReading] datetime2(0) NULL,
                             [IsDeleted] bit NOT NULL
                                 CONSTRAINT [DF_PointName_IsDeleted]
                                 DEFAULT (0),
@@ -5002,6 +5407,8 @@ namespace GNA_DLRreport
                         (
                             [PointName_ID] int NOT NULL,
                             [UTCtime] datetime2(0) NOT NULL,
+                            [LatestReading] datetime2(0) NULL,
+                            [ReadingCount] int NULL,
                             [E] decimal(18,4) NULL,
                             [N] decimal(18,4) NULL,
                             [H] decimal(18,4) NULL,
@@ -5012,6 +5419,9 @@ namespace GNA_DLRreport
                             CONSTRAINT [PK_CoordinatesEpochs]
                                 PRIMARY KEY CLUSTERED
                                 ([PointName_ID], [UTCtime]),
+
+                            CONSTRAINT [CK_CoordinatesEpochs_ReadingCount]
+                                CHECK ([ReadingCount] IS NULL OR [ReadingCount] >= 0),
 
                             CONSTRAINT [FK_CoordinatesEpochs_PointName]
                                 FOREIGN KEY ([PointName_ID])
@@ -6946,6 +7356,171 @@ namespace GNA_DLRreport
 
                     END;
 
+                    /* Additive chart-editor migration. Legacy date-window columns
+                       remain temporarily for compatibility with existing databases. */
+                    IF COL_LENGTH(N'dbo.ChartDefinition', N'StartDateMode') IS NULL
+                    BEGIN
+                        ALTER TABLE [dbo].[ChartDefinition]
+                            ADD [StartDateMode] nvarchar(20) NOT NULL
+                                CONSTRAINT [DF_ChartDefinition_StartDateMode]
+                                DEFAULT (N'ReportStart');
+                    END;
+
+                    IF COL_LENGTH(N'dbo.ChartDefinition', N'WidthMm') IS NULL
+                    BEGIN
+                        ALTER TABLE [dbo].[ChartDefinition]
+                            ADD [WidthMm] int NOT NULL
+                                    CONSTRAINT [DF_ChartDefinition_WidthMm] DEFAULT (150),
+                                [HeightMm] int NOT NULL
+                                    CONSTRAINT [DF_ChartDefinition_HeightMm] DEFAULT (80),
+                                [ResolutionDpi] smallint NOT NULL
+                                    CONSTRAINT [DF_ChartDefinition_ResolutionDpi] DEFAULT (300),
+                                [ChartFontFamily] nvarchar(100) NOT NULL
+                                    CONSTRAINT [DF_ChartDefinition_ChartFontFamily] DEFAULT (N'Arial');
+                    END;
+
+                    /* =============================================================
+                       CHART TEMPLATE
+                       Reusable chart canvas configuration.
+                       Templates do not consume ChartDefinition.ChartNumber.
+                       Actual monitored entities and permanent report dates are
+                       deliberately excluded from the template.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.ChartTemplate', N'U') IS NULL
+                    BEGIN
+                        CREATE TABLE [dbo].[ChartTemplate]
+                        (
+                            [ChartTemplate_ID] int IDENTITY(1,1) NOT NULL,
+                            [Project_ID] int NOT NULL,
+                            [TemplateName] nvarchar(200) NOT NULL,
+                            [ChartType_ID] int NOT NULL,
+                            [DefaultDurationDays] int NOT NULL
+                                CONSTRAINT [DF_ChartTemplate_DefaultDurationDays]
+                                DEFAULT (14),
+                            [GreenTrigger] decimal(18,6) NOT NULL,
+                            [AmberTrigger] decimal(18,6) NOT NULL,
+                            [RedTrigger] decimal(18,6) NOT NULL,
+                            [UseAutomaticVerticalAxis] bit NOT NULL
+                                CONSTRAINT [DF_ChartTemplate_UseAutomaticVerticalAxis]
+                                DEFAULT (1),
+                            [VerticalAxisMinimum] decimal(18,6) NOT NULL,
+                            [VerticalAxisMaximum] decimal(18,6) NOT NULL,
+                            [ChartTitle] nvarchar(500) NULL,
+                            [VerticalAxisTitle] nvarchar(200) NOT NULL,
+                            [YAxisUnit] nvarchar(50) NOT NULL,
+                            [ShowLegend] bit NOT NULL
+                                CONSTRAINT [DF_ChartTemplate_ShowLegend]
+                                DEFAULT (1),
+                            [LegendPosition] nvarchar(50) NOT NULL,
+                            [PngWidthPixels] int NOT NULL,
+                            [PngHeightPixels] int NOT NULL,
+                            [DefaultLineWidth] decimal(10,3) NOT NULL,
+                            [DefaultMarkerSize] decimal(10,3) NOT NULL,
+                            [ShowGridLines] bit NOT NULL,
+                            [IsDeleted] bit NOT NULL
+                                CONSTRAINT [DF_ChartTemplate_IsDeleted]
+                                DEFAULT (0),
+                            [CreatedUtc] datetime2(3) NOT NULL
+                                CONSTRAINT [DF_ChartTemplate_CreatedUtc]
+                                DEFAULT (SYSUTCDATETIME()),
+                            [UpdatedUtc] datetime2(3) NOT NULL
+                                CONSTRAINT [DF_ChartTemplate_UpdatedUtc]
+                                DEFAULT (SYSUTCDATETIME()),
+
+                            CONSTRAINT [PK_ChartTemplate]
+                                PRIMARY KEY CLUSTERED ([ChartTemplate_ID]),
+
+                            CONSTRAINT [FK_ChartTemplate_Project]
+                                FOREIGN KEY ([Project_ID])
+                                REFERENCES [dbo].[Project] ([Project_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION,
+
+                            CONSTRAINT [FK_ChartTemplate_ChartType]
+                                FOREIGN KEY ([ChartType_ID])
+                                REFERENCES [dbo].[ChartType] ([ChartType_ID])
+                                ON DELETE NO ACTION
+                                ON UPDATE NO ACTION,
+
+                            CONSTRAINT [CK_ChartTemplate_Duration]
+                                CHECK ([DefaultDurationDays] > 0),
+
+                            CONSTRAINT [CK_ChartTemplate_Triggers]
+                                CHECK
+                                (
+                                    [GreenTrigger] > 0
+                                    AND [GreenTrigger] < [AmberTrigger]
+                                    AND [AmberTrigger] < [RedTrigger]
+                                ),
+
+                            CONSTRAINT [CK_ChartTemplate_VerticalAxis]
+                                CHECK ([VerticalAxisMinimum] < [VerticalAxisMaximum])
+                        );
+
+                        CREATE UNIQUE INDEX
+                            [UX_ChartTemplate_Active_Project_Name]
+                            ON [dbo].[ChartTemplate]
+                            (
+                                [Project_ID],
+                                [TemplateName]
+                            )
+                            WHERE [IsDeleted] = 0;
+                    END;
+
+                    IF COL_LENGTH(N'dbo.ChartTemplate', N'DefaultStartDateMode') IS NULL
+                    BEGIN
+                        ALTER TABLE [dbo].[ChartTemplate]
+                            ADD [DefaultStartDateMode] nvarchar(20) NOT NULL
+                                    CONSTRAINT [DF_ChartTemplate_DefaultStartDateMode]
+                                    DEFAULT (N'ReportStart'),
+                                [WidthMm] int NOT NULL
+                                    CONSTRAINT [DF_ChartTemplate_WidthMm] DEFAULT (150),
+                                [HeightMm] int NOT NULL
+                                    CONSTRAINT [DF_ChartTemplate_HeightMm] DEFAULT (80),
+                                [ResolutionDpi] smallint NOT NULL
+                                    CONSTRAINT [DF_ChartTemplate_ResolutionDpi] DEFAULT (300),
+                                [ChartFontFamily] nvarchar(100) NOT NULL
+                                    CONSTRAINT [DF_ChartTemplate_ChartFontFamily] DEFAULT (N'Arial');
+                    END;
+
+
+                    /* =============================================================
+                       CHART TEMPLATE SERIES
+                       Series definitions stored without monitored entity identity.
+                       Entity selection is supplied only when a real chart is made.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.ChartTemplateSeries', N'U') IS NULL
+                    BEGIN
+                        CREATE TABLE [dbo].[ChartTemplateSeries]
+                        (
+                            [ChartTemplateSeries_ID] int IDENTITY(1,1) NOT NULL,
+                            [ChartTemplate_ID] int NOT NULL,
+                            [DataElementKey] nvarchar(100) NOT NULL,
+                            [LegendText] nvarchar(300) NULL,
+                            [LineWidth] decimal(10,3) NOT NULL,
+                            [MarkerSize] decimal(10,3) NOT NULL,
+                            [DisplayOrder] int NOT NULL,
+
+                            CONSTRAINT [PK_ChartTemplateSeries]
+                                PRIMARY KEY CLUSTERED ([ChartTemplateSeries_ID]),
+
+                            CONSTRAINT [FK_ChartTemplateSeries_ChartTemplate]
+                                FOREIGN KEY ([ChartTemplate_ID])
+                                REFERENCES [dbo].[ChartTemplate] ([ChartTemplate_ID])
+                                ON DELETE CASCADE
+                                ON UPDATE NO ACTION,
+
+                            CONSTRAINT [UQ_ChartTemplateSeries_Order]
+                                UNIQUE ([ChartTemplate_ID], [DisplayOrder]),
+
+                            CONSTRAINT [CK_ChartTemplateSeries_DisplayOrder]
+                                CHECK ([DisplayOrder] > 0)
+                        );
+                    END;
+
+
                     COMMIT TRANSACTION;
 
                 END TRY
@@ -7599,7 +8174,7 @@ namespace GNA_DLRreport
 
         #region Project Start Date
 
-        private void dgProjects_SelectionChanged(
+        private async void dgProjects_SelectionChanged(
             object sender,
             SelectionChangedEventArgs e)
         {
@@ -7642,6 +8217,162 @@ namespace GNA_DLRreport
             }
 
             #endregion
+
+            try
+            {
+                await LoadSelectedProjectSettingsAsync(
+                    projectId: selectedProject.Project_ID);
+            }
+            catch (Exception ex)
+            {
+                txtProjectManagementStatus.Text =
+                    $"Unable to load project settings: {ex.Message}";
+            }
+        }
+
+
+        private async Task LoadSelectedProjectSettingsAsync(
+            int projectId)
+        {
+            const string sql = """
+                SELECT [TimeZoneId], [DefaultReportOutputPath]
+                FROM [dbo].[Project]
+                WHERE [Project_ID] = @Project_ID;
+                """;
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString: GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand command =
+                new(
+                    cmdText: sql,
+                    connection: databaseConnection);
+
+            command.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value = projectId;
+
+            await using SqlDataReader reader =
+                await command.ExecuteReaderAsync();
+
+            if (!await reader.ReadAsync())
+            {
+                throw new InvalidOperationException(
+                    "The selected project no longer exists.");
+            }
+
+            string timeZoneId =
+                reader.IsDBNull(0)
+                    ? string.Empty
+                    : reader.GetString(0);
+
+            txtProjectOutputPath.Text =
+                reader.IsDBNull(1)
+                    ? string.Empty
+                    : reader.GetString(1);
+
+            cmbProjectTimeZone.SelectedValue =
+                timeZoneId;
+
+            txtChartProjectTimeZone.Text =
+                string.IsNullOrWhiteSpace(timeZoneId)
+                    ? "Not configured"
+                    : timeZoneId;
+        }
+
+
+        private async void btnSaveProjectSettings_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (dgProjects.SelectedItem
+                is not ProjectConfigurationItem selectedProject)
+            {
+                txtProjectManagementStatus.Text =
+                    "Select a project before saving project settings.";
+
+                return;
+            }
+
+            string? timeZoneId =
+                cmbProjectTimeZone.SelectedValue?.ToString();
+
+            if (string.IsNullOrWhiteSpace(timeZoneId))
+            {
+                txtProjectManagementStatus.Text =
+                    "Select a project time zone.";
+
+                return;
+            }
+
+            string outputPath =
+                txtProjectOutputPath.Text.Trim();
+
+            const string sql = """
+                UPDATE [dbo].[Project]
+                SET
+                    [TimeZoneId] = @TimeZoneId,
+                    [DefaultReportOutputPath] = NULLIF(@DefaultReportOutputPath, N'')
+                WHERE [Project_ID] = @Project_ID;
+                """;
+
+            try
+            {
+                _ = TimeZoneInfo.FindSystemTimeZoneById(
+                    id: timeZoneId);
+
+                await using SqlConnection databaseConnection =
+                    new(
+                        connectionString: GetTrackGeometryConnectionString());
+
+                await databaseConnection.OpenAsync();
+
+                await using SqlCommand command =
+                    new(
+                        cmdText: sql,
+                        connection: databaseConnection);
+
+                command.Parameters.Add(
+                    parameterName: "@Project_ID",
+                    sqlDbType: System.Data.SqlDbType.Int)
+                    .Value = selectedProject.Project_ID;
+
+                command.Parameters.Add(
+                    parameterName: "@TimeZoneId",
+                    sqlDbType: System.Data.SqlDbType.NVarChar,
+                    size: 200)
+                    .Value = timeZoneId;
+
+                command.Parameters.Add(
+                    parameterName: "@DefaultReportOutputPath",
+                    sqlDbType: System.Data.SqlDbType.NVarChar,
+                    size: 1000)
+                    .Value = outputPath;
+
+                int affectedRows =
+                    await command.ExecuteNonQueryAsync();
+
+                if (affectedRows != 1)
+                {
+                    throw new InvalidOperationException(
+                        "The selected project changed before its settings could be saved.");
+                }
+
+                txtChartProjectTimeZone.Text =
+                    timeZoneId;
+
+                txtProjectManagementStatus.Text =
+                    "Project time zone and default report output path saved.";
+            }
+            catch (Exception ex)
+            {
+                txtProjectManagementStatus.Text =
+                    $"Unable to save project settings: {ex.Message}";
+            }
         }
 
 
@@ -7904,6 +8635,104 @@ namespace GNA_DLRreport
 
         #region Add Project
 
+        private void ProjectRequiredField_Changed(
+            object sender,
+            RoutedEventArgs e)
+        {
+            UpdateAddProjectButtonState();
+        }
+
+
+        private void UpdateAddProjectButtonState()
+        {
+            if (!IsInitialized)
+            {
+                return;
+            }
+
+            ProjectConfigurationItem? matchingProject =
+                FindProjectByEnteredName();
+
+            btnAddProject.Content =
+                matchingProject is null
+                    ? "Add Project"
+                    : "Overwrite";
+
+            btnAddProject.IsEnabled =
+                !string.IsNullOrWhiteSpace(txtNewProjectName.Text) &&
+                dpProjectStartDate.SelectedDate.HasValue &&
+                cmbProjectTimeZone.SelectedValue is string timeZoneId &&
+                !string.IsNullOrWhiteSpace(timeZoneId) &&
+                !string.IsNullOrWhiteSpace(txtProjectOutputPath.Text);
+        }
+
+
+        private ProjectConfigurationItem? FindProjectByEnteredName()
+        {
+            #region Resolve Entered Project Name
+
+            string enteredProjectName =
+                txtNewProjectName.Text?.Trim()
+                ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(enteredProjectName))
+            {
+                return null;
+            }
+
+            #endregion
+
+
+            #region Find Existing Project
+
+            foreach (ProjectConfigurationItem projectItem
+                in _projectItems)
+            {
+                if (string.Equals(
+                    a: projectItem.ProjectName,
+                    b: enteredProjectName,
+                    comparisonType:
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return projectItem;
+                }
+            }
+
+            return null;
+
+            #endregion
+        }
+
+
+        private void btnSelectProjectOutputPath_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            OpenFolderDialog dialog =
+                new()
+                {
+                    Title = "Select Default Report Output Folder",
+                    Multiselect = false
+                };
+
+            if (!string.IsNullOrWhiteSpace(txtProjectOutputPath.Text) &&
+                Directory.Exists(
+                    path: txtProjectOutputPath.Text))
+            {
+                dialog.InitialDirectory =
+                    txtProjectOutputPath.Text;
+            }
+
+            if (dialog.ShowDialog(
+                    owner: this) == true)
+            {
+                txtProjectOutputPath.Text =
+                    dialog.FolderName;
+
+                UpdateAddProjectButtonState();
+            }
+        }
+
         private async void btnAddProject_Click(
             object sender,
             RoutedEventArgs e)
@@ -7940,6 +8769,34 @@ namespace GNA_DLRreport
 
             #region Prepare User Interface
 
+            ProjectConfigurationItem? matchingProject =
+                FindProjectByEnteredName();
+
+            if (matchingProject is not null &&
+                !matchingProject.IsDeleted)
+            {
+                MessageBoxResult overwriteConfirmation =
+                    MessageBox.Show(
+                        owner: this,
+                        messageBoxText:
+                            $"Overwrite the configuration values for project " +
+                            $"'{matchingProject.ProjectName}'?\n\n" +
+                            "The existing Project_ID and all associated project data " +
+                            "will be retained.",
+                        caption: "Confirm Project Overwrite",
+                        button: MessageBoxButton.YesNo,
+                        icon: MessageBoxImage.Question,
+                        defaultResult: MessageBoxResult.No);
+
+                if (overwriteConfirmation != MessageBoxResult.Yes)
+                {
+                    txtProjectManagementStatus.Text =
+                        "Project overwrite cancelled.";
+
+                    return;
+                }
+            }
+
             btnAddProject.IsEnabled =
                 false;
 
@@ -7955,12 +8812,23 @@ namespace GNA_DLRreport
 
                 DateTime projectStartDate =
                     dpProjectStartDate.SelectedDate?.Date
-                    ?? DateTime.Today;
+                    ?? throw new InvalidOperationException(
+                        "Select a project start date.");
+
+                string timeZoneId =
+                    cmbProjectTimeZone.SelectedValue?.ToString()
+                    ?? throw new InvalidOperationException(
+                        "Select a project time zone.");
+
+                string outputPath =
+                    txtProjectOutputPath.Text.Trim();
 
                 bool projectAddedOrRestored =
                     await AddOrRestoreProjectAsync(
                         projectName: projectName,
-                        projectStartDate: projectStartDate);
+                        projectStartDate: projectStartDate,
+                        timeZoneId: timeZoneId,
+                        defaultReportOutputPath: outputPath);
 
                 #endregion
 
@@ -7970,6 +8838,11 @@ namespace GNA_DLRreport
                 if (projectAddedOrRestored)
                 {
                     txtNewProjectName.Clear();
+
+                    txtProjectOutputPath.Clear();
+
+                    cmbProjectTimeZone.SelectedValue =
+                        TimeZoneInfo.Utc.Id;
 
                     _pendingProjectStartDate =
                         DateTime.Today;
@@ -8037,8 +8910,7 @@ namespace GNA_DLRreport
 
             finally
             {
-                btnAddProject.IsEnabled =
-                    true;
+                UpdateAddProjectButtonState();
             }
 
             #endregion
@@ -8047,7 +8919,9 @@ namespace GNA_DLRreport
 
         private async Task<bool> AddOrRestoreProjectAsync(
             string projectName,
-            DateTime projectStartDate)
+            DateTime projectStartDate,
+            string timeZoneId,
+            string defaultReportOutputPath)
         {
             #region Validate Project Name
 
@@ -8072,6 +8946,26 @@ namespace GNA_DLRreport
 
             DateTime validatedProjectStartDate =
                 projectStartDate.Date;
+
+            string validatedTimeZoneId =
+                timeZoneId?.Trim()
+                ?? throw new ArgumentNullException(
+                    paramName: nameof(timeZoneId));
+
+            _ = TimeZoneInfo.FindSystemTimeZoneById(
+                id: validatedTimeZoneId);
+
+            string validatedOutputPath =
+                defaultReportOutputPath?.Trim()
+                ?? throw new ArgumentNullException(
+                    paramName: nameof(defaultReportOutputPath));
+
+            if (string.IsNullOrWhiteSpace(validatedOutputPath))
+            {
+                throw new ArgumentException(
+                    message: "Default report output path cannot be empty.",
+                    paramName: nameof(defaultReportOutputPath));
+            }
 
             #endregion
 
@@ -8145,10 +9039,58 @@ namespace GNA_DLRreport
             if (existingProjectId.HasValue &&
                 !existingProjectIsDeleted)
             {
-                txtProjectManagementStatus.Text =
-                    $"Project '{validatedProjectName}' already exists.";
+                const string updateProjectSql = """
+                    UPDATE [dbo].[Project]
+                    SET
+                        [ProjectStartDate] = @ProjectStartDate,
+                        [TimeZoneId] = @TimeZoneId,
+                        [DefaultReportOutputPath] = @DefaultReportOutputPath
+                    WHERE
+                        [Project_ID] = @Project_ID
+                        AND [IsDeleted] = 0;
+                    """;
 
-                return false;
+                await using SqlCommand updateProjectCommand =
+                    new(
+                        cmdText: updateProjectSql,
+                        connection: databaseConnection);
+
+                updateProjectCommand.Parameters.Add(
+                    parameterName: "@Project_ID",
+                    sqlDbType: System.Data.SqlDbType.Int)
+                    .Value = existingProjectId.Value;
+
+                updateProjectCommand.Parameters.Add(
+                    parameterName: "@ProjectStartDate",
+                    sqlDbType: System.Data.SqlDbType.Date)
+                    .Value = validatedProjectStartDate;
+
+                updateProjectCommand.Parameters.Add(
+                    parameterName: "@TimeZoneId",
+                    sqlDbType: System.Data.SqlDbType.NVarChar,
+                    size: 200)
+                    .Value = validatedTimeZoneId;
+
+                updateProjectCommand.Parameters.Add(
+                    parameterName: "@DefaultReportOutputPath",
+                    sqlDbType: System.Data.SqlDbType.NVarChar,
+                    size: 1000)
+                    .Value = validatedOutputPath;
+
+                int updatedRows =
+                    await updateProjectCommand.ExecuteNonQueryAsync();
+
+                if (updatedRows != 1)
+                {
+                    throw new InvalidOperationException(
+                        $"Project '{validatedProjectName}' could not be overwritten " +
+                        "because its database state changed before the operation completed.");
+                }
+
+                txtProjectManagementStatus.Text =
+                    $"Project '{validatedProjectName}' overwritten successfully.";
+
+                return true;
             }
 
             #endregion
@@ -8183,7 +9125,9 @@ namespace GNA_DLRreport
             UPDATE [dbo].[Project]
             SET
                 [IsDeleted] = 0,
-                [ProjectStartDate] = @ProjectStartDate
+                [ProjectStartDate] = @ProjectStartDate,
+                [TimeZoneId] = @TimeZoneId,
+                [DefaultReportOutputPath] = @DefaultReportOutputPath
             WHERE [Project_ID] = @Project_ID
               AND [IsDeleted] = 1;
             """;
@@ -8202,6 +9146,18 @@ namespace GNA_DLRreport
                     sqlDbType: System.Data.SqlDbType.Date)
                     .Value =
                         validatedProjectStartDate;
+
+                restoreProjectCommand.Parameters.Add(
+                    parameterName: "@TimeZoneId",
+                    sqlDbType: System.Data.SqlDbType.NVarChar,
+                    size: 200)
+                    .Value = validatedTimeZoneId;
+
+                restoreProjectCommand.Parameters.Add(
+                    parameterName: "@DefaultReportOutputPath",
+                    sqlDbType: System.Data.SqlDbType.NVarChar,
+                    size: 1000)
+                    .Value = validatedOutputPath;
 
                 int restoredRows =
                     await restoreProjectCommand.ExecuteNonQueryAsync();
@@ -8236,12 +9192,16 @@ namespace GNA_DLRreport
         (
             [ProjectName],
             [ProjectStartDate],
+            [TimeZoneId],
+            [DefaultReportOutputPath],
             [IsDeleted]
         )
         VALUES
         (
             @ProjectName,
             @ProjectStartDate,
+            @TimeZoneId,
+            @DefaultReportOutputPath,
             0
         );
         """;
@@ -8260,6 +9220,18 @@ namespace GNA_DLRreport
                 sqlDbType: System.Data.SqlDbType.Date)
                 .Value =
                     validatedProjectStartDate;
+
+            insertProjectCommand.Parameters.Add(
+                parameterName: "@TimeZoneId",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 200)
+                .Value = validatedTimeZoneId;
+
+            insertProjectCommand.Parameters.Add(
+                parameterName: "@DefaultReportOutputPath",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 1000)
+                .Value = validatedOutputPath;
 
             int insertedRows =
                 await insertProjectCommand.ExecuteNonQueryAsync();
@@ -8542,7 +9514,11 @@ namespace GNA_DLRreport
                 {
                     await EnsureChartTypeCatalogueAsync();
 
+                    await EnsureChartTemplateTablesAsync();
+
                     await RefreshExistingChartsAsync();
+
+                    await RefreshChartTemplatesAsync();
                 }
                 catch (Exception chartEx)
                 {
@@ -9475,6 +10451,8 @@ namespace GNA_DLRreport
 
             ApplyActiveProjectStateToLoadedProjects();
 
+            UpdateAddProjectButtonState();
+
             #endregion
         }
 
@@ -9762,8 +10740,7 @@ namespace GNA_DLRreport
 
             if (sortedChartTypes.Count > 0)
             {
-                cmbChartType.SelectedIndex =
-                    0;
+                SelectDefaultChartType();
             }
 
             #endregion
@@ -9785,6 +10762,27 @@ namespace GNA_DLRreport
             #endregion
 
 
+            #region Initialise Report-Resolved Chart Configuration
+
+            SelectChartStartDateMode(
+                startDateMode: ChartStartDateModeReportStart);
+
+            txtChartWidthMm.Text =
+                DefaultChartWidthMm.ToString(
+                    provider: CultureInfo.InvariantCulture);
+
+            txtChartHeightMm.Text =
+                DefaultChartHeightMm.ToString(
+                    provider: CultureInfo.InvariantCulture);
+
+            SelectChartResolutionDpi(
+                resolutionDpi: DefaultChartResolutionDpi);
+
+            UpdateChartPixelDimensions();
+
+            #endregion
+
+
             #region Initialise Chart Series
 
             dgChartSeries.ItemsSource =
@@ -9799,6 +10797,165 @@ namespace GNA_DLRreport
 
             #endregion
         }
+
+
+        #region Chart Default Values
+
+        private void SelectDefaultChartType()
+        {
+            foreach (object item
+                in cmbChartType.Items)
+            {
+                if (item is ChartTypeUiItem chartType &&
+                    string.Equals(
+                        a: chartType.Key,
+                        b: "Displacement",
+                        comparisonType: StringComparison.OrdinalIgnoreCase))
+                {
+                    cmbChartType.SelectedItem =
+                        chartType;
+
+                    return;
+                }
+            }
+
+            if (cmbChartType.Items.Count > 0)
+            {
+                cmbChartType.SelectedIndex =
+                    0;
+            }
+        }
+
+
+        private static bool ChartUnitUsesStandardTriggerDefaults(
+            string unit)
+        {
+            if (string.IsNullOrWhiteSpace(unit))
+            {
+                return false;
+            }
+
+            return unit.Contains(
+                       value: "mm",
+                       comparisonType: StringComparison.OrdinalIgnoreCase)
+                   ||
+                   string.Equals(
+                       a: unit.Trim(),
+                       b: "decimal degrees",
+                       comparisonType: StringComparison.OrdinalIgnoreCase);
+        }
+
+
+        private void ApplyChartTypeDefaults(
+            ChartTypeUiItem chartType)
+        {
+            #region Apply Standard Trigger Defaults
+
+            if (ChartUnitUsesStandardTriggerDefaults(
+                unit: chartType.Unit))
+            {
+                txtChartGreenTrigger.Text =
+                    "2";
+
+                txtChartAmberTrigger.Text =
+                    "4";
+
+                txtChartRedTrigger.Text =
+                    "6";
+
+                chkChartAutomaticYAxis.IsChecked =
+                    true;
+
+                ApplyDefaultVerticalAxisFromRedTrigger();
+            }
+
+            #endregion
+
+
+            #region Apply Standard Presentation Defaults
+
+            txtChartYAxisTitle.Text =
+                chartType.VerticalAxisTitle;
+
+            txtChartWidthMm.Text =
+                DefaultChartWidthMm.ToString(
+                    provider: CultureInfo.InvariantCulture);
+
+            txtChartHeightMm.Text =
+                DefaultChartHeightMm.ToString(
+                    provider: CultureInfo.InvariantCulture);
+
+            SelectChartResolutionDpi(
+                resolutionDpi: DefaultChartResolutionDpi);
+
+            UpdateChartPixelDimensions();
+
+            txtChartDefaultLineWidth.Text =
+                "2";
+
+            txtChartDefaultMarkerSize.Text =
+                "4";
+
+            chkChartGridLines.IsChecked =
+                true;
+
+            chkChartShowLegend.IsChecked =
+                true;
+
+            cmbChartLegendPosition.SelectedIndex =
+                0;
+
+            #endregion
+        }
+
+
+        private void ApplyDefaultVerticalAxisFromRedTrigger()
+        {
+            if (!decimal.TryParse(
+                s: txtChartRedTrigger.Text,
+                style: NumberStyles.Float,
+                provider: CultureInfo.InvariantCulture,
+                result: out decimal redTrigger) ||
+                redTrigger <= 0)
+            {
+                return;
+            }
+
+            decimal rawExtent =
+                redTrigger * 1.5m;
+
+            decimal roundedExtent =
+                Math.Ceiling(
+                    d: rawExtent / 5m) *
+                5m;
+
+            if (roundedExtent < 5m)
+            {
+                roundedExtent =
+                    5m;
+            }
+
+            txtChartYAxisMinimum.Text =
+                (-roundedExtent).ToString(
+                    provider: CultureInfo.InvariantCulture);
+
+            txtChartYAxisMaximum.Text =
+                roundedExtent.ToString(
+                    provider: CultureInfo.InvariantCulture);
+        }
+
+
+        private void txtChartRedTrigger_LostFocus(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (chkChartAutomaticYAxis.IsChecked == true)
+            {
+                ApplyDefaultVerticalAxisFromRedTrigger();
+            }
+        }
+
+        #endregion
 
 
         private void AddChartTypeUiItem(
@@ -9827,7 +10984,7 @@ namespace GNA_DLRreport
         }
 
 
-        private void cmbChartType_SelectionChanged(
+        private async void cmbChartType_SelectionChanged(
             object sender,
             SelectionChangedEventArgs e)
         {
@@ -9848,6 +11005,9 @@ namespace GNA_DLRreport
                 cmbChartDataElement.ItemsSource =
                     null;
 
+                cmbChartSeriesEntity.ItemsSource =
+                    null;
+
                 return;
             }
 
@@ -9860,8 +11020,8 @@ namespace GNA_DLRreport
             txtChartTriggerUnit.Text =
                 selectedType.Unit;
 
-            txtChartYAxisTitle.Text =
-                selectedType.VerticalAxisTitle;
+            ApplyChartTypeDefaults(
+                chartType: selectedType);
 
             cmbChartDataElement.ItemsSource =
                 selectedType.DataElements;
@@ -9870,6 +11030,22 @@ namespace GNA_DLRreport
             {
                 cmbChartDataElement.SelectedIndex =
                     0;
+            }
+
+            try
+            {
+                await LoadChartEntitiesAsync(
+                    chartType: selectedType);
+            }
+            catch (Exception ex)
+            {
+                cmbChartSeriesEntity.ItemsSource =
+                    null;
+
+                txtChartStatus.Text =
+                    $"Unable to load chart entities: {ex.Message}";
+
+                return;
             }
 
             if (!selectedType.IsFullyDefined)
@@ -9888,6 +11064,117 @@ namespace GNA_DLRreport
         }
 
 
+        private async Task LoadChartEntitiesAsync(
+            ChartTypeUiItem chartType)
+        {
+            cmbChartSeriesEntity.ItemsSource =
+                null;
+
+            if (!_activeProjectId.HasValue)
+            {
+                return;
+            }
+
+            string sql = chartType.EntityKind switch
+            {
+                "Point" => """
+                    SELECT [PointName_ID], [PointName]
+                    FROM [dbo].[PointName]
+                    WHERE [Project_ID] = @Project_ID AND [IsDeleted] = 0
+                    ORDER BY [PointName];
+                    """,
+                "Sensor" => """
+                    SELECT [SensorID], [SensorName]
+                    FROM [dbo].[GeotecSensors]
+                    WHERE [Project_ID] = @Project_ID AND [IsDeleted] = 0
+                    ORDER BY [SensorName];
+                    """,
+                "Track" => """
+                    SELECT [Track_ID], [TrackName]
+                    FROM [dbo].[Track]
+                    WHERE [Project_ID] = @Project_ID AND [IsDeleted] = 0
+                    ORDER BY [TrackName];
+                    """,
+                "PrismArray" => """
+                    SELECT [Array_ID], [ArrayName]
+                    FROM [dbo].[PrismArray]
+                    WHERE [Project_ID] = @Project_ID AND [IsDeleted] = 0
+                    ORDER BY [ArrayName];
+                    """,
+                "PrismPair" => """
+                    SELECT
+                        PP.[PrismPair_ID],
+                        CONCAT(T.[TrackName], N' | ', L.[PointName], N' - ', R.[PointName])
+                    FROM [dbo].[PrismPairs] AS PP
+                    INNER JOIN [dbo].[Track] AS T ON T.[Track_ID] = PP.[Track_ID]
+                    INNER JOIN [dbo].[PointName] AS L ON L.[PointName_ID] = PP.[Left_ID]
+                    INNER JOIN [dbo].[PointName] AS R ON R.[PointName_ID] = PP.[Right_ID]
+                    WHERE
+                        T.[Project_ID] = @Project_ID
+                        AND T.[IsDeleted] = 0
+                        AND PP.[IsDeleted] = 0
+                    ORDER BY T.[TrackName], PP.[PairOrder];
+                    """,
+                _ => throw new InvalidOperationException(
+                    $"Unsupported chart entity kind '{chartType.EntityKind}'.")
+            };
+
+            List<ChartEntityUiItem> entities =
+                new();
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString: GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand command =
+                new(
+                    cmdText: sql,
+                    connection: databaseConnection);
+
+            command.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value = _activeProjectId.Value;
+
+            await using SqlDataReader reader =
+                await command.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                entities.Add(
+                    item:
+                        new ChartEntityUiItem
+                        {
+                            EntityId = reader.GetInt32(0),
+                            DisplayName = reader.GetString(1)
+                        });
+            }
+
+            HashSet<int> selectedEntityIds =
+                _chartSeries
+                    .Where(
+                        predicate: series => series.EntityId > 0)
+                    .Select(
+                        selector: series => series.EntityId)
+                    .ToHashSet();
+
+            entities.RemoveAll(
+                match: entity => selectedEntityIds.Contains(
+                    item: entity.EntityId));
+
+            cmbChartSeriesEntity.ItemsSource =
+                entities;
+
+            if (entities.Count > 0)
+            {
+                cmbChartSeriesEntity.SelectedIndex =
+                    0;
+            }
+        }
+
+
         private void btnChartNew_Click(
             object sender,
             RoutedEventArgs e)
@@ -9900,7 +11187,16 @@ namespace GNA_DLRreport
             _loadedChartNumber =
                 null;
 
+            _loadedChartTemplateId =
+                null;
+
             cmbExistingChart.SelectedItem =
+                null;
+
+            cmbChartTemplate.SelectedItem =
+                null;
+
+            _loadedChartTemplateId =
                 null;
 
             txtChartNumber.Text =
@@ -9910,11 +11206,7 @@ namespace GNA_DLRreport
 
             _chartSeries.Clear();
 
-            if (_chartTypes.Count > 0)
-            {
-                cmbChartType.SelectedIndex =
-                    0;
-            }
+            SelectDefaultChartType();
 
             dpChartEndDate.SelectedDate =
                 DateTime.Today;
@@ -9931,17 +11223,15 @@ namespace GNA_DLRreport
                 "2";
 
             txtChartAmberTrigger.Text =
-                "5";
+                "4";
 
             txtChartRedTrigger.Text =
-                "10";
+                "6";
 
             chkChartAutomaticYAxis.IsChecked =
                 true;
 
-            txtChartYAxisMinimum.Clear();
-
-            txtChartYAxisMaximum.Clear();
+            ApplyDefaultVerticalAxisFromRedTrigger();
 
             txtChartTitleOverride.Clear();
 
@@ -9967,7 +11257,7 @@ namespace GNA_DLRreport
                 true;
 
             txtChartStatus.Text =
-                "New chart definition ready.";
+                "New chart canvas ready with default values.";
 
             txtChartName.Focus();
 
@@ -10142,7 +11432,7 @@ namespace GNA_DLRreport
             object sender,
             RoutedEventArgs e)
         {
-            #region Validate Chart Definition For Commit
+            #region Validate Chart Definition For Save
 
             if (!TryValidateChartConfiguration(
                 validationMessage: out string validationMessage))
@@ -10201,7 +11491,7 @@ namespace GNA_DLRreport
                     if (replaceResult != MessageBoxResult.Yes)
                     {
                         txtChartStatus.Text =
-                            "Commit rejected. Chart name unchanged.";
+                            "Save rejected. Chart name unchanged.";
 
                         txtChartName.Focus();
 
@@ -10233,7 +11523,7 @@ namespace GNA_DLRreport
                 #endregion
 
 
-                #region Commit Or Update Chart
+                #region Save Or Update Chart
 
                 (int ChartDefinitionId, int ChartNumber) commitResult =
                     await SaveChartDefinitionAsync(
@@ -10256,16 +11546,1694 @@ namespace GNA_DLRreport
                         commitResult.ChartDefinitionId);
 
                 txtChartStatus.Text =
-                    $"Chart '{chartName}' committed.";
+                    $"Chart '{chartName}' saved.";
 
                 #endregion
             }
             catch (Exception ex)
             {
                 txtChartStatus.Text =
-                    $"Commit failed: {ex.Message}";
+                    $"Chart save failed: {ex.Message}";
             }
         }
+
+
+        #region Chart Template Workflow
+
+        private async void btnSaveChartTemplate_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Validate Template
+
+            if (!TryValidateChartCanvasConfiguration(
+                validationMessage: out string validationMessage))
+            {
+                txtChartStatus.Text =
+                    validationMessage;
+
+                return;
+            }
+
+            string templateName =
+                txtChartName.Text?.Trim()
+                ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(templateName))
+            {
+                txtChartStatus.Text =
+                    "Enter a Chart name to use as the Template name.";
+
+                txtChartName.Focus();
+
+                return;
+            }
+
+            #endregion
+
+
+            try
+            {
+                #region Ensure Template Storage
+
+                await EnsureChartTypeCatalogueAsync();
+
+                await EnsureChartTemplateTablesAsync();
+
+                #endregion
+
+
+                #region Resolve Duplicate Template
+
+                ChartTemplateUiItem? duplicateTemplate =
+                    await FindChartTemplateByNameAsync(
+                        templateName:
+                            templateName);
+
+                int? targetTemplateId =
+                    duplicateTemplate?.ChartTemplateId;
+
+                if (duplicateTemplate is not null)
+                {
+                    MessageBoxResult replaceResult =
+                        MessageBox.Show(
+                            owner: this,
+                            messageBoxText:
+                                "Duplicate template found\n\n" +
+                                $"Replace '{duplicateTemplate.TemplateName}'?",
+                            caption:
+                                "Duplicate template found",
+                            button:
+                                MessageBoxButton.YesNo,
+                            icon:
+                                MessageBoxImage.Warning,
+                            defaultResult:
+                                MessageBoxResult.No);
+
+                    if (replaceResult != MessageBoxResult.Yes)
+                    {
+                        txtChartStatus.Text =
+                            "Template save rejected. Name unchanged.";
+
+                        txtChartName.Focus();
+
+                        txtChartName.SelectAll();
+
+                        return;
+                    }
+                }
+
+                #endregion
+
+
+                #region Save Template
+
+                int templateId =
+                    await SaveChartTemplateAsync(
+                        chartTemplateId:
+                            targetTemplateId,
+                        templateName:
+                            templateName);
+
+                _loadedChartTemplateId =
+                    templateId;
+
+                await RefreshChartTemplatesAsync(
+                    selectedTemplateId:
+                        templateId);
+
+                txtChartStatus.Text =
+                    $"Template '{templateName}' saved.";
+
+                #endregion
+            }
+            catch (Exception ex)
+            {
+                txtChartStatus.Text =
+                    $"Template save failed: {ex.Message}";
+            }
+        }
+
+
+        private async void btnLoadChartTemplate_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Load Selected Template
+
+            try
+            {
+                await EnsureChartTemplateTablesAsync();
+
+                await RefreshChartTemplatesAsync();
+
+                if (cmbChartTemplate.SelectedItem
+                    is not ChartTemplateUiItem selectedTemplate)
+                {
+                    txtChartStatus.Text =
+                        "Select a Template.";
+
+                    return;
+                }
+
+                await LoadChartTemplateIntoEditorAsync(
+                    chartTemplateId:
+                        selectedTemplate.ChartTemplateId);
+
+                txtChartStatus.Text =
+                    $"Template '{selectedTemplate.TemplateName}' loaded. " +
+                    "Rename the chart, select data entities and set report dates before Commit.";
+
+                txtChartName.Focus();
+
+                txtChartName.SelectAll();
+            }
+            catch (Exception ex)
+            {
+                txtChartStatus.Text =
+                    $"Unable to load Template: {ex.Message}";
+            }
+
+            #endregion
+        }
+
+
+        private async Task EnsureChartTemplateTablesAsync()
+        {
+            #region Define Template Schema
+
+            const string sql = """
+                IF OBJECT_ID(N'dbo.ChartTemplate', N'U') IS NULL
+                BEGIN
+                    CREATE TABLE [dbo].[ChartTemplate]
+                    (
+                        [ChartTemplate_ID] int IDENTITY(1,1) NOT NULL,
+                        [Project_ID] int NOT NULL,
+                        [TemplateName] nvarchar(200) NOT NULL,
+                        [ChartType_ID] int NOT NULL,
+                        [DefaultDurationDays] int NOT NULL
+                            CONSTRAINT [DF_ChartTemplate_DefaultDurationDays]
+                            DEFAULT (14),
+                        [GreenTrigger] decimal(18,6) NOT NULL,
+                        [AmberTrigger] decimal(18,6) NOT NULL,
+                        [RedTrigger] decimal(18,6) NOT NULL,
+                        [UseAutomaticVerticalAxis] bit NOT NULL
+                            CONSTRAINT [DF_ChartTemplate_UseAutomaticVerticalAxis]
+                            DEFAULT (1),
+                        [VerticalAxisMinimum] decimal(18,6) NOT NULL,
+                        [VerticalAxisMaximum] decimal(18,6) NOT NULL,
+                        [ChartTitle] nvarchar(500) NULL,
+                        [VerticalAxisTitle] nvarchar(200) NOT NULL,
+                        [YAxisUnit] nvarchar(50) NOT NULL,
+                        [ShowLegend] bit NOT NULL
+                            CONSTRAINT [DF_ChartTemplate_ShowLegend]
+                            DEFAULT (1),
+                        [LegendPosition] nvarchar(50) NOT NULL,
+                        [PngWidthPixels] int NOT NULL,
+                        [PngHeightPixels] int NOT NULL,
+                        [DefaultStartDateMode] nvarchar(20) NOT NULL
+                            CONSTRAINT [DF_ChartTemplate_DefaultStartDateMode]
+                            DEFAULT (N'ReportStart'),
+                        [WidthMm] int NOT NULL
+                            CONSTRAINT [DF_ChartTemplate_WidthMm] DEFAULT (150),
+                        [HeightMm] int NOT NULL
+                            CONSTRAINT [DF_ChartTemplate_HeightMm] DEFAULT (80),
+                        [ResolutionDpi] smallint NOT NULL
+                            CONSTRAINT [DF_ChartTemplate_ResolutionDpi] DEFAULT (300),
+                        [ChartFontFamily] nvarchar(100) NOT NULL
+                            CONSTRAINT [DF_ChartTemplate_ChartFontFamily] DEFAULT (N'Arial'),
+                        [DefaultLineWidth] decimal(10,3) NOT NULL,
+                        [DefaultMarkerSize] decimal(10,3) NOT NULL,
+                        [ShowGridLines] bit NOT NULL,
+                        [IsDeleted] bit NOT NULL
+                            CONSTRAINT [DF_ChartTemplate_IsDeleted]
+                            DEFAULT (0),
+                        [CreatedUtc] datetime2(3) NOT NULL
+                            CONSTRAINT [DF_ChartTemplate_CreatedUtc]
+                            DEFAULT (SYSUTCDATETIME()),
+                        [UpdatedUtc] datetime2(3) NOT NULL
+                            CONSTRAINT [DF_ChartTemplate_UpdatedUtc]
+                            DEFAULT (SYSUTCDATETIME()),
+
+                        CONSTRAINT [PK_ChartTemplate]
+                            PRIMARY KEY CLUSTERED ([ChartTemplate_ID]),
+
+                        CONSTRAINT [FK_ChartTemplate_Project]
+                            FOREIGN KEY ([Project_ID])
+                            REFERENCES [dbo].[Project] ([Project_ID])
+                            ON DELETE NO ACTION
+                            ON UPDATE NO ACTION,
+
+                        CONSTRAINT [FK_ChartTemplate_ChartType]
+                            FOREIGN KEY ([ChartType_ID])
+                            REFERENCES [dbo].[ChartType] ([ChartType_ID])
+                            ON DELETE NO ACTION
+                            ON UPDATE NO ACTION,
+
+                        CONSTRAINT [CK_ChartTemplate_Duration]
+                            CHECK ([DefaultDurationDays] > 0),
+
+                        CONSTRAINT [CK_ChartTemplate_Triggers]
+                            CHECK
+                            (
+                                [GreenTrigger] > 0
+                                AND [GreenTrigger] < [AmberTrigger]
+                                AND [AmberTrigger] < [RedTrigger]
+                            ),
+
+                        CONSTRAINT [CK_ChartTemplate_VerticalAxis]
+                            CHECK ([VerticalAxisMinimum] < [VerticalAxisMaximum])
+                    );
+
+                    CREATE UNIQUE INDEX
+                        [UX_ChartTemplate_Active_Project_Name]
+                        ON [dbo].[ChartTemplate]
+                        (
+                            [Project_ID],
+                            [TemplateName]
+                        )
+                        WHERE [IsDeleted] = 0;
+                END;
+
+                IF COL_LENGTH(N'dbo.ChartTemplate', N'DefaultStartDateMode') IS NULL
+                BEGIN
+                    ALTER TABLE [dbo].[ChartTemplate]
+                        ADD [DefaultStartDateMode] nvarchar(20) NOT NULL
+                                CONSTRAINT [DF_ChartTemplate_DefaultStartDateMode]
+                                DEFAULT (N'ReportStart'),
+                            [WidthMm] int NOT NULL
+                                CONSTRAINT [DF_ChartTemplate_WidthMm] DEFAULT (150),
+                            [HeightMm] int NOT NULL
+                                CONSTRAINT [DF_ChartTemplate_HeightMm] DEFAULT (80),
+                            [ResolutionDpi] smallint NOT NULL
+                                CONSTRAINT [DF_ChartTemplate_ResolutionDpi] DEFAULT (300),
+                            [ChartFontFamily] nvarchar(100) NOT NULL
+                                CONSTRAINT [DF_ChartTemplate_ChartFontFamily] DEFAULT (N'Arial');
+                END;
+
+                IF OBJECT_ID(N'dbo.ChartTemplateSeries', N'U') IS NULL
+                BEGIN
+                    CREATE TABLE [dbo].[ChartTemplateSeries]
+                    (
+                        [ChartTemplateSeries_ID] int IDENTITY(1,1) NOT NULL,
+                        [ChartTemplate_ID] int NOT NULL,
+                        [DataElementKey] nvarchar(100) NOT NULL,
+                        [LegendText] nvarchar(300) NULL,
+                        [LineWidth] decimal(10,3) NOT NULL,
+                        [MarkerSize] decimal(10,3) NOT NULL,
+                        [DisplayOrder] int NOT NULL,
+
+                        CONSTRAINT [PK_ChartTemplateSeries]
+                            PRIMARY KEY CLUSTERED ([ChartTemplateSeries_ID]),
+
+                        CONSTRAINT [FK_ChartTemplateSeries_ChartTemplate]
+                            FOREIGN KEY ([ChartTemplate_ID])
+                            REFERENCES [dbo].[ChartTemplate] ([ChartTemplate_ID])
+                            ON DELETE CASCADE
+                            ON UPDATE NO ACTION,
+
+                        CONSTRAINT [UQ_ChartTemplateSeries_Order]
+                            UNIQUE ([ChartTemplate_ID], [DisplayOrder]),
+
+                        CONSTRAINT [CK_ChartTemplateSeries_DisplayOrder]
+                            CHECK ([DisplayOrder] > 0)
+                    );
+                END;
+                """;
+
+            #endregion
+
+
+            #region Ensure Template Schema
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand command =
+                new(
+                    cmdText:
+                        sql,
+                    connection:
+                        databaseConnection);
+
+            await command.ExecuteNonQueryAsync();
+
+            #endregion
+        }
+
+
+        private async Task RefreshChartTemplatesAsync(
+            int? selectedTemplateId = null)
+        {
+            #region Validate Project
+
+            _chartTemplates.Clear();
+
+            if (!_activeProjectId.HasValue)
+            {
+                return;
+            }
+
+            #endregion
+
+
+            #region Load Templates
+
+            const string sql = """
+                SELECT
+                    T.[ChartTemplate_ID],
+                    T.[TemplateName],
+                    CT.[ChartTypeKey]
+                FROM [dbo].[ChartTemplate] AS T
+                INNER JOIN [dbo].[ChartType] AS CT
+                    ON CT.[ChartType_ID] = T.[ChartType_ID]
+                WHERE
+                    T.[Project_ID] = @Project_ID
+                    AND T.[IsDeleted] = 0
+                ORDER BY
+                    T.[TemplateName];
+                """;
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand command =
+                new(
+                    cmdText:
+                        sql,
+                    connection:
+                        databaseConnection);
+
+            command.Parameters.Add(
+                parameterName:
+                    "@Project_ID",
+                sqlDbType:
+                    System.Data.SqlDbType.Int)
+                .Value =
+                    _activeProjectId.Value;
+
+            await using SqlDataReader reader =
+                await command.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                _chartTemplates.Add(
+                    item:
+                        new ChartTemplateUiItem
+                        {
+                            ChartTemplateId =
+                                reader.GetInt32(0),
+
+                            TemplateName =
+                                reader.GetString(1),
+
+                            ChartTypeKey =
+                                reader.GetString(2)
+                        });
+            }
+
+            #endregion
+
+
+            #region Restore Selection
+
+            if (selectedTemplateId.HasValue)
+            {
+                foreach (ChartTemplateUiItem item
+                    in _chartTemplates)
+                {
+                    if (item.ChartTemplateId ==
+                        selectedTemplateId.Value)
+                    {
+                        cmbChartTemplate.SelectedItem =
+                            item;
+
+                        break;
+                    }
+                }
+            }
+
+            #endregion
+        }
+
+
+        private async Task<ChartTemplateUiItem?> FindChartTemplateByNameAsync(
+            string templateName)
+        {
+            if (!_activeProjectId.HasValue)
+            {
+                throw new InvalidOperationException(
+                    "Select an active project.");
+            }
+
+            const string sql = """
+                SELECT TOP (1)
+                    T.[ChartTemplate_ID],
+                    T.[TemplateName],
+                    CT.[ChartTypeKey]
+                FROM [dbo].[ChartTemplate] AS T
+                INNER JOIN [dbo].[ChartType] AS CT
+                    ON CT.[ChartType_ID] = T.[ChartType_ID]
+                WHERE
+                    T.[Project_ID] = @Project_ID
+                    AND T.[IsDeleted] = 0
+                    AND UPPER(T.[TemplateName]) = UPPER(@TemplateName);
+                """;
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand command =
+                new(
+                    cmdText:
+                        sql,
+                    connection:
+                        databaseConnection);
+
+            command.Parameters.Add(
+                parameterName:
+                    "@Project_ID",
+                sqlDbType:
+                    System.Data.SqlDbType.Int)
+                .Value =
+                    _activeProjectId.Value;
+
+            command.Parameters.Add(
+                parameterName:
+                    "@TemplateName",
+                sqlDbType:
+                    System.Data.SqlDbType.NVarChar,
+                size:
+                    200)
+                .Value =
+                    templateName;
+
+            await using SqlDataReader reader =
+                await command.ExecuteReaderAsync();
+
+            if (!await reader.ReadAsync())
+            {
+                return null;
+            }
+
+            return new ChartTemplateUiItem
+            {
+                ChartTemplateId =
+                    reader.GetInt32(0),
+
+                TemplateName =
+                    reader.GetString(1),
+
+                ChartTypeKey =
+                    reader.GetString(2)
+            };
+        }
+
+
+        private async Task<int> SaveChartTemplateAsync(
+            int? chartTemplateId,
+            string templateName)
+        {
+            #region Read Template Values
+
+            if (!_activeProjectId.HasValue)
+            {
+                throw new InvalidOperationException(
+                    "Select an active project.");
+            }
+
+            if (cmbChartType.SelectedItem
+                is not ChartTypeUiItem chartType)
+            {
+                throw new InvalidOperationException(
+                    "Select a chart type.");
+            }
+
+            int durationDays =
+                int.TryParse(
+                    s: txtChartRecentDays.Text,
+                    style: NumberStyles.Integer,
+                    provider: CultureInfo.InvariantCulture,
+                    result: out int parsedDuration) &&
+                parsedDuration > 0
+                    ? parsedDuration
+                    : DefaultChartRecentDays;
+
+            decimal greenTrigger =
+                decimal.Parse(
+                    s: txtChartGreenTrigger.Text,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture);
+
+            decimal amberTrigger =
+                decimal.Parse(
+                    s: txtChartAmberTrigger.Text,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture);
+
+            decimal redTrigger =
+                decimal.Parse(
+                    s: txtChartRedTrigger.Text,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture);
+
+            if (chkChartAutomaticYAxis.IsChecked == true)
+            {
+                ApplyDefaultVerticalAxisFromRedTrigger();
+            }
+
+            decimal verticalMinimum =
+                decimal.Parse(
+                    s: txtChartYAxisMinimum.Text,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture);
+
+            decimal verticalMaximum =
+                decimal.Parse(
+                    s: txtChartYAxisMaximum.Text,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture);
+
+            int pngWidth =
+                int.Parse(
+                    s: txtChartPngWidth.Text,
+                    provider: CultureInfo.InvariantCulture);
+
+            int pngHeight =
+                int.Parse(
+                    s: txtChartPngHeight.Text,
+                    provider: CultureInfo.InvariantCulture);
+
+            double defaultLineWidth =
+                ParsePositiveDoubleOrDefault(
+                    text:
+                        txtChartDefaultLineWidth.Text,
+                    defaultValue:
+                        2.0);
+
+            double defaultMarkerSize =
+                ParseNonNegativeDoubleOrDefault(
+                    text:
+                        txtChartDefaultMarkerSize.Text,
+                    defaultValue:
+                        4.0);
+
+            #endregion
+
+
+            #region Open Transaction
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            using SqlTransaction transaction =
+                databaseConnection.BeginTransaction();
+
+            try
+            {
+                #region Resolve Chart Type
+
+                const string chartTypeSql = """
+                    SELECT [ChartType_ID]
+                    FROM [dbo].[ChartType]
+                    WHERE [ChartTypeKey] = @ChartTypeKey;
+                    """;
+
+                await using SqlCommand chartTypeCommand =
+                    new(
+                        cmdText:
+                            chartTypeSql,
+                        connection:
+                            databaseConnection,
+                        transaction:
+                            transaction);
+
+                chartTypeCommand.Parameters.Add(
+                    parameterName:
+                        "@ChartTypeKey",
+                    sqlDbType:
+                        System.Data.SqlDbType.NVarChar,
+                    size:
+                        100)
+                    .Value =
+                        chartType.Key;
+
+                object? chartTypeIdValue =
+                    await chartTypeCommand.ExecuteScalarAsync();
+
+                if (chartTypeIdValue is null ||
+                    chartTypeIdValue == DBNull.Value)
+                {
+                    throw new InvalidOperationException(
+                        "Chart type is not registered in the database.");
+                }
+
+                int chartTypeId =
+                    Convert.ToInt32(
+                        value:
+                            chartTypeIdValue,
+                        provider:
+                            CultureInfo.InvariantCulture);
+
+                #endregion
+
+
+                #region Insert Or Update Template
+
+                int resolvedTemplateId;
+
+                if (chartTemplateId.HasValue)
+                {
+                    const string updateSql = """
+                        UPDATE [dbo].[ChartTemplate]
+                        SET
+                            [TemplateName] = @TemplateName,
+                            [ChartType_ID] = @ChartType_ID,
+                            [DefaultDurationDays] = @DefaultDurationDays,
+                            [GreenTrigger] = @GreenTrigger,
+                            [AmberTrigger] = @AmberTrigger,
+                            [RedTrigger] = @RedTrigger,
+                            [UseAutomaticVerticalAxis] = @UseAutomaticVerticalAxis,
+                            [VerticalAxisMinimum] = @VerticalAxisMinimum,
+                            [VerticalAxisMaximum] = @VerticalAxisMaximum,
+                            [ChartTitle] = @ChartTitle,
+                            [VerticalAxisTitle] = @VerticalAxisTitle,
+                            [YAxisUnit] = @YAxisUnit,
+                            [ShowLegend] = @ShowLegend,
+                            [LegendPosition] = @LegendPosition,
+                            [PngWidthPixels] = @PngWidthPixels,
+                            [PngHeightPixels] = @PngHeightPixels,
+                            [WidthMm] = @WidthMm,
+                            [HeightMm] = @HeightMm,
+                            [ResolutionDpi] = @ResolutionDpi,
+                            [ChartFontFamily] = N'Arial',
+                            [DefaultStartDateMode] = @StartDateMode,
+                            [DefaultLineWidth] = @DefaultLineWidth,
+                            [DefaultMarkerSize] = @DefaultMarkerSize,
+                            [ShowGridLines] = @ShowGridLines,
+                            [UpdatedUtc] = SYSUTCDATETIME()
+                        WHERE
+                            [ChartTemplate_ID] = @ChartTemplate_ID
+                            AND [Project_ID] = @Project_ID
+                            AND [IsDeleted] = 0;
+                        """;
+
+                    await using SqlCommand updateCommand =
+                        new(
+                            cmdText:
+                                updateSql,
+                            connection:
+                                databaseConnection,
+                            transaction:
+                                transaction);
+
+                    AddChartTemplateParameters(
+                        command:
+                            updateCommand,
+                        templateName:
+                            templateName,
+                        chartTypeId:
+                            chartTypeId,
+                        durationDays:
+                            durationDays,
+                        greenTrigger:
+                            greenTrigger,
+                        amberTrigger:
+                            amberTrigger,
+                        redTrigger:
+                            redTrigger,
+                        verticalMinimum:
+                            verticalMinimum,
+                        verticalMaximum:
+                            verticalMaximum,
+                        pngWidth:
+                            pngWidth,
+                        pngHeight:
+                            pngHeight,
+                        defaultLineWidth:
+                            defaultLineWidth,
+                        defaultMarkerSize:
+                            defaultMarkerSize);
+
+                    updateCommand.Parameters.Add(
+                        parameterName:
+                            "@ChartTemplate_ID",
+                        sqlDbType:
+                            System.Data.SqlDbType.Int)
+                        .Value =
+                            chartTemplateId.Value;
+
+                    int rowsUpdated =
+                        await updateCommand.ExecuteNonQueryAsync();
+
+                    if (rowsUpdated != 1)
+                    {
+                        throw new InvalidOperationException(
+                            "Template update failed.");
+                    }
+
+                    resolvedTemplateId =
+                        chartTemplateId.Value;
+                }
+                else
+                {
+                    const string insertSql = """
+                        INSERT INTO [dbo].[ChartTemplate]
+                        (
+                            [Project_ID],
+                            [TemplateName],
+                            [ChartType_ID],
+                            [DefaultDurationDays],
+                            [GreenTrigger],
+                            [AmberTrigger],
+                            [RedTrigger],
+                            [UseAutomaticVerticalAxis],
+                            [VerticalAxisMinimum],
+                            [VerticalAxisMaximum],
+                            [ChartTitle],
+                            [VerticalAxisTitle],
+                            [YAxisUnit],
+                            [ShowLegend],
+                            [LegendPosition],
+                            [PngWidthPixels],
+                            [PngHeightPixels],
+                            [WidthMm],
+                            [HeightMm],
+                            [ResolutionDpi],
+                            [ChartFontFamily],
+                            [DefaultStartDateMode],
+                            [DefaultLineWidth],
+                            [DefaultMarkerSize],
+                            [ShowGridLines],
+                            [IsDeleted]
+                        )
+                        OUTPUT INSERTED.[ChartTemplate_ID]
+                        VALUES
+                        (
+                            @Project_ID,
+                            @TemplateName,
+                            @ChartType_ID,
+                            @DefaultDurationDays,
+                            @GreenTrigger,
+                            @AmberTrigger,
+                            @RedTrigger,
+                            @UseAutomaticVerticalAxis,
+                            @VerticalAxisMinimum,
+                            @VerticalAxisMaximum,
+                            @ChartTitle,
+                            @VerticalAxisTitle,
+                            @YAxisUnit,
+                            @ShowLegend,
+                            @LegendPosition,
+                            @PngWidthPixels,
+                            @PngHeightPixels,
+                            @WidthMm,
+                            @HeightMm,
+                            @ResolutionDpi,
+                            N'Arial',
+                            @StartDateMode,
+                            @DefaultLineWidth,
+                            @DefaultMarkerSize,
+                            @ShowGridLines,
+                            0
+                        );
+                        """;
+
+                    await using SqlCommand insertCommand =
+                        new(
+                            cmdText:
+                                insertSql,
+                            connection:
+                                databaseConnection,
+                            transaction:
+                                transaction);
+
+                    AddChartTemplateParameters(
+                        command:
+                            insertCommand,
+                        templateName:
+                            templateName,
+                        chartTypeId:
+                            chartTypeId,
+                        durationDays:
+                            durationDays,
+                        greenTrigger:
+                            greenTrigger,
+                        amberTrigger:
+                            amberTrigger,
+                        redTrigger:
+                            redTrigger,
+                        verticalMinimum:
+                            verticalMinimum,
+                        verticalMaximum:
+                            verticalMaximum,
+                        pngWidth:
+                            pngWidth,
+                        pngHeight:
+                            pngHeight,
+                        defaultLineWidth:
+                            defaultLineWidth,
+                        defaultMarkerSize:
+                            defaultMarkerSize);
+
+                    object? newTemplateIdValue =
+                        await insertCommand.ExecuteScalarAsync();
+
+                    if (newTemplateIdValue is null ||
+                        newTemplateIdValue == DBNull.Value)
+                    {
+                        throw new InvalidOperationException(
+                            "Template insert failed.");
+                    }
+
+                    resolvedTemplateId =
+                        Convert.ToInt32(
+                            value:
+                                newTemplateIdValue,
+                        provider:
+                            CultureInfo.InvariantCulture);
+                }
+
+                #endregion
+
+
+                #region Replace Template Series
+
+                const string deleteSeriesSql = """
+                    DELETE FROM [dbo].[ChartTemplateSeries]
+                    WHERE [ChartTemplate_ID] = @ChartTemplate_ID;
+                    """;
+
+                await using (SqlCommand deleteSeriesCommand =
+                    new(
+                        cmdText:
+                            deleteSeriesSql,
+                        connection:
+                            databaseConnection,
+                        transaction:
+                            transaction))
+                {
+                    deleteSeriesCommand.Parameters.Add(
+                        parameterName:
+                            "@ChartTemplate_ID",
+                        sqlDbType:
+                            System.Data.SqlDbType.Int)
+                        .Value =
+                            resolvedTemplateId;
+
+                    await deleteSeriesCommand.ExecuteNonQueryAsync();
+                }
+
+                const string insertSeriesSql = """
+                    INSERT INTO [dbo].[ChartTemplateSeries]
+                    (
+                        [ChartTemplate_ID],
+                        [DataElementKey],
+                        [LegendText],
+                        [LineWidth],
+                        [MarkerSize],
+                        [DisplayOrder]
+                    )
+                    VALUES
+                    (
+                        @ChartTemplate_ID,
+                        @DataElementKey,
+                        @LegendText,
+                        @LineWidth,
+                        @MarkerSize,
+                        @DisplayOrder
+                    );
+                    """;
+
+                foreach (ChartSeriesUiItem series
+                    in _chartSeries.OrderBy(
+                        keySelector:
+                            item => item.DisplayOrder))
+                {
+                    await using SqlCommand seriesCommand =
+                        new(
+                            cmdText:
+                                insertSeriesSql,
+                            connection:
+                                databaseConnection,
+                            transaction:
+                                transaction);
+
+                    seriesCommand.Parameters.Add(
+                        parameterName:
+                            "@ChartTemplate_ID",
+                        sqlDbType:
+                            System.Data.SqlDbType.Int)
+                        .Value =
+                            resolvedTemplateId;
+
+                    seriesCommand.Parameters.Add(
+                        parameterName:
+                            "@DataElementKey",
+                        sqlDbType:
+                            System.Data.SqlDbType.NVarChar,
+                        size:
+                            100)
+                        .Value =
+                            series.DataElementDisplayName;
+
+                    seriesCommand.Parameters.Add(
+                        parameterName:
+                            "@LegendText",
+                        sqlDbType:
+                            System.Data.SqlDbType.NVarChar,
+                        size:
+                            300)
+                        .Value =
+                            string.IsNullOrWhiteSpace(
+                                value:
+                                    series.LegendText)
+                                ? DBNull.Value
+                                : series.LegendText;
+
+                    SqlParameter lineWidthParameter =
+                        seriesCommand.Parameters.Add(
+                            parameterName:
+                                "@LineWidth",
+                            sqlDbType:
+                                System.Data.SqlDbType.Decimal);
+
+                    lineWidthParameter.Precision =
+                        10;
+
+                    lineWidthParameter.Scale =
+                        3;
+
+                    lineWidthParameter.Value =
+                        Convert.ToDecimal(
+                            value:
+                                series.LineWidth,
+                            provider:
+                                CultureInfo.InvariantCulture);
+
+                    SqlParameter markerSizeParameter =
+                        seriesCommand.Parameters.Add(
+                            parameterName:
+                                "@MarkerSize",
+                            sqlDbType:
+                                System.Data.SqlDbType.Decimal);
+
+                    markerSizeParameter.Precision =
+                        10;
+
+                    markerSizeParameter.Scale =
+                        3;
+
+                    markerSizeParameter.Value =
+                        Convert.ToDecimal(
+                            value:
+                                series.MarkerSize,
+                            provider:
+                                CultureInfo.InvariantCulture);
+
+                    seriesCommand.Parameters.Add(
+                        parameterName:
+                            "@DisplayOrder",
+                        sqlDbType:
+                            System.Data.SqlDbType.Int)
+                        .Value =
+                            series.DisplayOrder;
+
+                    await seriesCommand.ExecuteNonQueryAsync();
+                }
+
+                #endregion
+
+
+                transaction.Commit();
+
+                return resolvedTemplateId;
+            }
+            catch
+            {
+                try
+                {
+                    transaction.Rollback();
+                }
+                catch
+                {
+                    // Preserve original exception.
+                }
+
+                throw;
+            }
+
+            #endregion
+        }
+
+
+        private void AddChartTemplateParameters(
+            SqlCommand command,
+            string templateName,
+            int chartTypeId,
+            int durationDays,
+            decimal greenTrigger,
+            decimal amberTrigger,
+            decimal redTrigger,
+            decimal verticalMinimum,
+            decimal verticalMaximum,
+            int pngWidth,
+            int pngHeight,
+            double defaultLineWidth,
+            double defaultMarkerSize)
+        {
+            command.Parameters.Add(
+                parameterName:
+                    "@Project_ID",
+                sqlDbType:
+                    System.Data.SqlDbType.Int)
+                .Value =
+                    _activeProjectId!.Value;
+
+            command.Parameters.Add(
+                parameterName:
+                    "@TemplateName",
+                sqlDbType:
+                    System.Data.SqlDbType.NVarChar,
+                size:
+                    200)
+                .Value =
+                    templateName;
+
+            command.Parameters.Add(
+                parameterName:
+                    "@ChartType_ID",
+                sqlDbType:
+                    System.Data.SqlDbType.Int)
+                .Value =
+                    chartTypeId;
+
+            command.Parameters.Add(
+                parameterName:
+                    "@DefaultDurationDays",
+                sqlDbType:
+                    System.Data.SqlDbType.Int)
+                .Value =
+                    durationDays;
+
+            AddDecimalParameter(
+                command:
+                    command,
+                name:
+                    "@GreenTrigger",
+                value:
+                    greenTrigger);
+
+            AddDecimalParameter(
+                command:
+                    command,
+                name:
+                    "@AmberTrigger",
+                value:
+                    amberTrigger);
+
+            AddDecimalParameter(
+                command:
+                    command,
+                name:
+                    "@RedTrigger",
+                value:
+                    redTrigger);
+
+            command.Parameters.Add(
+                parameterName:
+                    "@UseAutomaticVerticalAxis",
+                sqlDbType:
+                    System.Data.SqlDbType.Bit)
+                .Value =
+                    chkChartAutomaticYAxis.IsChecked == true;
+
+            AddDecimalParameter(
+                command:
+                    command,
+                name:
+                    "@VerticalAxisMinimum",
+                value:
+                    verticalMinimum);
+
+            AddDecimalParameter(
+                command:
+                    command,
+                name:
+                    "@VerticalAxisMaximum",
+                value:
+                    verticalMaximum);
+
+            command.Parameters.Add(
+                parameterName:
+                    "@ChartTitle",
+                sqlDbType:
+                    System.Data.SqlDbType.NVarChar,
+                size:
+                    500)
+                .Value =
+                    string.IsNullOrWhiteSpace(
+                        value:
+                            txtChartTitleOverride.Text)
+                        ? DBNull.Value
+                        : txtChartTitleOverride.Text.Trim();
+
+            command.Parameters.Add(
+                parameterName:
+                    "@VerticalAxisTitle",
+                sqlDbType:
+                    System.Data.SqlDbType.NVarChar,
+                size:
+                    200)
+                .Value =
+                    txtChartYAxisTitle.Text.Trim();
+
+            command.Parameters.Add(
+                parameterName:
+                    "@YAxisUnit",
+                sqlDbType:
+                    System.Data.SqlDbType.NVarChar,
+                size:
+                    50)
+                .Value =
+                    txtChartUnit.Text.Trim();
+
+            command.Parameters.Add(
+                parameterName:
+                    "@ShowLegend",
+                sqlDbType:
+                    System.Data.SqlDbType.Bit)
+                .Value =
+                    chkChartShowLegend.IsChecked == true;
+
+            command.Parameters.Add(
+                parameterName:
+                    "@LegendPosition",
+                sqlDbType:
+                    System.Data.SqlDbType.NVarChar,
+                size:
+                    50)
+                .Value =
+                    GetSelectedLegendPosition();
+
+            command.Parameters.Add(
+                parameterName:
+                    "@PngWidthPixels",
+                sqlDbType:
+                    System.Data.SqlDbType.Int)
+                .Value =
+                    pngWidth;
+
+            command.Parameters.Add(
+                parameterName:
+                    "@PngHeightPixels",
+                sqlDbType:
+                    System.Data.SqlDbType.Int)
+                .Value =
+                    pngHeight;
+
+            command.Parameters.Add(
+                parameterName: "@WidthMm",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value = int.Parse(
+                    s: txtChartWidthMm.Text,
+                    provider: CultureInfo.InvariantCulture);
+
+            command.Parameters.Add(
+                parameterName: "@HeightMm",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value = int.Parse(
+                    s: txtChartHeightMm.Text,
+                    provider: CultureInfo.InvariantCulture);
+
+            command.Parameters.Add(
+                parameterName: "@ResolutionDpi",
+                sqlDbType: System.Data.SqlDbType.SmallInt)
+                .Value = GetSelectedChartResolutionDpi();
+
+            command.Parameters.Add(
+                parameterName: "@StartDateMode",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 20)
+                .Value = GetSelectedChartStartDateMode();
+
+            SqlParameter lineWidthParameter =
+                command.Parameters.Add(
+                    parameterName:
+                        "@DefaultLineWidth",
+                    sqlDbType:
+                        System.Data.SqlDbType.Decimal);
+
+            lineWidthParameter.Precision =
+                10;
+
+            lineWidthParameter.Scale =
+                3;
+
+            lineWidthParameter.Value =
+                Convert.ToDecimal(
+                    value:
+                        defaultLineWidth,
+                    provider:
+                        CultureInfo.InvariantCulture);
+
+            SqlParameter markerSizeParameter =
+                command.Parameters.Add(
+                    parameterName:
+                        "@DefaultMarkerSize",
+                    sqlDbType:
+                        System.Data.SqlDbType.Decimal);
+
+            markerSizeParameter.Precision =
+                10;
+
+            markerSizeParameter.Scale =
+                3;
+
+            markerSizeParameter.Value =
+                Convert.ToDecimal(
+                    value:
+                        defaultMarkerSize,
+                    provider:
+                        CultureInfo.InvariantCulture);
+
+            command.Parameters.Add(
+                parameterName:
+                    "@ShowGridLines",
+                sqlDbType:
+                    System.Data.SqlDbType.Bit)
+                .Value =
+                    chkChartGridLines.IsChecked == true;
+        }
+
+
+        private static void AddDecimalParameter(
+            SqlCommand command,
+            string name,
+            decimal value)
+        {
+            SqlParameter parameter =
+                command.Parameters.Add(
+                    parameterName:
+                        name,
+                    sqlDbType:
+                        System.Data.SqlDbType.Decimal);
+
+            parameter.Precision =
+                18;
+
+            parameter.Scale =
+                6;
+
+            parameter.Value =
+                value;
+        }
+
+
+        private async Task LoadChartTemplateIntoEditorAsync(
+            int chartTemplateId)
+        {
+            #region Load Template Header
+
+            const string sql = """
+                SELECT
+                    T.[ChartTemplate_ID],
+                    T.[TemplateName],
+                    CT.[ChartTypeKey],
+                    T.[DefaultDurationDays],
+                    T.[GreenTrigger],
+                    T.[AmberTrigger],
+                    T.[RedTrigger],
+                    T.[UseAutomaticVerticalAxis],
+                    T.[VerticalAxisMinimum],
+                    T.[VerticalAxisMaximum],
+                    T.[ChartTitle],
+                    T.[VerticalAxisTitle],
+                    T.[ShowLegend],
+                    T.[LegendPosition],
+                    T.[PngWidthPixels],
+                    T.[PngHeightPixels],
+                    T.[DefaultLineWidth],
+                    T.[DefaultMarkerSize],
+                    T.[ShowGridLines],
+                    T.[WidthMm],
+                    T.[HeightMm],
+                    T.[ResolutionDpi],
+                    T.[DefaultStartDateMode]
+                FROM [dbo].[ChartTemplate] AS T
+                INNER JOIN [dbo].[ChartType] AS CT
+                    ON CT.[ChartType_ID] = T.[ChartType_ID]
+                WHERE
+                    T.[ChartTemplate_ID] = @ChartTemplate_ID
+                    AND T.[Project_ID] = @Project_ID
+                    AND T.[IsDeleted] = 0;
+                """;
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand command =
+                new(
+                    cmdText:
+                        sql,
+                    connection:
+                        databaseConnection);
+
+            command.Parameters.Add(
+                parameterName:
+                    "@ChartTemplate_ID",
+                sqlDbType:
+                    System.Data.SqlDbType.Int)
+                .Value =
+                    chartTemplateId;
+
+            command.Parameters.Add(
+                parameterName:
+                    "@Project_ID",
+                sqlDbType:
+                    System.Data.SqlDbType.Int)
+                .Value =
+                    _activeProjectId
+                    ?? throw new InvalidOperationException(
+                        "Select an active project.");
+
+            await using SqlDataReader reader =
+                await command.ExecuteReaderAsync();
+
+            if (!await reader.ReadAsync())
+            {
+                throw new InvalidOperationException(
+                    "Template not found.");
+            }
+
+            string templateName =
+                reader.GetString(1);
+
+            string chartTypeKey =
+                reader.GetString(2);
+
+            int durationDays =
+                reader.GetInt32(3);
+
+            decimal greenTrigger =
+                reader.GetDecimal(4);
+
+            decimal amberTrigger =
+                reader.GetDecimal(5);
+
+            decimal redTrigger =
+                reader.GetDecimal(6);
+
+            bool automaticVerticalAxis =
+                reader.GetBoolean(7);
+
+            decimal verticalMinimum =
+                reader.GetDecimal(8);
+
+            decimal verticalMaximum =
+                reader.GetDecimal(9);
+
+            string chartTitle =
+                reader.IsDBNull(10)
+                    ? string.Empty
+                    : reader.GetString(10);
+
+            string verticalAxisTitle =
+                reader.GetString(11);
+
+            bool showLegend =
+                reader.GetBoolean(12);
+
+            string legendPosition =
+                reader.GetString(13);
+
+            int pngWidth =
+                reader.GetInt32(14);
+
+            int pngHeight =
+                reader.GetInt32(15);
+
+            decimal defaultLineWidth =
+                reader.GetDecimal(16);
+
+            decimal defaultMarkerSize =
+                reader.GetDecimal(17);
+
+            bool showGridLines =
+                reader.GetBoolean(18);
+
+            int widthMm =
+                reader.GetInt32(19);
+
+            int heightMm =
+                reader.GetInt32(20);
+
+            int resolutionDpi =
+                reader.GetInt16(21);
+
+            string startDateMode =
+                reader.GetString(22);
+
+            await reader.DisposeAsync();
+
+            #endregion
+
+
+            #region Apply Template To New Chart
+
+            _loadedChartTemplateId =
+                chartTemplateId;
+
+            _loadedChartDefinitionId =
+                null;
+
+            _loadedChartNumber =
+                null;
+
+            cmbExistingChart.SelectedItem =
+                null;
+
+            txtChartNumber.Text =
+                "New";
+
+            txtChartName.Text =
+                templateName;
+
+            foreach (object item
+                in cmbChartType.Items)
+            {
+                if (item is ChartTypeUiItem chartType &&
+                    string.Equals(
+                        a:
+                            chartType.Key,
+                        b:
+                            chartTypeKey,
+                        comparisonType:
+                            StringComparison.OrdinalIgnoreCase))
+                {
+                    cmbChartType.SelectedItem =
+                        chartType;
+
+                    break;
+                }
+            }
+
+            txtChartRecentDays.Text =
+                durationDays.ToString(
+                    provider:
+                        CultureInfo.InvariantCulture);
+
+            DateTime today =
+                DateTime.Today;
+
+            dpChartEndDate.SelectedDate =
+                today;
+
+            dpChartStartDate.SelectedDate =
+                today.AddDays(
+                    value:
+                        -durationDays);
+
+            txtChartGreenTrigger.Text =
+                greenTrigger.ToString(
+                    provider:
+                        CultureInfo.InvariantCulture);
+
+            txtChartAmberTrigger.Text =
+                amberTrigger.ToString(
+                    provider:
+                        CultureInfo.InvariantCulture);
+
+            txtChartRedTrigger.Text =
+                redTrigger.ToString(
+                    provider:
+                        CultureInfo.InvariantCulture);
+
+            chkChartAutomaticYAxis.IsChecked =
+                automaticVerticalAxis;
+
+            txtChartYAxisMinimum.Text =
+                verticalMinimum.ToString(
+                    provider:
+                        CultureInfo.InvariantCulture);
+
+            txtChartYAxisMaximum.Text =
+                verticalMaximum.ToString(
+                    provider:
+                        CultureInfo.InvariantCulture);
+
+            txtChartTitleOverride.Text =
+                chartTitle;
+
+            txtChartYAxisTitle.Text =
+                verticalAxisTitle;
+
+            chkChartShowLegend.IsChecked =
+                showLegend;
+
+            SelectLegendPosition(
+                legendPosition:
+                    legendPosition);
+
+            txtChartPngWidth.Text =
+                pngWidth.ToString(
+                    provider:
+                        CultureInfo.InvariantCulture);
+
+            txtChartPngHeight.Text =
+                pngHeight.ToString(
+                    provider:
+                        CultureInfo.InvariantCulture);
+
+            txtChartWidthMm.Text =
+                widthMm.ToString(
+                    provider: CultureInfo.InvariantCulture);
+
+            txtChartHeightMm.Text =
+                heightMm.ToString(
+                    provider: CultureInfo.InvariantCulture);
+
+            SelectChartResolutionDpi(
+                resolutionDpi: resolutionDpi);
+
+            SelectChartStartDateMode(
+                startDateMode: startDateMode);
+
+            UpdateChartPixelDimensions();
+
+            txtChartDefaultLineWidth.Text =
+                defaultLineWidth.ToString(
+                    provider:
+                        CultureInfo.InvariantCulture);
+
+            txtChartDefaultMarkerSize.Text =
+                defaultMarkerSize.ToString(
+                    provider:
+                        CultureInfo.InvariantCulture);
+
+            chkChartGridLines.IsChecked =
+                showGridLines;
+
+            #endregion
+
+
+            #region Load Template Series Definitions
+
+            _chartSeries.Clear();
+
+            const string seriesSql = """
+                SELECT
+                    [DataElementKey],
+                    [LegendText],
+                    [LineWidth],
+                    [MarkerSize],
+                    [DisplayOrder]
+                FROM [dbo].[ChartTemplateSeries]
+                WHERE [ChartTemplate_ID] = @ChartTemplate_ID
+                ORDER BY [DisplayOrder];
+                """;
+
+            await using SqlCommand seriesCommand =
+                new(
+                    cmdText:
+                        seriesSql,
+                    connection:
+                        databaseConnection);
+
+            seriesCommand.Parameters.Add(
+                parameterName:
+                    "@ChartTemplate_ID",
+                sqlDbType:
+                    System.Data.SqlDbType.Int)
+                .Value =
+                    chartTemplateId;
+
+            await using SqlDataReader seriesReader =
+                await seriesCommand.ExecuteReaderAsync();
+
+            while (await seriesReader.ReadAsync())
+            {
+                string dataElement =
+                    seriesReader.GetString(0);
+
+                _chartSeries.Add(
+                    item:
+                        new ChartSeriesUiItem
+                        {
+                            DisplayOrder =
+                                seriesReader.GetInt32(4),
+
+                            EntityDisplayName =
+                                "<Select entity>",
+
+                            DataElementDisplayName =
+                                dataElement,
+
+                            LegendText =
+                                seriesReader.IsDBNull(1)
+                                    ? dataElement
+                                    : seriesReader.GetString(1),
+
+                            LineWidth =
+                                Convert.ToDouble(
+                                    value:
+                                        seriesReader.GetDecimal(2),
+                                    provider:
+                                        CultureInfo.InvariantCulture),
+
+                            MarkerSize =
+                                Convert.ToDouble(
+                                    value:
+                                        seriesReader.GetDecimal(3),
+                                    provider:
+                                        CultureInfo.InvariantCulture)
+                        });
+            }
+
+            #endregion
+        }
+
+        #endregion
 
 
         #region Chart Repository Persistence
@@ -10705,6 +13673,10 @@ namespace GNA_DLRreport
                     CD.[LegendPosition],
                     CD.[PngWidthPixels],
                     CD.[PngHeightPixels],
+                    CD.[WidthMm],
+                    CD.[HeightMm],
+                    CD.[ResolutionDpi],
+                    CD.[StartDateMode],
                     CD.[AbsoluteStartUtc],
                     CD.[AbsoluteEndUtc],
                     CD.[TitleOverride]
@@ -10794,16 +13766,28 @@ namespace GNA_DLRreport
             int pngHeight =
                 reader.GetInt32(12);
 
+            int widthMm =
+                reader.GetInt32(13);
+
+            int heightMm =
+                reader.GetInt32(14);
+
+            int resolutionDpi =
+                reader.GetInt16(15);
+
+            string startDateMode =
+                reader.GetString(16);
+
             DateTime absoluteStart =
-                reader.GetDateTime(13);
+                reader.GetDateTime(17);
 
             DateTime absoluteEndExclusive =
-                reader.GetDateTime(14);
+                reader.GetDateTime(18);
 
             string chartTitle =
-                reader.IsDBNull(15)
+                reader.IsDBNull(19)
                     ? string.Empty
-                    : reader.GetString(15);
+                    : reader.GetString(19);
 
             await reader.DisposeAsync();
 
@@ -10868,6 +13852,22 @@ namespace GNA_DLRreport
             txtChartPngHeight.Text =
                 pngHeight.ToString(
                     provider: CultureInfo.InvariantCulture);
+
+            txtChartWidthMm.Text =
+                widthMm.ToString(
+                    provider: CultureInfo.InvariantCulture);
+
+            txtChartHeightMm.Text =
+                heightMm.ToString(
+                    provider: CultureInfo.InvariantCulture);
+
+            SelectChartResolutionDpi(
+                resolutionDpi: resolutionDpi);
+
+            SelectChartStartDateMode(
+                startDateMode: startDateMode);
+
+            UpdateChartPixelDimensions();
 
             dpChartStartDate.SelectedDate =
                 absoluteStart.Date;
@@ -11040,6 +14040,7 @@ namespace GNA_DLRreport
 
             const string sql = """
                 SELECT
+                    [EntityId],
                     [EntityDisplayName],
                     [DataElementKey],
                     [LegendText],
@@ -11072,31 +14073,34 @@ namespace GNA_DLRreport
                     item:
                         new ChartSeriesUiItem
                         {
+                            EntityId =
+                                reader.GetInt32(0),
+
                             DisplayOrder =
-                                reader.GetInt32(6),
+                                reader.GetInt32(7),
 
                             EntityDisplayName =
-                                reader.GetString(0),
-
-                            DataElementDisplayName =
                                 reader.GetString(1),
 
-                            LegendText =
+                            DataElementDisplayName =
                                 reader.GetString(2),
 
+                            LegendText =
+                                reader.GetString(3),
+
                             ColourHex =
-                                reader.IsDBNull(3)
+                                reader.IsDBNull(4)
                                     ? string.Empty
-                                    : reader.GetString(3),
+                                    : reader.GetString(4),
 
                             LineWidth =
                                 Convert.ToDouble(
-                                    value: reader.GetDecimal(4),
+                                    value: reader.GetDecimal(5),
                                     provider: CultureInfo.InvariantCulture),
 
                             MarkerSize =
                                 Convert.ToDouble(
-                                    value: reader.GetDecimal(5),
+                                    value: reader.GetDecimal(6),
                                     provider: CultureInfo.InvariantCulture)
                         });
             }
@@ -11134,18 +14138,11 @@ namespace GNA_DLRreport
                 txtChartName.Text.Trim();
 
             DateTime absoluteStartUtc =
-                DateTime.SpecifyKind(
-                    value:
-                        dpChartStartDate.SelectedDate!.Value.Date,
-                    kind:
-                        DateTimeKind.Utc);
+                DateTime.UnixEpoch;
 
             DateTime absoluteEndUtc =
-                DateTime.SpecifyKind(
-                    value:
-                        dpChartEndDate.SelectedDate!.Value.Date.AddDays(1),
-                    kind:
-                        DateTimeKind.Utc);
+                DateTime.UnixEpoch.AddDays(
+                    value: 1);
 
             bool automaticVerticalAxis =
                 chkChartAutomaticYAxis.IsChecked == true;
@@ -11324,6 +14321,11 @@ namespace GNA_DLRreport
                             [LegendPosition] = @LegendPosition,
                             [PngWidthPixels] = @PngWidthPixels,
                             [PngHeightPixels] = @PngHeightPixels,
+                            [WidthMm] = @WidthMm,
+                            [HeightMm] = @HeightMm,
+                            [ResolutionDpi] = @ResolutionDpi,
+                            [ChartFontFamily] = N'Arial',
+                            [StartDateMode] = @StartDateMode,
                             [ChartTimeWindowMode] = N'Absolute',
                             [AbsoluteStartUtc] = @AbsoluteStartUtc,
                             [AbsoluteEndUtc] = @AbsoluteEndUtc,
@@ -11405,6 +14407,11 @@ namespace GNA_DLRreport
                             [LegendPosition],
                             [PngWidthPixels],
                             [PngHeightPixels],
+                            [WidthMm],
+                            [HeightMm],
+                            [ResolutionDpi],
+                            [ChartFontFamily],
+                            [StartDateMode],
                             [ChartTimeWindowMode],
                             [AbsoluteStartUtc],
                             [AbsoluteEndUtc],
@@ -11435,6 +14442,11 @@ namespace GNA_DLRreport
                             @LegendPosition,
                             @PngWidthPixels,
                             @PngHeightPixels,
+                            @WidthMm,
+                            @HeightMm,
+                            @ResolutionDpi,
+                            N'Arial',
+                            @StartDateMode,
                             N'Absolute',
                             @AbsoluteStartUtc,
                             @AbsoluteEndUtc,
@@ -11689,6 +14701,35 @@ namespace GNA_DLRreport
                     pngHeight;
 
             command.Parameters.Add(
+                parameterName: "@WidthMm",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    int.Parse(
+                        s: txtChartWidthMm.Text,
+                        provider: CultureInfo.InvariantCulture);
+
+            command.Parameters.Add(
+                parameterName: "@HeightMm",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    int.Parse(
+                        s: txtChartHeightMm.Text,
+                        provider: CultureInfo.InvariantCulture);
+
+            command.Parameters.Add(
+                parameterName: "@ResolutionDpi",
+                sqlDbType: System.Data.SqlDbType.SmallInt)
+                .Value =
+                    GetSelectedChartResolutionDpi();
+
+            command.Parameters.Add(
+                parameterName: "@StartDateMode",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 20)
+                .Value =
+                    GetSelectedChartStartDateMode();
+
+            command.Parameters.Add(
                 parameterName: "@AbsoluteStartUtc",
                 sqlDbType: System.Data.SqlDbType.DateTime2)
                 .Value =
@@ -11925,12 +14966,125 @@ namespace GNA_DLRreport
 
             #region Insert Configured Series
 
-            // Entity database lookup is intentionally not yet implemented.
-            // Placeholder series with no real EntityId are therefore not written.
-            // Once the Series entity selector is connected to DBTrackGeometry,
-            // this method will persist the selected EntityId values.
+            const string insertSql = """
+                INSERT INTO [dbo].[ChartDefinitionSeries]
+                (
+                    [ChartDefinition_ID],
+                    [EntityId],
+                    [EntityDisplayName],
+                    [DataElementKey],
+                    [LegendText],
+                    [ColourHex],
+                    [LineWidth],
+                    [MarkerSize],
+                    [DisplayOrder]
+                )
+                VALUES
+                (
+                    @ChartDefinition_ID,
+                    @EntityId,
+                    @EntityDisplayName,
+                    @DataElementKey,
+                    @LegendText,
+                    NULLIF(@ColourHex, N''),
+                    @LineWidth,
+                    @MarkerSize,
+                    @DisplayOrder
+                );
+                """;
+
+            foreach (ChartSeriesUiItem series
+                in _chartSeries.OrderBy(
+                    keySelector: item => item.DisplayOrder))
+            {
+                if (series.EntityId <= 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Series {series.DisplayOrder} does not reference a valid database entity.");
+                }
+
+                await using SqlCommand insertCommand =
+                    new(
+                        cmdText: insertSql,
+                        connection: databaseConnection,
+                        transaction: transaction);
+
+                insertCommand.Parameters.Add(
+                    parameterName: "@ChartDefinition_ID",
+                    sqlDbType: System.Data.SqlDbType.Int)
+                    .Value = chartDefinitionId;
+
+                insertCommand.Parameters.Add(
+                    parameterName: "@EntityId",
+                    sqlDbType: System.Data.SqlDbType.Int)
+                    .Value = series.EntityId;
+
+                insertCommand.Parameters.Add(
+                    parameterName: "@EntityDisplayName",
+                    sqlDbType: System.Data.SqlDbType.NVarChar,
+                    size: 200)
+                    .Value = series.EntityDisplayName;
+
+                insertCommand.Parameters.Add(
+                    parameterName: "@DataElementKey",
+                    sqlDbType: System.Data.SqlDbType.NVarChar,
+                    size: 100)
+                    .Value = series.DataElementDisplayName;
+
+                insertCommand.Parameters.Add(
+                    parameterName: "@LegendText",
+                    sqlDbType: System.Data.SqlDbType.NVarChar,
+                    size: 300)
+                    .Value = series.LegendText;
+
+                insertCommand.Parameters.Add(
+                    parameterName: "@ColourHex",
+                    sqlDbType: System.Data.SqlDbType.NVarChar,
+                    size: 20)
+                    .Value = series.ColourHex;
+
+                AddSeriesDecimalParameter(
+                    command: insertCommand,
+                    parameterName: "@LineWidth",
+                    value: series.LineWidth);
+
+                AddSeriesDecimalParameter(
+                    command: insertCommand,
+                    parameterName: "@MarkerSize",
+                    value: series.MarkerSize);
+
+                insertCommand.Parameters.Add(
+                    parameterName: "@DisplayOrder",
+                    sqlDbType: System.Data.SqlDbType.Int)
+                    .Value = series.DisplayOrder;
+
+                await insertCommand.ExecuteNonQueryAsync();
+            }
 
             #endregion
+        }
+
+
+        private static void AddSeriesDecimalParameter(
+            SqlCommand command,
+            string parameterName,
+            double value)
+        {
+            SqlParameter parameter =
+                command.Parameters.Add(
+                    parameterName: parameterName,
+                    sqlDbType: System.Data.SqlDbType.Decimal);
+
+            parameter.Precision =
+                10;
+
+            parameter.Scale =
+                3;
+
+            parameter.Value =
+                Convert.ToDecimal(
+                    value: value,
+                    provider: CultureInfo.InvariantCulture);
         }
 
 
@@ -11991,13 +15145,233 @@ namespace GNA_DLRreport
         #endregion
 
 
-        private void btnChartPreview_Click(
+        #region Chart Preview Data
+
+        private async Task LoadChartPreviewDataAsync()
+        {
+            if (!_activeProjectId.HasValue ||
+                cmbChartType.SelectedItem is not ChartTypeUiItem chartType)
+            {
+                throw new InvalidOperationException(
+                    "Select an active project and chart type.");
+            }
+
+            const string projectSql = """
+                SELECT [ProjectStartDate], [TimeZoneId]
+                FROM [dbo].[Project]
+                WHERE [Project_ID] = @Project_ID AND [IsDeleted] = 0;
+                """;
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString: GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            DateTime projectStartDate;
+            string timeZoneId;
+
+            await using (SqlCommand projectCommand =
+                new(
+                    cmdText: projectSql,
+                    connection: databaseConnection))
+            {
+                projectCommand.Parameters.Add(
+                    parameterName: "@Project_ID",
+                    sqlDbType: System.Data.SqlDbType.Int)
+                    .Value = _activeProjectId.Value;
+
+                await using SqlDataReader projectReader =
+                    await projectCommand.ExecuteReaderAsync();
+
+                if (!await projectReader.ReadAsync())
+                {
+                    throw new InvalidOperationException(
+                        "The active project no longer exists.");
+                }
+
+                projectStartDate = projectReader.GetDateTime(0).Date;
+                timeZoneId = projectReader.IsDBNull(1)
+                    ? TimeZoneInfo.Utc.Id
+                    : projectReader.GetString(1);
+            }
+
+            TimeZoneInfo projectTimeZone =
+                TimeZoneInfo.FindSystemTimeZoneById(
+                    id: timeZoneId);
+
+            DateTime projectToday =
+                TimeZoneInfo.ConvertTimeFromUtc(
+                    dateTime: DateTime.UtcNow,
+                    destinationTimeZone: projectTimeZone)
+                .Date;
+
+            DateTime previewStartDate =
+                string.Equals(
+                    a: GetSelectedChartStartDateMode(),
+                    b: ChartStartDateModeProjectStart,
+                    comparisonType: StringComparison.Ordinal)
+                    ? projectStartDate
+                    : projectToday.AddDays(
+                        value: -14);
+
+            DateTime previewEndExclusiveDate =
+                projectToday.AddDays(
+                    value: 1);
+
+            _chartPreviewStartUtc = TimeZoneInfo.ConvertTimeToUtc(
+                dateTime: DateTime.SpecifyKind(
+                    value: previewStartDate,
+                    kind: DateTimeKind.Unspecified),
+                sourceTimeZone: projectTimeZone);
+
+            _chartPreviewEndUtcExclusive = TimeZoneInfo.ConvertTimeToUtc(
+                dateTime: DateTime.SpecifyKind(
+                    value: previewEndExclusiveDate,
+                    kind: DateTimeKind.Unspecified),
+                sourceTimeZone: projectTimeZone);
+
+            dpChartStartDate.SelectedDate = previewStartDate;
+            dpChartEndDate.SelectedDate = projectToday;
+
+            _chartPreviewSeries.Clear();
+
+            Brush[] palette =
+            [
+                Brushes.Blue,
+                Brushes.DarkOrange,
+                Brushes.ForestGreen,
+                Brushes.Purple,
+                Brushes.Crimson,
+                Brushes.Teal,
+                Brushes.SaddleBrown,
+                Brushes.DeepPink
+            ];
+
+            int seriesIndex = 0;
+
+            foreach (ChartSeriesUiItem configuredSeries
+                in _chartSeries.OrderBy(
+                    keySelector: series => series.DisplayOrder))
+            {
+                string valueExpression =
+                    GetChartPreviewValueExpression(
+                        chartType: chartType,
+                        dataElement: configuredSeries.DataElementDisplayName);
+
+                string entityIdColumn =
+                    GetChartEntityIdColumnName(
+                        entityKind: chartType.EntityKind);
+
+                string joins =
+                    chartType.Key switch
+                    {
+                        "Displacement" =>
+                            " INNER JOIN [dbo].[CoordinatesReference] AS CR ON CR.[PointName_ID] = E.[PointName_ID] AND CR.[IsDeleted] = 0 ",
+                        "ToRLevel" =>
+                            " INNER JOIN [dbo].[ToRReference] AS TR ON TR.[PointName_ID] = E.[PointName_ID] AND TR.[IsDeleted] = 0 ",
+                        _ => string.Empty
+                    };
+
+                string seriesSql =
+                    $"SELECT E.[UTCtime], {valueExpression} AS [PreviewValue] " +
+                    $"FROM [dbo].[{chartType.SourceTable}] AS E {joins}" +
+                    $"WHERE E.[{entityIdColumn}] = @EntityId " +
+                    "AND E.[UTCtime] >= @StartUtc AND E.[UTCtime] < @EndUtcExclusive " +
+                    "AND E.[IsDeleted] = 0 ORDER BY E.[UTCtime];";
+
+                ChartPreviewSeries previewSeries =
+                    new()
+                    {
+                        LegendText = configuredSeries.LegendText,
+                        Stroke = palette[seriesIndex % palette.Length],
+                        LineWidth = Math.Max(
+                            val1: 0.5,
+                            val2: configuredSeries.LineWidth)
+                    };
+
+                await using SqlCommand seriesCommand =
+                    new(
+                        cmdText: seriesSql,
+                        connection: databaseConnection);
+
+                seriesCommand.Parameters.Add(
+                    parameterName: "@EntityId",
+                    sqlDbType: System.Data.SqlDbType.Int)
+                    .Value = configuredSeries.EntityId;
+
+                seriesCommand.Parameters.Add(
+                    parameterName: "@StartUtc",
+                    sqlDbType: System.Data.SqlDbType.DateTime2)
+                    .Value = _chartPreviewStartUtc;
+
+                seriesCommand.Parameters.Add(
+                    parameterName: "@EndUtcExclusive",
+                    sqlDbType: System.Data.SqlDbType.DateTime2)
+                    .Value = _chartPreviewEndUtcExclusive;
+
+                await using SqlDataReader seriesReader =
+                    await seriesCommand.ExecuteReaderAsync();
+
+                while (await seriesReader.ReadAsync())
+                {
+                    if (!seriesReader.IsDBNull(1))
+                    {
+                        previewSeries.Points.Add(
+                            item:
+                                new ChartPreviewPoint(
+                                    UtcTime: seriesReader.GetDateTime(0),
+                                    Value: Convert.ToDouble(
+                                        value: seriesReader.GetValue(1),
+                                        provider: CultureInfo.InvariantCulture)));
+                    }
+                }
+
+                _chartPreviewSeries.Add(
+                    item: previewSeries);
+
+                seriesIndex++;
+            }
+        }
+
+
+        private static string GetChartPreviewValueExpression(
+            ChartTypeUiItem chartType,
+            string dataElement)
+        {
+            return (chartType.Key, dataElement) switch
+            {
+                ("Displacement", "dE") => "(E.[E] - CR.[Eref]) * 1000.0",
+                ("Displacement", "dN") => "(E.[N] - CR.[Nref]) * 1000.0",
+                ("Displacement", "dH") => "(E.[H] - CR.[Href]) * 1000.0",
+                ("Displacement", "d2D") => "SQRT(POWER(E.[E] - CR.[Eref], 2) + POWER(E.[N] - CR.[Nref], 2)) * 1000.0",
+                ("Displacement", "d3D") => "SQRT(POWER(E.[E] - CR.[Eref], 2) + POWER(E.[N] - CR.[Nref], 2) + POWER(E.[H] - CR.[Href], 2)) * 1000.0",
+                ("ToRLevel", "ToR - Reference ToR") => "(E.[ToR] - TR.[ToR]) * 1000.0",
+                ("StructuralArray", "d2D") or ("CrownData", "d2D") => "SQRT(POWER(E.[dE], 2) + POWER(E.[dN], 2)) * 1000.0",
+                ("StructuralArray", "d3D") or ("CrownData", "d3D") => "SQRT(POWER(E.[dE], 2) + POWER(E.[dN], 2) + POWER(E.[dH], 2)) * 1000.0",
+                ("StructuralArray", "dE") or ("StructuralArray", "dN") or ("StructuralArray", "dH") or
+                ("CrownData", "dE") or ("CrownData", "dN") or ("CrownData", "dH") => $"E.[{dataElement}] * 1000.0",
+                ("PrismTiltMmPerM", "TiltX") => "E.[TiltX_MperM] * 1000.0",
+                ("PrismTiltMmPerM", "TiltY") => "E.[TiltY_MperM] * 1000.0",
+                ("CrackMeter", "d2D") or ("CrackMeter", "d3D") or ("CrackMeter", "dH") => $"E.[{dataElement}] * 1000.0",
+                _ when chartType.DataElements.Contains(
+                    value: dataElement,
+                    comparer: StringComparer.Ordinal) => $"E.[{dataElement}]",
+                _ => throw new InvalidOperationException(
+                    $"Unsupported preview data element '{dataElement}' for '{chartType.DisplayName}'.")
+            };
+        }
+
+        #endregion
+
+
+        private async void btnChartPreview_Click(
             object sender,
             RoutedEventArgs e)
         {
-            #region Validate Preview Configuration
+            #region Validate Canvas Configuration
 
-            if (!TryValidateChartConfiguration(
+            if (!TryValidateChartCanvasConfiguration(
                 validationMessage: out string validationMessage))
             {
                 txtChartStatus.Text =
@@ -12006,37 +15380,1387 @@ namespace GNA_DLRreport
                 return;
             }
 
-            DateTime previewStartInclusive =
-                dpChartStartDate.SelectedDate!.Value.Date;
+            #endregion
 
-            DateTime previewEndExclusive =
-                dpChartEndDate.SelectedDate!.Value.Date.AddDays(
-                    value: 1);
 
-            DateTime previewDisplayEnd =
-                previewEndExclusive.AddMinutes(
-                    value: -1);
+            #region Load Actual Preview Measurements
 
-            ChartTypeUiItem selectedType =
-                (ChartTypeUiItem)cmbChartType.SelectedItem!;
+            try
+            {
+                await LoadChartPreviewDataAsync();
+            }
+            catch (Exception ex)
+            {
+                txtChartStatus.Text =
+                    $"Unable to load chart preview data: {ex.Message}";
 
-            txtChartPreviewPlaceholder.Text =
-                $"Chart preview configuration validated\n\n" +
-                $"{selectedType.DisplayName}\n" +
-                $"{previewStartInclusive:yyyy-MM-dd 00:00} to " +
-                $"{previewDisplayEnd:yyyy-MM-dd HH:mm}\n" +
-                $"{_chartSeries.Count} configured series\n\n" +
-                "Preview data window fixed from the selected Start Date and End Date.\n" +
-                "ScottPlot rendering will use this same resolved window.";
+                return;
+            }
+
+            #endregion
+
+
+            #region Display Final-Size Preview Flyout
+
+            int widthMm =
+                int.Parse(
+                    s: txtChartWidthMm.Text,
+                    provider: CultureInfo.InvariantCulture);
+
+            int heightMm =
+                int.Parse(
+                    s: txtChartHeightMm.Text,
+                    provider: CultureInfo.InvariantCulture);
+
+            cnvChartPreview.Width =
+                widthMm * 96.0 / 25.4;
+
+            cnvChartPreview.Height =
+                heightMm * 96.0 / 25.4;
+
+            popChartPreview.IsOpen =
+                true;
+
+            cnvChartPreview.UpdateLayout();
+
+            popChartPreview.Child.UpdateLayout();
+
+            FrameworkElement previewContent =
+                popChartPreview.Child as FrameworkElement
+                ?? throw new InvalidOperationException(
+                    "The chart preview content must be a FrameworkElement.");
+
+            Rect workArea =
+                SystemParameters.WorkArea;
+
+            popChartPreview.HorizontalOffset =
+                workArea.Left +
+                Math.Max(
+                    val1: 0,
+                    val2: (workArea.Width - previewContent.ActualWidth) / 2.0);
+
+            popChartPreview.VerticalOffset =
+                workArea.Top +
+                Math.Max(
+                    val1: 0,
+                    val2: (workArea.Height - previewContent.ActualHeight) / 2.0);
+
+            await Dispatcher.InvokeAsync(
+                callback:
+                    new Action(
+                        _chartPreviewRenderer.Render));
+
+            txtChartPreviewStatus.Text =
+                $"Final physical size: {widthMm} x {heightMm} mm; " +
+                $"production bitmap: {txtChartCalculatedPixels.Text}; {DefaultChartFontFamily}.";
 
             txtChartStatus.Text =
-                "Preview configuration validated.";
-
-            tabChartConfiguration.SelectedIndex =
-                6;
+                $"Preview generated at {txtChartCalculatedPixels.Text} using " +
+                $"{DefaultChartFontFamily}. The renderer boundary is ready for ScottPlot 5.";
 
             #endregion
         }
+
+
+        private void btnCloseChartPreview_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            popChartPreview.IsOpen =
+                false;
+        }
+
+
+        private bool TryValidateChartCanvasConfiguration(
+            out string validationMessage)
+        {
+            #region Validate Chart Type
+
+            if (cmbChartType.SelectedItem
+                is not ChartTypeUiItem)
+            {
+                validationMessage =
+                    "Definition: Select a chart type.";
+
+                return false;
+            }
+
+            #endregion
+
+
+            #region Validate Report-Resolved Time Basis
+
+            string startDateMode =
+                GetSelectedChartStartDateMode();
+
+            if (!string.Equals(
+                    a: startDateMode,
+                    b: ChartStartDateModeReportStart,
+                    comparisonType: StringComparison.Ordinal) &&
+                !string.Equals(
+                    a: startDateMode,
+                    b: ChartStartDateModeProjectStart,
+                    comparisonType: StringComparison.Ordinal))
+            {
+                validationMessage =
+                    "Time Basis: Select Report Start or Project Start.";
+
+                return false;
+            }
+
+            #endregion
+
+
+            #region Validate Triggers
+
+            if (!TryReadPositiveDecimal(
+                text: txtChartGreenTrigger.Text,
+                valueName: "Trigger Bands: Green trigger",
+                value: out decimal greenTrigger,
+                validationMessage: out validationMessage))
+            {
+                return false;
+            }
+
+            if (!TryReadPositiveDecimal(
+                text: txtChartAmberTrigger.Text,
+                valueName: "Trigger Bands: Amber trigger",
+                value: out decimal amberTrigger,
+                validationMessage: out validationMessage))
+            {
+                return false;
+            }
+
+            if (!TryReadPositiveDecimal(
+                text: txtChartRedTrigger.Text,
+                valueName: "Trigger Bands: Red trigger",
+                value: out decimal redTrigger,
+                validationMessage: out validationMessage))
+            {
+                return false;
+            }
+
+            if (!(greenTrigger < amberTrigger &&
+                  amberTrigger < redTrigger))
+            {
+                validationMessage =
+                    "Trigger Bands: Values must satisfy Green < Amber < Red.";
+
+                return false;
+            }
+
+            #endregion
+
+
+            #region Validate Vertical Axis
+
+            decimal verticalMinimum;
+            decimal verticalMaximum;
+
+            if (chkChartAutomaticYAxis.IsChecked == true)
+            {
+                ApplyDefaultVerticalAxisFromRedTrigger();
+            }
+
+            if (!decimal.TryParse(
+                s: txtChartYAxisMinimum.Text,
+                style: NumberStyles.Float,
+                provider: CultureInfo.InvariantCulture,
+                result: out verticalMinimum) ||
+                !decimal.TryParse(
+                    s: txtChartYAxisMaximum.Text,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture,
+                    result: out verticalMaximum))
+            {
+                validationMessage =
+                    "Axes & Titles: Enter valid numeric Vertical Axis limits.";
+
+                return false;
+            }
+
+            if (verticalMinimum >= verticalMaximum)
+            {
+                validationMessage =
+                    "Axes & Titles: Minimum must be less than Maximum.";
+
+                return false;
+            }
+
+            if (verticalMinimum > -redTrigger ||
+                verticalMaximum < redTrigger)
+            {
+                validationMessage =
+                    "Axes & Titles: Vertical Axis limits must extend beyond both Red trigger levels.";
+
+                return false;
+            }
+
+            #endregion
+
+
+            #region Validate Appearance
+
+            if (!TryValidateChartAppearanceConfiguration(
+                validationMessage: out validationMessage))
+            {
+                return false;
+            }
+
+            #endregion
+
+            validationMessage =
+                string.Empty;
+
+            return true;
+        }
+
+
+        #region Chart Physical Size And Renderer Boundary
+
+        private void NumericTextBox_PreviewTextInput(
+            object sender,
+            TextCompositionEventArgs e)
+        {
+            #region Validate Typed Numeric Input
+
+            if (sender is not TextBox textBox)
+            {
+                e.Handled =
+                    true;
+
+                return;
+            }
+
+            string proposedText =
+                BuildProspectiveText(
+                    textBox: textBox,
+                    insertedText: e.Text);
+
+            e.Handled =
+                !IsValidNumericEdit(
+                    proposedText: proposedText,
+                    validationMode: textBox.Tag as string);
+
+            #endregion
+        }
+
+
+        private void NumericTextBox_Pasting(
+            object sender,
+            DataObjectPastingEventArgs e)
+        {
+            #region Validate Pasted Numeric Input
+
+            if (sender is not TextBox textBox ||
+                !e.DataObject.GetDataPresent(
+                    format: DataFormats.UnicodeText))
+            {
+                e.CancelCommand();
+
+                return;
+            }
+
+            string pastedText =
+                e.DataObject.GetData(
+                    format: DataFormats.UnicodeText) as string
+                ?? string.Empty;
+
+            string proposedText =
+                BuildProspectiveText(
+                    textBox: textBox,
+                    insertedText: pastedText);
+
+            if (!IsValidNumericEdit(
+                proposedText: proposedText,
+                validationMode: textBox.Tag as string))
+            {
+                e.CancelCommand();
+            }
+
+            #endregion
+        }
+
+
+        private static string BuildProspectiveText(
+            TextBox textBox,
+            string insertedText)
+        {
+            #region Construct Prospective Text
+
+            string existingText =
+                textBox.Text
+                ?? string.Empty;
+
+            return existingText.Remove(
+                    startIndex: textBox.SelectionStart,
+                    count: textBox.SelectionLength)
+                .Insert(
+                    startIndex: textBox.SelectionStart,
+                    value: insertedText);
+
+            #endregion
+        }
+
+
+        private static bool IsValidNumericEdit(
+            string proposedText,
+            string? validationMode)
+        {
+            #region Validate Prospective Numeric Text
+
+            if (string.IsNullOrEmpty(
+                value: proposedText))
+            {
+                return true;
+            }
+
+            if (string.Equals(
+                a: validationMode,
+                b: "PositiveInteger",
+                comparisonType: StringComparison.Ordinal))
+            {
+                return proposedText.All(
+                    predicate: char.IsDigit);
+            }
+
+            if (proposedText is "-" or "." or "-.")
+            {
+                return true;
+            }
+
+            return decimal.TryParse(
+                s: proposedText,
+                style:
+                    NumberStyles.AllowLeadingSign |
+                    NumberStyles.AllowDecimalPoint,
+                provider: CultureInfo.InvariantCulture,
+                result: out _);
+
+            #endregion
+        }
+
+
+        private bool TryValidateChartAppearanceConfiguration(
+            out string validationMessage)
+        {
+            #region Validate Physical Dimensions
+
+            if (!int.TryParse(
+                s: txtChartWidthMm.Text,
+                style: NumberStyles.Integer,
+                provider: CultureInfo.InvariantCulture,
+                result: out int widthMm) ||
+                widthMm <= 10)
+            {
+                validationMessage =
+                    "Appearance: Chart width must be a whole number greater than 10 millimetres.";
+
+                return false;
+            }
+
+            if (!int.TryParse(
+                s: txtChartHeightMm.Text,
+                style: NumberStyles.Integer,
+                provider: CultureInfo.InvariantCulture,
+                result: out int heightMm) ||
+                heightMm <= 10)
+            {
+                validationMessage =
+                    "Appearance: Chart height must be a whole number greater than 10 millimetres.";
+
+                return false;
+            }
+
+            int resolutionDpi =
+                GetSelectedChartResolutionDpi();
+
+            if (resolutionDpi != 300 &&
+                resolutionDpi != 600)
+            {
+                validationMessage =
+                    "Appearance: Chart resolution must be 300 or 600 DPI.";
+
+                return false;
+            }
+
+            #endregion
+
+
+            #region Validate Line And Marker Sizes
+
+            if (!double.TryParse(
+                s: txtChartDefaultLineWidth.Text,
+                style: NumberStyles.Float,
+                provider: CultureInfo.InvariantCulture,
+                result: out double lineWidth) ||
+                lineWidth <= 0)
+            {
+                validationMessage =
+                    "Appearance: Line width must be greater than zero.";
+
+                return false;
+            }
+
+            if (!double.TryParse(
+                s: txtChartDefaultMarkerSize.Text,
+                style: NumberStyles.Float,
+                provider: CultureInfo.InvariantCulture,
+                result: out double markerSize) ||
+                markerSize <= 0)
+            {
+                validationMessage =
+                    "Appearance: Marker size must be greater than zero.";
+
+                return false;
+            }
+
+            #endregion
+
+            validationMessage =
+                string.Empty;
+
+            return true;
+        }
+
+        private void ChartPhysicalSize_Changed(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (!IsInitialized)
+            {
+                return;
+            }
+
+            UpdateChartPixelDimensions();
+        }
+
+
+        private void cmbChartStartDateMode_SelectionChanged(
+            object sender,
+            SelectionChangedEventArgs e)
+        {
+            if (!IsInitialized)
+            {
+                return;
+            }
+
+            txtChartStartDateBasis.Text =
+                string.Equals(
+                    a: GetSelectedChartStartDateMode(),
+                    b: ChartStartDateModeProjectStart,
+                    comparisonType: StringComparison.Ordinal)
+                    ? "Project Start"
+                    : "Report Start";
+        }
+
+
+        private void ChartStartDateBasis_Checked(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (!IsInitialized)
+            {
+                return;
+            }
+
+            SelectChartStartDateMode(
+                startDateMode:
+                    rbChartProjectStart.IsChecked == true
+                        ? ChartStartDateModeProjectStart
+                        : ChartStartDateModeReportStart);
+        }
+
+
+        private string GetSelectedChartStartDateMode()
+        {
+            return (cmbChartStartDateMode.SelectedItem as ComboBoxItem)?.Tag?.ToString()
+                   ?? ChartStartDateModeReportStart;
+        }
+
+
+        private void SelectChartStartDateMode(
+            string startDateMode)
+        {
+            foreach (object item in cmbChartStartDateMode.Items)
+            {
+                if (item is ComboBoxItem comboBoxItem &&
+                    string.Equals(
+                        a: comboBoxItem.Tag?.ToString(),
+                        b: startDateMode,
+                        comparisonType: StringComparison.Ordinal))
+                {
+                    cmbChartStartDateMode.SelectedItem =
+                        comboBoxItem;
+
+                    rbChartProjectStart.IsChecked =
+                        string.Equals(
+                            a: startDateMode,
+                            b: ChartStartDateModeProjectStart,
+                            comparisonType: StringComparison.Ordinal);
+
+                    rbChartReportStart.IsChecked =
+                        rbChartProjectStart.IsChecked != true;
+
+                    return;
+                }
+            }
+
+            cmbChartStartDateMode.SelectedIndex =
+                0;
+        }
+
+
+        private int GetSelectedChartResolutionDpi()
+        {
+            string? value =
+                (cmbChartResolutionDpi.SelectedItem as ComboBoxItem)?.Tag?.ToString();
+
+            return int.TryParse(
+                s: value,
+                style: NumberStyles.Integer,
+                provider: CultureInfo.InvariantCulture,
+                result: out int resolutionDpi)
+                ? resolutionDpi
+                : DefaultChartResolutionDpi;
+        }
+
+
+        private void SelectChartResolutionDpi(
+            int resolutionDpi)
+        {
+            foreach (object item in cmbChartResolutionDpi.Items)
+            {
+                if (item is ComboBoxItem comboBoxItem &&
+                    int.TryParse(
+                        s: comboBoxItem.Tag?.ToString(),
+                        style: NumberStyles.Integer,
+                        provider: CultureInfo.InvariantCulture,
+                        result: out int itemDpi) &&
+                    itemDpi == resolutionDpi)
+                {
+                    cmbChartResolutionDpi.SelectedItem =
+                        comboBoxItem;
+
+                    return;
+                }
+            }
+
+            cmbChartResolutionDpi.SelectedIndex =
+                0;
+        }
+
+
+        private void UpdateChartPixelDimensions()
+        {
+            if (!int.TryParse(
+                    s: txtChartWidthMm.Text,
+                    style: NumberStyles.Integer,
+                    provider: CultureInfo.InvariantCulture,
+                    result: out int widthMm) ||
+                !int.TryParse(
+                    s: txtChartHeightMm.Text,
+                    style: NumberStyles.Integer,
+                    provider: CultureInfo.InvariantCulture,
+                    result: out int heightMm) ||
+                widthMm <= 10 ||
+                heightMm <= 10)
+            {
+                txtChartCalculatedPixels.Text =
+                    "Invalid physical size";
+
+                return;
+            }
+
+            int resolutionDpi =
+                GetSelectedChartResolutionDpi();
+
+            int pngWidth =
+                (int)Math.Round(
+                    d: widthMm * resolutionDpi / 25.4m,
+                    mode: MidpointRounding.AwayFromZero);
+
+            int pngHeight =
+                (int)Math.Round(
+                    d: pngWidth * (decimal)heightMm / widthMm,
+                    mode: MidpointRounding.AwayFromZero);
+
+            txtChartPngWidth.Text =
+                pngWidth.ToString(
+                    provider: CultureInfo.InvariantCulture);
+
+            txtChartPngHeight.Text =
+                pngHeight.ToString(
+                    provider: CultureInfo.InvariantCulture);
+
+            txtChartCalculatedPixels.Text =
+                $"{pngWidth} x {pngHeight} px";
+        }
+
+        #endregion
+
+
+        private void RenderBlankChartCanvas()
+        {
+            #region Resolve Canvas Size
+
+            cnvChartPreview.Children.Clear();
+
+            double canvasWidth =
+                cnvChartPreview.ActualWidth > 100
+                    ? cnvChartPreview.ActualWidth
+                    : 900;
+
+            double canvasHeight =
+                cnvChartPreview.ActualHeight > 100
+                    ? cnvChartPreview.ActualHeight
+                    : 300;
+
+            #endregion
+
+
+            #region Resolve Engineering Values
+
+            ChartTypeUiItem chartType =
+                (ChartTypeUiItem)cmbChartType.SelectedItem!;
+
+            decimal greenTrigger =
+                decimal.Parse(
+                    s: txtChartGreenTrigger.Text,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture);
+
+            decimal amberTrigger =
+                decimal.Parse(
+                    s: txtChartAmberTrigger.Text,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture);
+
+            decimal redTrigger =
+                decimal.Parse(
+                    s: txtChartRedTrigger.Text,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture);
+
+            decimal verticalMinimum =
+                decimal.Parse(
+                    s: txtChartYAxisMinimum.Text,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture);
+
+            decimal verticalMaximum =
+                decimal.Parse(
+                    s: txtChartYAxisMaximum.Text,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture);
+
+            #endregion
+
+
+            #region Define Plot Rectangle
+
+            const double leftMargin =
+                72;
+
+            const double rightMargin =
+                24;
+
+            const double topMargin =
+                58;
+
+            const double bottomMargin =
+                92;
+
+            double plotLeft =
+                leftMargin;
+
+            double plotTop =
+                topMargin;
+
+            double plotWidth =
+                Math.Max(
+                    100,
+                    canvasWidth - leftMargin - rightMargin);
+
+            double plotHeight =
+                Math.Max(
+                    80,
+                    canvasHeight - topMargin - bottomMargin);
+
+            double plotBottom =
+                plotTop + plotHeight;
+
+            #endregion
+
+
+            #region Local Conversion Helpers
+
+            double ToY(
+                decimal engineeringValue)
+            {
+                decimal range =
+                    verticalMaximum - verticalMinimum;
+
+                decimal fraction =
+                    (verticalMaximum - engineeringValue) /
+                    range;
+
+                return plotTop +
+                       ((double)fraction * plotHeight);
+            }
+
+            Brush BrushFromHex(
+                string colourHex)
+            {
+                return
+                    (Brush)new BrushConverter().ConvertFromString(
+                        colourHex)!;
+            }
+
+            void AddBand(
+                decimal minimum,
+                decimal maximum,
+                string colourHex)
+            {
+                decimal clippedMinimum =
+                    Math.Max(
+                        minimum,
+                        verticalMinimum);
+
+                decimal clippedMaximum =
+                    Math.Min(
+                        maximum,
+                        verticalMaximum);
+
+                if (clippedMinimum >= clippedMaximum)
+                {
+                    return;
+                }
+
+                double yTop =
+                    ToY(
+                        engineeringValue:
+                            clippedMaximum);
+
+                double yBottom =
+                    ToY(
+                        engineeringValue:
+                            clippedMinimum);
+
+                Rectangle rectangle =
+                    new()
+                    {
+                        Width =
+                            plotWidth,
+
+                        Height =
+                            yBottom - yTop,
+
+                        Fill =
+                            BrushFromHex(
+                                colourHex:
+                                    colourHex),
+
+                        StrokeThickness =
+                            0
+                    };
+
+                Canvas.SetLeft(
+                    element: rectangle,
+                    length: plotLeft);
+
+                Canvas.SetTop(
+                    element: rectangle,
+                    length: yTop);
+
+                cnvChartPreview.Children.Add(
+                    element: rectangle);
+            }
+
+            #endregion
+
+
+            #region Draw Trigger Backdrop
+
+            AddBand(
+                minimum: verticalMinimum,
+                maximum: -redTrigger,
+                colourHex: ChartAboveRedBandColourHex);
+
+            AddBand(
+                minimum: -redTrigger,
+                maximum: -amberTrigger,
+                colourHex: ChartRedBandColourHex);
+
+            AddBand(
+                minimum: -amberTrigger,
+                maximum: -greenTrigger,
+                colourHex: ChartAmberBandColourHex);
+
+            AddBand(
+                minimum: -greenTrigger,
+                maximum: greenTrigger,
+                colourHex: ChartGreenBandColourHex);
+
+            AddBand(
+                minimum: greenTrigger,
+                maximum: amberTrigger,
+                colourHex: ChartAmberBandColourHex);
+
+            AddBand(
+                minimum: amberTrigger,
+                maximum: redTrigger,
+                colourHex: ChartRedBandColourHex);
+
+            AddBand(
+                minimum: redTrigger,
+                maximum: verticalMaximum,
+                colourHex: ChartAboveRedBandColourHex);
+
+            #endregion
+
+
+            #region Draw Grid And Vertical Labels
+
+            PenLineDefinition[] gridDefinitions =
+            {
+                new(verticalMaximum, verticalMaximum.ToString(CultureInfo.InvariantCulture)),
+                new(redTrigger, redTrigger.ToString(CultureInfo.InvariantCulture)),
+                new(amberTrigger, amberTrigger.ToString(CultureInfo.InvariantCulture)),
+                new(greenTrigger, greenTrigger.ToString(CultureInfo.InvariantCulture)),
+                new(0m, "0"),
+                new(-greenTrigger, (-greenTrigger).ToString(CultureInfo.InvariantCulture)),
+                new(-amberTrigger, (-amberTrigger).ToString(CultureInfo.InvariantCulture)),
+                new(-redTrigger, (-redTrigger).ToString(CultureInfo.InvariantCulture)),
+                new(verticalMinimum, verticalMinimum.ToString(CultureInfo.InvariantCulture))
+            };
+
+            foreach (PenLineDefinition gridDefinition
+                in gridDefinitions)
+            {
+                double y =
+                    ToY(
+                        engineeringValue:
+                            gridDefinition.Value);
+
+                Line gridLine =
+                    new()
+                    {
+                        X1 = plotLeft,
+                        X2 = plotLeft + plotWidth,
+                        Y1 = y,
+                        Y2 = y,
+                        Stroke =
+                            gridDefinition.Value == 0m
+                                ? Brushes.Black
+                                : Brushes.LightGray,
+                        StrokeThickness =
+                            gridDefinition.Value == 0m
+                                ? 1.8
+                                : 0.7
+                    };
+
+                cnvChartPreview.Children.Add(
+                    element: gridLine);
+
+                Line verticalAxisTick =
+                    new()
+                    {
+                        X1 = plotLeft - 5,
+                        X2 = plotLeft,
+                        Y1 = y,
+                        Y2 = y,
+                        Stroke = Brushes.Black,
+                        StrokeThickness = 1.0
+                    };
+
+                cnvChartPreview.Children.Add(
+                    element: verticalAxisTick);
+
+                TextBlock label =
+                    new()
+                    {
+                        Text =
+                            gridDefinition.Label,
+
+                        FontSize =
+                            10,
+
+                        Foreground =
+                            Brushes.Black,
+
+                        Width =
+                            55,
+
+                        TextAlignment =
+                            TextAlignment.Right
+                    };
+
+                Canvas.SetLeft(
+                    element: label,
+                    length: 8);
+
+                Canvas.SetTop(
+                    element: label,
+                    length: y - 8);
+
+                cnvChartPreview.Children.Add(
+                    element: label);
+            }
+
+            #endregion
+
+
+            #region Draw Actual Series
+
+            double previewDurationSeconds =
+                Math.Max(
+                    val1: 1.0,
+                    val2: (_chartPreviewEndUtcExclusive - _chartPreviewStartUtc).TotalSeconds);
+
+            foreach (ChartPreviewSeries previewSeries in _chartPreviewSeries)
+            {
+                System.Windows.Shapes.Polyline polyline =
+                    new()
+                    {
+                        Stroke = previewSeries.Stroke,
+                        StrokeThickness = previewSeries.LineWidth,
+                        StrokeLineJoin = PenLineJoin.Round
+                    };
+
+                foreach (ChartPreviewPoint previewPoint in previewSeries.Points)
+                {
+                    double x =
+                        plotLeft +
+                        ((previewPoint.UtcTime - _chartPreviewStartUtc).TotalSeconds /
+                         previewDurationSeconds * plotWidth);
+
+                    decimal clippedValue =
+                        Math.Min(
+                            val1: verticalMaximum,
+                            val2: Math.Max(
+                                val1: verticalMinimum,
+                                val2: Convert.ToDecimal(
+                                    value: previewPoint.Value,
+                                    provider: CultureInfo.InvariantCulture)));
+
+                    polyline.Points.Add(
+                        value:
+                            new Point(
+                                x: x,
+                                y: ToY(
+                                    engineeringValue: clippedValue)));
+                }
+
+                if (polyline.Points.Count > 0)
+                {
+                    cnvChartPreview.Children.Add(
+                        element: polyline);
+                }
+            }
+
+            #endregion
+
+
+            #region Draw Border And Axes
+
+            Line verticalAxis =
+                new()
+                {
+                    X1 = plotLeft,
+                    X2 = plotLeft,
+                    Y1 = plotTop,
+                    Y2 = plotBottom,
+                    Stroke = Brushes.Black,
+                    StrokeThickness = 1.0
+                };
+
+            cnvChartPreview.Children.Add(
+                element: verticalAxis);
+
+            Line horizontalAxis =
+                new()
+                {
+                    X1 = plotLeft,
+                    X2 = plotLeft + plotWidth,
+                    Y1 = plotBottom,
+                    Y2 = plotBottom,
+                    Stroke = Brushes.Black,
+                    StrokeThickness = 0.5
+                };
+
+            cnvChartPreview.Children.Add(
+                element: horizontalAxis);
+
+            #endregion
+
+
+            #region Draw Chart Title
+
+            string chartTitle =
+                string.IsNullOrWhiteSpace(
+                    value: txtChartTitleOverride.Text)
+                    ? chartType.DisplayName
+                    : txtChartTitleOverride.Text.Trim();
+
+            TextBlock title =
+                new()
+                {
+                    Text =
+                        chartTitle,
+
+                    FontWeight =
+                        FontWeights.SemiBold,
+
+                    FontSize =
+                        15,
+
+                    Width =
+                        plotWidth,
+
+                    TextAlignment =
+                        TextAlignment.Center,
+
+                    Foreground =
+                        Brushes.Black
+                };
+
+            Canvas.SetLeft(
+                element: title,
+                length: plotLeft);
+
+            Canvas.SetTop(
+                element: title,
+                length: 12);
+
+            cnvChartPreview.Children.Add(
+                element: title);
+
+            #endregion
+
+
+            #region Draw Vertical Axis Title
+
+            string verticalAxisTitle =
+                string.IsNullOrWhiteSpace(
+                    value: txtChartYAxisTitle.Text)
+                    ? chartType.VerticalAxisTitle
+                    : txtChartYAxisTitle.Text.Trim();
+
+            TextBlock verticalTitle =
+                new()
+                {
+                    Text =
+                        $"{verticalAxisTitle} ({chartType.Unit})",
+
+                    FontSize =
+                        11,
+
+                    Foreground =
+                        Brushes.Black,
+
+                    RenderTransform =
+                        new RotateTransform(
+                            angle: -90),
+
+                    RenderTransformOrigin =
+                        new Point(
+                            x: 0,
+                            y: 0)
+                };
+
+            Canvas.SetLeft(
+                element: verticalTitle,
+                length: 5);
+
+            Canvas.SetTop(
+                element: verticalTitle,
+                length: plotTop + (plotHeight * 0.72));
+
+            cnvChartPreview.Children.Add(
+                element: verticalTitle);
+
+            #endregion
+
+
+            #region Draw Horizontal Date Axis
+
+            DateTime startDate =
+                dpChartStartDate.SelectedDate!.Value.Date;
+
+            DateTime endDate =
+                dpChartEndDate.SelectedDate!.Value.Date;
+
+            int previewDurationDays =
+                Math.Max(
+                    val1: 1,
+                    val2: (endDate - startDate).Days);
+
+            int tickIntervalDays =
+                previewDurationDays <= 14
+                    ? 1
+                    : 7;
+
+            int labelIntervalDays =
+                previewDurationDays <= 14
+                    ? 7
+                    : 28;
+
+            List<DateTime> tickDates =
+                new();
+
+            for (DateTime tickDate = startDate;
+                 tickDate <= endDate;
+                 tickDate = tickDate.AddDays(
+                     value: tickIntervalDays))
+            {
+                tickDates.Add(
+                    item: tickDate);
+            }
+
+            if (tickDates.Count == 0 ||
+                tickDates[^1] != endDate)
+            {
+                tickDates.Add(
+                    item: endDate);
+            }
+
+            foreach (DateTime tickDate in tickDates)
+            {
+                double fraction =
+                    (tickDate - startDate).TotalDays /
+                    previewDurationDays;
+
+                double tickX =
+                    plotLeft + (plotWidth * fraction);
+
+                Line horizontalAxisTick =
+                    new()
+                    {
+                        X1 = tickX,
+                        X2 = tickX,
+                        Y1 = plotBottom,
+                        Y2 = plotBottom + 5,
+                        Stroke = Brushes.Black,
+                        StrokeThickness = 0.5
+                    };
+
+                cnvChartPreview.Children.Add(
+                    element: horizontalAxisTick);
+            }
+
+            List<DateTime> labelDates =
+                new();
+
+            for (DateTime labelDate = startDate;
+                 labelDate <= endDate;
+                 labelDate = labelDate.AddDays(
+                     value: labelIntervalDays))
+            {
+                labelDates.Add(
+                    item: labelDate);
+            }
+
+            int minimumFinalLabelSpacingDays =
+                labelIntervalDays / 2;
+
+            if (labelDates.Count == 0)
+            {
+                labelDates.Add(
+                    item: startDate);
+            }
+
+            if (labelDates[^1] != endDate &&
+                (endDate - labelDates[^1]).Days >=
+                minimumFinalLabelSpacingDays)
+            {
+                labelDates.Add(
+                    item: endDate);
+            }
+
+            const double dateLabelWidth =
+                82;
+
+            foreach (DateTime labelDate in labelDates)
+            {
+                double fraction =
+                    (labelDate - startDate).TotalDays /
+                    previewDurationDays;
+
+                double labelTickX =
+                    plotLeft + (plotWidth * fraction);
+
+                TextBlock label =
+                    new()
+                    {
+                        Text =
+                            labelDate.ToString(
+                                format: "yyyy.MM.dd",
+                                provider: CultureInfo.InvariantCulture),
+
+                        FontSize =
+                            10,
+
+                        Width =
+                            dateLabelWidth,
+
+                        TextAlignment =
+                            TextAlignment.Right,
+
+                        RenderTransformOrigin =
+                            new Point(
+                                x: 1,
+                                y: 0),
+
+                        RenderTransform =
+                            new RotateTransform(
+                                angle: -45)
+                    };
+
+                Canvas.SetLeft(
+                    element: label,
+                    length: labelTickX - dateLabelWidth);
+
+                Canvas.SetTop(
+                    element: label,
+                    length: plotBottom + 7);
+
+                cnvChartPreview.Children.Add(
+                    element: label);
+            }
+
+            TextBlock horizontalTitle =
+                new()
+                {
+                    Text =
+                        "Date",
+
+                    FontSize =
+                        11,
+
+                    Width =
+                        plotWidth,
+
+                    TextAlignment =
+                        TextAlignment.Center
+                };
+
+            Canvas.SetLeft(
+                element: horizontalTitle,
+                length: plotLeft);
+
+            Canvas.SetTop(
+                element: horizontalTitle,
+                length: plotBottom + 72);
+
+            cnvChartPreview.Children.Add(
+                element: horizontalTitle);
+
+            #endregion
+
+
+            #region Draw Legend Placeholder
+
+            if (chkChartShowLegend.IsChecked == true)
+            {
+                string legendText =
+                    _chartSeries.Count > 0
+                        ? string.Join(
+                            separator: "    ",
+                            values:
+                                _chartSeries
+                                    .OrderBy(
+                                        keySelector:
+                                            item => item.DisplayOrder)
+                                    .Select(
+                                        selector:
+                                            item => item.DataElementDisplayName))
+                        : "Legend";
+
+                TextBlock legend =
+                    new()
+                    {
+                        Text =
+                            legendText,
+
+                        FontSize =
+                            10,
+
+                        Foreground =
+                            Brushes.Black,
+
+                        Background =
+                            Brushes.White,
+
+                        Padding =
+                            new Thickness(
+                                uniformLength: 3)
+                    };
+
+                string legendPosition =
+                    GetSelectedLegendPosition();
+
+                if (string.Equals(
+                    a: legendPosition,
+                    b: "Below Title",
+                    comparisonType: StringComparison.OrdinalIgnoreCase))
+                {
+                    Canvas.SetLeft(
+                        element: legend,
+                        length: plotLeft + 8);
+
+                    Canvas.SetTop(
+                        element: legend,
+                        length: 34);
+                }
+                else if (string.Equals(
+                    a: legendPosition,
+                    b: "Below Chart",
+                    comparisonType: StringComparison.OrdinalIgnoreCase))
+                {
+                    Canvas.SetLeft(
+                        element: legend,
+                        length: plotLeft + 8);
+
+                    Canvas.SetTop(
+                        element: legend,
+                        length: plotBottom + 24);
+                }
+                else if (string.Equals(
+                    a: legendPosition,
+                    b: "Left of Chart",
+                    comparisonType: StringComparison.OrdinalIgnoreCase))
+                {
+                    Canvas.SetLeft(
+                        element: legend,
+                        length: 4);
+
+                    Canvas.SetTop(
+                        element: legend,
+                        length: plotTop + 8);
+                }
+                else
+                {
+                    Canvas.SetLeft(
+                        element: legend,
+                        length: plotLeft + plotWidth - 120);
+
+                    Canvas.SetTop(
+                        element: legend,
+                        length: plotTop + 8);
+                }
+
+                cnvChartPreview.Children.Add(
+                    element: legend);
+            }
+
+            #endregion
+        }
+
+
+        private sealed record PenLineDefinition(
+            decimal Value,
+            string Label);
 
 
         private bool TryValidateChartConfiguration(
@@ -12047,7 +16771,7 @@ namespace GNA_DLRreport
             if (!_activeProjectId.HasValue)
             {
                 validationMessage =
-                    "Select an active project.";
+                    "Chart Management: Select an active project.";
 
                 return false;
             }
@@ -12056,7 +16780,7 @@ namespace GNA_DLRreport
                 value: txtChartName.Text))
             {
                 validationMessage =
-                    "Enter a chart name.";
+                    "Definition: Enter a chart name.";
 
                 return false;
             }
@@ -12065,7 +16789,7 @@ namespace GNA_DLRreport
                 is not ChartTypeUiItem)
             {
                 validationMessage =
-                    "Select a chart type.";
+                    "Definition: Select a chart type.";
 
                 return false;
             }
@@ -12073,27 +16797,22 @@ namespace GNA_DLRreport
             #endregion
 
 
-            #region Validate Absolute Date Window
+            #region Validate Start Date Mode
 
-            if (!dpChartStartDate.SelectedDate.HasValue ||
-                !dpChartEndDate.SelectedDate.HasValue)
+            string startDateMode =
+                GetSelectedChartStartDateMode();
+
+            if (!string.Equals(
+                    a: startDateMode,
+                    b: ChartStartDateModeReportStart,
+                    comparisonType: StringComparison.Ordinal) &&
+                !string.Equals(
+                    a: startDateMode,
+                    b: ChartStartDateModeProjectStart,
+                    comparisonType: StringComparison.Ordinal))
             {
                 validationMessage =
-                    "Select both chart start and end dates.";
-
-                return false;
-            }
-
-            DateTime startDate =
-                dpChartStartDate.SelectedDate.Value.Date;
-
-            DateTime endDate =
-                dpChartEndDate.SelectedDate.Value.Date;
-
-            if (startDate > endDate)
-            {
-                validationMessage =
-                    "Chart start date cannot be later than chart end date.";
+                    "Time Basis: Select Report Start or Project Start.";
 
                 return false;
             }
@@ -12105,7 +16824,7 @@ namespace GNA_DLRreport
 
             if (!TryReadPositiveDecimal(
                 text: txtChartGreenTrigger.Text,
-                valueName: "Green trigger",
+                valueName: "Trigger Bands: Green trigger",
                 value: out decimal greenTrigger,
                 validationMessage: out validationMessage))
             {
@@ -12114,7 +16833,7 @@ namespace GNA_DLRreport
 
             if (!TryReadPositiveDecimal(
                 text: txtChartAmberTrigger.Text,
-                valueName: "Amber trigger",
+                valueName: "Trigger Bands: Amber trigger",
                 value: out decimal amberTrigger,
                 validationMessage: out validationMessage))
             {
@@ -12123,7 +16842,7 @@ namespace GNA_DLRreport
 
             if (!TryReadPositiveDecimal(
                 text: txtChartRedTrigger.Text,
-                valueName: "Red trigger",
+                valueName: "Trigger Bands: Red trigger",
                 value: out decimal redTrigger,
                 validationMessage: out validationMessage))
             {
@@ -12133,7 +16852,7 @@ namespace GNA_DLRreport
             if (amberTrigger <= greenTrigger)
             {
                 validationMessage =
-                    "Amber trigger must be greater than Green trigger.";
+                    "Trigger Bands: Amber trigger must be greater than Green trigger.";
 
                 return false;
             }
@@ -12141,7 +16860,7 @@ namespace GNA_DLRreport
             if (redTrigger <= amberTrigger)
             {
                 validationMessage =
-                    "Red trigger must be greater than Amber trigger.";
+                    "Trigger Bands: Red trigger must be greater than Amber trigger.";
 
                 return false;
             }
@@ -12160,7 +16879,7 @@ namespace GNA_DLRreport
                     result: out decimal yMinimum))
                 {
                     validationMessage =
-                        "Enter a valid Vertical Axis minimum.";
+                        "Axes & Titles: Enter a valid numeric Vertical Axis minimum.";
 
                     return false;
                 }
@@ -12172,7 +16891,7 @@ namespace GNA_DLRreport
                     result: out decimal yMaximum))
                 {
                     validationMessage =
-                        "Enter a valid Vertical Axis maximum.";
+                        "Axes & Titles: Enter a valid numeric Vertical Axis maximum.";
 
                     return false;
                 }
@@ -12180,7 +16899,7 @@ namespace GNA_DLRreport
                 if (yMinimum >= yMaximum)
                 {
                     validationMessage =
-                        "Vertical Axis minimum must be less than Vertical Axis maximum.";
+                        "Axes & Titles: Minimum must be less than Maximum.";
 
                     return false;
                 }
@@ -12189,7 +16908,7 @@ namespace GNA_DLRreport
                     redTrigger > yMaximum)
                 {
                     validationMessage =
-                        "The fixed Vertical Axis extents must include both Red trigger limits.";
+                        "Axes & Titles: Fixed Vertical Axis limits must include both Red trigger limits.";
 
                     return false;
                 }
@@ -12198,33 +16917,15 @@ namespace GNA_DLRreport
             #endregion
 
 
-            #region Validate Output Dimensions
+            #region Validate Physical Output Dimensions
 
-            if (!int.TryParse(
-                s: txtChartPngWidth.Text,
-                style: NumberStyles.Integer,
-                provider: CultureInfo.InvariantCulture,
-                result: out int pngWidth) ||
-                pngWidth <= 0)
+            if (!TryValidateChartAppearanceConfiguration(
+                validationMessage: out validationMessage))
             {
-                validationMessage =
-                    "Enter a valid positive PNG width.";
-
                 return false;
             }
 
-            if (!int.TryParse(
-                s: txtChartPngHeight.Text,
-                style: NumberStyles.Integer,
-                provider: CultureInfo.InvariantCulture,
-                result: out int pngHeight) ||
-                pngHeight <= 0)
-            {
-                validationMessage =
-                    "Enter a valid positive PNG height.";
-
-                return false;
-            }
+            UpdateChartPixelDimensions();
 
             #endregion
 
@@ -12250,7 +16951,7 @@ namespace GNA_DLRreport
                 value <= 0)
             {
                 validationMessage =
-                    $"{valueName} must be a positive number.";
+                    $"{valueName} must be positive numeric.";
 
                 return false;
             }
@@ -12337,7 +17038,7 @@ namespace GNA_DLRreport
             dpChartEndDate.Focus();
 
             txtChartStatus.Text =
-                "Chart end date set to Now.";
+                "Report end date set to Today.";
         }
         private async Task<DateTime> GetActiveProjectStartDateAsync()
         {
@@ -12423,6 +17124,11 @@ namespace GNA_DLRreport
 
             txtChartYAxisMaximum.IsEnabled =
                 fixedAxis;
+
+            if (!fixedAxis)
+            {
+                ApplyDefaultVerticalAxisFromRedTrigger();
+            }
         }
 
 
@@ -12441,20 +17147,34 @@ namespace GNA_DLRreport
                 return;
             }
 
-            string entityDisplayName =
-                cmbChartSeriesEntity.SelectedItem?.ToString()?.Trim()
-                ?? string.Empty;
-
-            if (string.IsNullOrWhiteSpace(entityDisplayName))
+            if (cmbChartSeriesEntity.SelectedItem
+                is not ChartEntityUiItem selectedEntity)
             {
-                entityDisplayName =
-                    "<Select entity in data retrieval pass>";
+                txtChartStatus.Text =
+                    "Select an entity.";
+
+                return;
+            }
+
+            string entityDisplayName =
+                selectedEntity.DisplayName;
+
+            if (_chartSeries.Any(
+                predicate: series => series.EntityId == selectedEntity.EntityId))
+            {
+                txtChartStatus.Text =
+                    $"Entity '{entityDisplayName}' already exists in this chart series.";
+
+                return;
             }
 
             _chartSeries.Add(
                 item:
                     new ChartSeriesUiItem
                     {
+                        EntityId =
+                            selectedEntity.EntityId,
+
                         DisplayOrder =
                             _chartSeries.Count + 1,
 
@@ -12481,8 +17201,29 @@ namespace GNA_DLRreport
                                 defaultValue: 4.0)
                     });
 
+            if (cmbChartSeriesEntity.ItemsSource
+                is IEnumerable<ChartEntityUiItem> availableEntities)
+            {
+                List<ChartEntityUiItem> remainingEntities =
+                    availableEntities
+                        .Where(
+                            predicate: entity => entity.EntityId != selectedEntity.EntityId)
+                        .OrderBy(
+                            keySelector: entity => entity.DisplayName,
+                            comparer: StringComparer.CurrentCultureIgnoreCase)
+                        .ToList();
+
+                cmbChartSeriesEntity.ItemsSource =
+                    remainingEntities;
+
+                cmbChartSeriesEntity.SelectedIndex =
+                    remainingEntities.Count > 0
+                        ? 0
+                        : -1;
+            }
+
             txtChartStatus.Text =
-                "Series added. Entity population from DBTrackGeometry will be connected in the data-retrieval pass.";
+                $"Series for '{entityDisplayName}' added.";
 
             #endregion
         }
@@ -12502,6 +17243,36 @@ namespace GNA_DLRreport
                 item: selectedSeries);
 
             RenumberChartSeries();
+
+            if (cmbChartSeriesEntity.ItemsSource
+                is IEnumerable<ChartEntityUiItem> availableEntities)
+            {
+                List<ChartEntityUiItem> refreshedEntities =
+                    availableEntities
+                        .Append(
+                            element:
+                                new ChartEntityUiItem
+                                {
+                                    EntityId = selectedSeries.EntityId,
+                                    DisplayName = selectedSeries.EntityDisplayName
+                                })
+                        .GroupBy(
+                            keySelector: entity => entity.EntityId)
+                        .Select(
+                            selector: group => group.First())
+                        .OrderBy(
+                            keySelector: entity => entity.DisplayName,
+                            comparer: StringComparer.CurrentCultureIgnoreCase)
+                        .ToList();
+
+                cmbChartSeriesEntity.ItemsSource =
+                    refreshedEntities;
+
+                cmbChartSeriesEntity.SelectedIndex =
+                    refreshedEntities.Count > 0
+                        ? 0
+                        : -1;
+            }
         }
 
 
@@ -19234,7 +24005,7 @@ namespace GNA_DLRreport
             #region Locate Configuration File
 
             string configurationPath =
-                Path.Combine(
+                IOPath.Combine(
                     path1: AppContext.BaseDirectory,
                     path2: PrismPairImportProfileFileName);
 
@@ -19254,7 +24025,7 @@ namespace GNA_DLRreport
                 while (searchDirectory is not null)
                 {
                     string candidatePath =
-                        Path.Combine(
+                        IOPath.Combine(
                             path1: searchDirectory.FullName,
                             path2: PrismPairImportProfileFileName);
 
@@ -19618,7 +24389,7 @@ namespace GNA_DLRreport
 
             txtPrismPairImportStatus.Text =
                 $"Reading supported worksheets from " +
-                $"'{Path.GetFileName(_selectedPrismPairWorkbookPath)}'...";
+                $"'{IOPath.GetFileName(_selectedPrismPairWorkbookPath)}'...";
 
             #endregion
 

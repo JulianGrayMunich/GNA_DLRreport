@@ -1,4 +1,4 @@
-﻿<Window x:Class="GNA_DLRreport.MainWindow"
+<Window x:Class="GNA_DLRreport.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -18,67 +18,36 @@
     <!-- #region MAIN WINDOW LAYOUT -->
 
     <Grid>
-
         <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
             <RowDefinition Height="24"/>
         </Grid.RowDefinitions>
 
-
         <!-- #region TABBED APPLICATION AREA -->
 
         <Grid Grid.Row="0">
-
             <TabControl>
-
 
                 <!-- #region REPORT GENERATION TAB -->
 
                 <TabItem Header="Report Generation">
-
                     <Grid Margin="20">
-
-                        <!-- #region REPORT GENERATION BUTTONS -->
-
                         <StackPanel Width="220"
                                     HorizontalAlignment="Center"
                                     VerticalAlignment="Center">
-
-                            <!-- #region REPORT SCHEDULER BUTTON -->
-
-                            <Button x:Name="btnReportScheduler"
-                                    Height="35"
-                                    Margin="0,0,0,12"
-                                    Content="Report Scheduler"/>
-
-                            <!-- #endregion -->
-
-
-                            <!-- #region REPORT GENERATION BUTTON -->
-
                             <Button x:Name="btnReportGeneration"
                                     Height="35"
                                     Content="Report Generation"/>
-
-                            <!-- #endregion -->
-
                         </StackPanel>
-
-                        <!-- #endregion -->
-
                     </Grid>
-
                 </TabItem>
 
                 <!-- #endregion -->
 
-
-                <!-- #region HOUSEKEEPING TAB -->
+                <!-- #region DATABASE TAB -->
 
                 <TabItem Header="Database">
-
                     <Grid Margin="20">
-
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="20"/>
@@ -86,21 +55,17 @@
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
 
-
                         <!-- #region DATABASE CONNECTION -->
 
                         <GroupBox Grid.Row="0"
                                   Header="Database Connection"
                                   Padding="15">
-
                             <Grid>
-
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="10"/>
                                     <RowDefinition Height="Auto"/>
                                 </Grid.RowDefinitions>
-
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="140"/>
                                     <ColumnDefinition Width="*"/>
@@ -108,14 +73,10 @@
                                     <ColumnDefinition Width="130"/>
                                 </Grid.ColumnDefinitions>
 
-
-                                <!-- #region CONNECTION STRING -->
-
                                 <TextBlock Grid.Row="0"
                                            Grid.Column="0"
                                            VerticalAlignment="Center"
                                            Text="Connection string:"/>
-
                                 <TextBox x:Name="txtDbConnectionString"
                                          Grid.Row="0"
                                          Grid.Column="1"
@@ -124,43 +85,29 @@
                                          VerticalContentAlignment="Center"
                                          HorizontalScrollBarVisibility="Auto"
                                          TextWrapping="Wrap"/>
-
-                                <!-- #endregion -->
-
-
-                                <!-- #region TEST DATABASE CONNECTION -->
-
                                 <Button x:Name="btnTestDbConnection"
                                         Grid.Row="0"
                                         Grid.Column="3"
                                         Height="28"
                                         Content="Test Connection"
                                         Click="btnTestDbConnection_Click"/>
-
                                 <TextBlock x:Name="txtDbConnectionStatus"
                                            Grid.Row="2"
                                            Grid.Column="1"
                                            Grid.ColumnSpan="3"
                                            VerticalAlignment="Center"
                                            Text=""/>
-
-                                <!-- #endregion -->
-
                             </Grid>
-
                         </GroupBox>
 
                         <!-- #endregion -->
-
 
                         <!-- #region DATABASE HOUSEKEEPING -->
 
                         <GroupBox Grid.Row="2"
                                   Header="Database Housekeeping"
                                   Padding="15">
-
                             <Grid>
-
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="18"/>
@@ -168,7 +115,6 @@
                                     <RowDefinition Height="18"/>
                                     <RowDefinition Height="Auto"/>
                                 </Grid.RowDefinitions>
-
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="180"/>
                                     <ColumnDefinition Width="230"/>
@@ -177,14 +123,10 @@
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
 
-
-                                <!-- #region CREATE DATABASE -->
-
                                 <TextBlock Grid.Row="0"
                                            Grid.Column="0"
                                            VerticalAlignment="Center"
                                            Text="Create database:"/>
-
                                 <Button x:Name="btnCreateDb"
                                         Grid.Row="0"
                                         Grid.Column="1"
@@ -195,108 +137,71 @@
                                         ToolTip="Create or recreate DBTrackGeometry including all monitoring and chart-definition repository tables."
                                         Click="btnCreateDb_Click"/>
 
-                                <!-- #endregion -->
-
-
-                                <!-- #region CLEAR LATEST READING -->
-
                                 <TextBlock Grid.Row="4"
                                            Grid.Column="0"
                                            VerticalAlignment="Center"
                                            Text="Clear latest reading:"/>
-
                                 <ComboBox x:Name="cmbClearLatestReading"
                                           Grid.Row="4"
                                           Grid.Column="1"
                                           Height="28"
                                           SelectedIndex="0"
                                           VerticalContentAlignment="Center">
-
                                     <ComboBoxItem Content="Select table..."/>
-
                                     <ComboBoxItem Content="CoordinatesDaily"/>
-
                                     <ComboBoxItem Content="DhEpochs"/>
                                     <ComboBoxItem Content="DhDaily"/>
-
                                     <ComboBoxItem Content="SlewEpochs"/>
                                     <ComboBoxItem Content="SlewDaily"/>
-
                                     <ComboBoxItem Content="TopEpochs"/>
                                     <ComboBoxItem Content="TopDaily"/>
-
                                     <ComboBoxItem Content="CantEpochs"/>
                                     <ComboBoxItem Content="CantDaily"/>
-
                                     <ComboBoxItem Content="ShortTwistEpochs"/>
                                     <ComboBoxItem Content="ShortTwistDaily"/>
-
                                     <ComboBoxItem Content="LongTwistEpochs"/>
                                     <ComboBoxItem Content="LongTwistDaily"/>
-
                                     <ComboBoxItem Content="All Epoch Tables"/>
                                     <ComboBoxItem Content="All Daily Tables"/>
                                     <ComboBoxItem Content="All Time-Series Tables"/>
-
                                 </ComboBox>
-
                                 <Button x:Name="btnClearLatestReading"
                                         Grid.Row="4"
                                         Grid.Column="3"
                                         Height="30"
                                         Content="Clear Latest Reading"/>
-
-                                <!-- #endregion -->
-
                             </Grid>
-
                         </GroupBox>
 
                         <!-- #endregion -->
-
                     </Grid>
-
                 </TabItem>
 
                 <!-- #endregion -->
 
-
                 <!-- #region CONFIGURATION TAB -->
 
                 <TabItem Header="Configuration">
-
                     <Grid Margin="20">
-
-                        <!-- #region CONFIGURATION TAB LAYOUT -->
-
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="12"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
 
-                        <!-- #endregion -->
-
-
                         <!-- #region PROJECT CONFIGURATION SUMMARY -->
 
                         <Grid Grid.Row="0">
-
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="18"/>
                                 <ColumnDefinition Width="130"/>
                             </Grid.ColumnDefinitions>
 
-
-                            <!-- #region PROJECT SELECTION FRAME -->
-
                             <GroupBox Grid.Column="0"
                                       Header="Project Selection"
                                       Padding="15">
-
                                 <Grid>
-
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="140"/>
                                         <ColumnDefinition Width="300"/>
@@ -304,43 +209,23 @@
                                         <ColumnDefinition Width="160"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
-
-
-                                    <!-- #region ACTIVE PROJECT DISPLAY -->
-
                                     <TextBlock Grid.Column="0"
                                                VerticalAlignment="Center"
                                                Text="Active project:"/>
-
                                     <TextBox x:Name="txtActiveProject"
                                              Grid.Column="1"
                                              Height="28"
                                              IsReadOnly="True"
                                              VerticalContentAlignment="Center"
                                              Text="No active project"/>
-
-                                    <!-- #endregion -->
-
-
-                                    <!-- #region MANAGE PROJECTS BUTTON -->
-
                                     <Button x:Name="btnManageProjects"
                                             Grid.Column="3"
                                             Width="150"
                                             Height="30"
                                             Content="Manage Projects"
                                             Click="btnManageProjects_Click"/>
-
-                                    <!-- #endregion -->
-
                                 </Grid>
-
                             </GroupBox>
-
-                            <!-- #endregion -->
-
-
-                            <!-- #region VIEW ARRAY BUTTON -->
 
                             <Button x:Name="btnViewPrismArray"
                                     Grid.Column="2"
@@ -353,15 +238,11 @@
                                     Visibility="Collapsed"
                                     IsEnabled="False"
                                     Click="btnViewPrismArray_Click"/>
-
-                            <!-- #endregion -->
-
                         </Grid>
 
                         <!-- #endregion -->
 
-
-                        <!-- #region COORDINATE IMPORT WORKFLOWS -->
+                        <!-- #region CONFIGURATION WORKFLOWS -->
 
                         <TabControl x:Name="tabConfiguration"
                                     Grid.Row="2"
@@ -373,13 +254,10 @@
                             <TabItem x:Name="tabReferenceCoordinates"
                                      Header="Reference Coordinates"
                                      IsEnabled="False">
-
                                 <GroupBox Header="Point Names / Reference Coordinates Import"
                                           Margin="8"
                                           Padding="15">
-
                                     <Grid>
-
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto"/>
                                             <RowDefinition Height="10"/>
@@ -390,11 +268,7 @@
                                             <RowDefinition Height="Auto"/>
                                         </Grid.RowDefinitions>
 
-
-                                        <!-- #region CSV FILE SELECTION -->
-
                                         <Grid Grid.Row="0">
-
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="95"/>
                                                 <ColumnDefinition Width="*"/>
@@ -403,69 +277,45 @@
                                                 <ColumnDefinition Width="10"/>
                                                 <ColumnDefinition Width="90"/>
                                             </Grid.ColumnDefinitions>
-
                                             <TextBlock Grid.Column="0"
                                                        VerticalAlignment="Center"
                                                        Text="Source CSV:"/>
-
                                             <TextBox x:Name="txtReferenceCsvPath"
                                                      Grid.Column="1"
                                                      Height="28"
                                                      IsReadOnly="True"
                                                      VerticalContentAlignment="Center"/>
-
                                             <Button x:Name="btnSelectReferenceCsv"
                                                     Grid.Column="3"
                                                     Height="30"
-                                                    IsEnabled="True"
                                                     Content="Select CSV"
                                                     Click="btnSelectReferenceCsv_Click"/>
-
                                             <Button x:Name="btnClearReferenceImport"
                                                     Grid.Column="5"
                                                     Height="30"
-                                                    IsEnabled="True"
                                                     Content="Clear"
                                                     Click="btnClearReferenceImport_Click"/>
-
                                         </Grid>
 
-                                        <!-- #endregion -->
-
-
-                                        <!-- #region CSV COLUMN ORDER -->
-
                                         <Grid Grid.Row="2">
-
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="95"/>
                                                 <ColumnDefinition Width="360"/>
                                                 <ColumnDefinition Width="*"/>
                                             </Grid.ColumnDefinitions>
-
                                             <TextBlock Grid.Column="0"
                                                        VerticalAlignment="Center"
                                                        Text="Column order:"/>
-
                                             <ComboBox x:Name="cmbReferenceCsvColumnOrder"
                                                       Grid.Column="1"
                                                       Height="28"
                                                       SelectedIndex="0"
                                                       VerticalContentAlignment="Center"
                                                       SelectionChanged="cmbReferenceCsvColumnOrder_SelectionChanged">
-
                                                 <ComboBoxItem Content="PointName, E, N, Ht [, ReplacementName]"/>
-
                                                 <ComboBoxItem Content="PointName, N, E, Ht [, ReplacementName]"/>
-
                                             </ComboBox>
-
                                         </Grid>
-
-                                        <!-- #endregion -->
-
-
-                                        <!-- #region IMPORT PREVIEW DATAGRID -->
 
                                         <DataGrid x:Name="dgReferenceCoordinateImport"
                                                   Grid.Row="4"
@@ -480,54 +330,23 @@
                                                   HeadersVisibility="Column"
                                                   GridLinesVisibility="Horizontal"
                                                   SelectionChanged="dgReferenceCoordinateImport_SelectionChanged">
-
                                             <DataGrid.Columns>
-
-                                                <DataGridTextColumn Header="Row"
-                                                                    Width="55"
-                                                                    Binding="{Binding SourceRow}"/>
-
-                                                <DataGridTextColumn Header="Point Name"
-                                                                    Width="130"
-                                                                    Binding="{Binding PointName}"/>
-
-                                                <DataGridTextColumn Header="Replacement Name"
-                                                                    Width="140"
-                                                                    Binding="{Binding ReplacementName}"/>
-
-                                                <DataGridTextColumn Header="E"
-                                                                    Width="95"
-                                                                    Binding="{Binding EastingText}"/>
-
-                                                <DataGridTextColumn Header="N"
-                                                                    Width="95"
-                                                                    Binding="{Binding NorthingText}"/>
-
-                                                <DataGridTextColumn Header="Ht"
-                                                                    Width="85"
-                                                                    Binding="{Binding HeightText}"/>
-
-                                                <DataGridTextColumn Header="Validation"
-                                                                    Width="*"
-                                                                    Binding="{Binding ValidationStatus}"/>
-
+                                                <DataGridTextColumn Header="Row" Width="55" Binding="{Binding SourceRow}"/>
+                                                <DataGridTextColumn Header="Point Name" Width="130" Binding="{Binding PointName}"/>
+                                                <DataGridTextColumn Header="Replacement Name" Width="140" Binding="{Binding ReplacementName}"/>
+                                                <DataGridTextColumn Header="E" Width="95" Binding="{Binding EastingText}"/>
+                                                <DataGridTextColumn Header="N" Width="95" Binding="{Binding NorthingText}"/>
+                                                <DataGridTextColumn Header="Ht" Width="85" Binding="{Binding HeightText}"/>
+                                                <DataGridTextColumn Header="Validation" Width="*" Binding="{Binding ValidationStatus}"/>
                                             </DataGrid.Columns>
-
                                         </DataGrid>
 
-                                        <!-- #endregion -->
-
-
-                                        <!-- #region IMPORT STATUS AND COMMIT -->
-
                                         <Grid Grid.Row="6">
-
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="20"/>
                                                 <ColumnDefinition Width="130"/>
                                             </Grid.ColumnDefinitions>
-
                                             <TextBox x:Name="txtReferenceImportStatus"
                                                      Grid.Column="0"
                                                      Height="42"
@@ -537,39 +356,28 @@
                                                      VerticalScrollBarVisibility="Disabled"
                                                      VerticalContentAlignment="Center"
                                                      Text="No CSV selected."/>
-
                                             <Button x:Name="btnCommitReferenceImport"
                                                     Grid.Column="2"
                                                     Height="30"
                                                     Content="Commit Import"
                                                     IsEnabled="False"
                                                     Click="btnCommitReferenceImport_Click"/>
-
                                         </Grid>
-
-                                        <!-- #endregion -->
-
                                     </Grid>
-
                                 </GroupBox>
-
                             </TabItem>
 
                             <!-- #endregion -->
-
 
                             <!-- #region PRISM PAIRS TAB -->
 
                             <TabItem x:Name="tabPrismPairs"
                                      Header="Prism Pairs"
                                      IsEnabled="False">
-
                                 <GroupBox Header="Prism Pair Import"
                                           Margin="8"
                                           Padding="15">
-
                                     <Grid>
-
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto"/>
                                             <RowDefinition Height="10"/>
@@ -582,11 +390,7 @@
                                             <RowDefinition Height="Auto"/>
                                         </Grid.RowDefinitions>
 
-
-                                        <!-- #region TRACK GEOMETRY WORKBOOK SELECTION -->
-
                                         <Grid Grid.Row="0">
-
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="105"/>
                                                 <ColumnDefinition Width="*"/>
@@ -595,60 +399,41 @@
                                                 <ColumnDefinition Width="10"/>
                                                 <ColumnDefinition Width="90"/>
                                             </Grid.ColumnDefinitions>
-
                                             <TextBlock Grid.Column="0"
                                                        VerticalAlignment="Center"
                                                        Text="Workbook:"/>
-
                                             <TextBox x:Name="txtPrismPairWorkbookPath"
                                                      Grid.Column="1"
                                                      Height="28"
                                                      IsReadOnly="True"
                                                      VerticalContentAlignment="Center"/>
-
                                             <Button x:Name="btnSelectPrismPairWorkbook"
                                                     Grid.Column="3"
                                                     Height="30"
-                                                    IsEnabled="True"
                                                     Content="Select Workbook"
                                                     Click="btnSelectPrismPairWorkbook_Click"/>
-
                                             <Button x:Name="btnClearPrismPairImport"
                                                     Grid.Column="5"
                                                     Height="30"
-                                                    IsEnabled="True"
                                                     Content="Clear"
                                                     Click="btnClearPrismPairImport_Click"/>
-
                                         </Grid>
 
-                                        <!-- #endregion -->
-
-                                        <!-- #region WORKSHEET SELECTION -->
-
                                         <Grid Grid.Row="2">
-
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="105"/>
                                                 <ColumnDefinition Width="360"/>
                                                 <ColumnDefinition Width="*"/>
                                             </Grid.ColumnDefinitions>
-
                                             <TextBlock Grid.Column="0"
                                                        VerticalAlignment="Center"
                                                        Text="Worksheet:"/>
-
                                             <ComboBox x:Name="cmbPrismPairWorksheet"
                                                       Grid.Column="1"
                                                       Height="28"
                                                       VerticalContentAlignment="Center"
                                                       SelectionChanged="cmbPrismPairWorksheet_SelectionChanged"/>
-
                                         </Grid>
-
-                                        <!-- #endregion -->
-
-                                        <!-- #region PRISM PAIR PREVIEW DATAGRID -->
 
                                         <DataGrid x:Name="dgPrismPairImport"
                                                   Grid.Row="6"
@@ -664,120 +449,54 @@
                                                   HeadersVisibility="Column"
                                                   GridLinesVisibility="Horizontal"
                                                   SelectionChanged="dgPrismPairImport_SelectionChanged">
-
                                             <DataGrid.Columns>
+                                                <DataGridTextColumn Header="Pair Order" Width="85" Binding="{Binding PairOrder}"/>
 
-                                                <!-- #region PAIR ORDER -->
-
-                                                <DataGridTextColumn Header="Pair Order"
-                                                                    Width="85"
-                                                                    Binding="{Binding PairOrder}"/>
-
-                                                <!-- #endregion -->
-
-
-                                                <!-- #region SOURCE COLUMN 1 -->
-
-                                                <DataGridTextColumn Width="170"
-                                                                    Binding="{Binding SourceColumn1Value}">
-
+                                                <DataGridTextColumn Width="170" Binding="{Binding SourceColumn1Value}">
                                                     <DataGridTextColumn.Header>
-
                                                         <ComboBox x:Name="cmbPrismPairColumn1Role"
                                                                   Width="130"
                                                                   SelectedIndex="0"
                                                                   SelectionChanged="PrismPairColumnRole_SelectionChanged">
-
                                                             <ComboBoxItem Content="Right (Primary) Rail"/>
                                                             <ComboBoxItem Content="Left Rail"/>
                                                             <ComboBoxItem Content="Rail Tag"/>
-
                                                         </ComboBox>
-
                                                     </DataGridTextColumn.Header>
-
                                                 </DataGridTextColumn>
 
-                                                <!-- #endregion -->
-
-
-                                                <!-- #region SOURCE COLUMN 2 -->
-
-                                                <DataGridTextColumn Width="170"
-                                                                    Binding="{Binding SourceColumn2Value}">
-
+                                                <DataGridTextColumn Width="170" Binding="{Binding SourceColumn2Value}">
                                                     <DataGridTextColumn.Header>
-
                                                         <ComboBox x:Name="cmbPrismPairColumn2Role"
                                                                   Width="130"
                                                                   SelectedIndex="1"
                                                                   SelectionChanged="PrismPairColumnRole_SelectionChanged">
-
                                                             <ComboBoxItem Content="Right (Primary) Rail"/>
                                                             <ComboBoxItem Content="Left Rail"/>
                                                             <ComboBoxItem Content="Rail Tag"/>
-
                                                         </ComboBox>
-
                                                     </DataGridTextColumn.Header>
-
                                                 </DataGridTextColumn>
 
-                                                <!-- #endregion -->
-
-
-                                                <!-- #region SOURCE COLUMN 3 -->
-
-                                                <DataGridTextColumn Width="150"
-                                                                    Binding="{Binding SourceColumn3Value}">
-
+                                                <DataGridTextColumn Width="150" Binding="{Binding SourceColumn3Value}">
                                                     <DataGridTextColumn.Header>
-
                                                         <ComboBox x:Name="cmbPrismPairColumn3Role"
                                                                   Width="120"
                                                                   SelectedIndex="2"
                                                                   SelectionChanged="PrismPairColumnRole_SelectionChanged">
-
                                                             <ComboBoxItem Content="Right (Primary) Rail"/>
                                                             <ComboBoxItem Content="Left Rail"/>
                                                             <ComboBoxItem Content="Rail Tag"/>
-
                                                         </ComboBox>
-
                                                     </DataGridTextColumn.Header>
-
                                                 </DataGridTextColumn>
 
-                                                <!-- #endregion -->
-
-
-                                                <!-- #region TRACK TAG -->
-
-                                                <DataGridTextColumn Header="Track Name"
-                                                                    Width="110"
-                                                                    Binding="{Binding TrackName}"/>
-
-                                                <!-- #endregion -->
-
-
-                                                <!-- #region VALIDATION -->
-
-                                                <DataGridTextColumn Header="Validation"
-                                                                    Width="*"
-                                                                    Binding="{Binding ValidationStatus}"/>
-
-                                                <!-- #endregion -->
-
+                                                <DataGridTextColumn Header="Track Name" Width="110" Binding="{Binding TrackName}"/>
+                                                <DataGridTextColumn Header="Validation" Width="*" Binding="{Binding ValidationStatus}"/>
                                             </DataGrid.Columns>
-
                                         </DataGrid>
 
-                                        <!-- #endregion -->
-
-                                        <!-- #region PRISM PAIR STATUS AND COMMIT -->
-
                                         <Grid Grid.Row="8">
-
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="15"/>
@@ -785,7 +504,6 @@
                                                 <ColumnDefinition Width="10"/>
                                                 <ColumnDefinition Width="120"/>
                                             </Grid.ColumnDefinitions>
-
                                             <TextBox x:Name="txtPrismPairImportStatus"
                                                      Grid.Column="0"
                                                      Height="42"
@@ -795,30 +513,21 @@
                                                      VerticalScrollBarVisibility="Disabled"
                                                      VerticalContentAlignment="Center"
                                                      Text="No workbook selected."/>
-
                                             <Button x:Name="btnPreviewPrismPairs"
                                                     Grid.Column="2"
                                                     Height="30"
                                                     Content="Preview Pairs"
                                                     IsEnabled="False"
                                                     Click="btnPreviewPrismPairs_Click"/>
-
                                             <Button x:Name="btnCommitPrismPairImport"
                                                     Grid.Column="4"
                                                     Height="30"
                                                     Content="Commit Import"
                                                     IsEnabled="False"
                                                     Click="btnCommitPrismPairImport_Click"/>
-
                                         </Grid>
-
-                                        <!-- #endregion -->
-
-
                                     </Grid>
-
                                 </GroupBox>
-
                             </TabItem>
 
                             <!-- #endregion -->
@@ -828,13 +537,10 @@
                             <TabItem x:Name="tabPrismArrays"
                                      Header="Arrays"
                                      IsEnabled="False">
-
                                 <GroupBox Header="Prism Array Configuration"
                                           Margin="8"
                                           Padding="12">
-
                                     <Grid>
-
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto"/>
                                             <RowDefinition Height="8"/>
@@ -843,11 +549,7 @@
                                             <RowDefinition Height="Auto"/>
                                         </Grid.RowDefinitions>
 
-
-                                        <!-- #region ARRAY DEFINITION HEADER -->
-
                                         <Grid Grid.Row="0">
-
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="75"/>
                                                 <ColumnDefinition Width="185"/>
@@ -859,11 +561,9 @@
                                                 <ColumnDefinition Width="10"/>
                                                 <ColumnDefinition Width="105"/>
                                             </Grid.ColumnDefinitions>
-
                                             <TextBlock Grid.Column="0"
                                                        VerticalAlignment="Center"
                                                        Text="Array type:"/>
-
                                             <ComboBox x:Name="cmbPrismArrayType"
                                                       Grid.Column="1"
                                                       Height="28"
@@ -872,51 +572,36 @@
                                                       SelectedValuePath="ArrayType_ID"
                                                       SelectionChanged="cmbPrismArrayType_SelectionChanged"
                                                       VerticalContentAlignment="Center"/>
-
                                             <TextBlock Grid.Column="3"
                                                        VerticalAlignment="Center"
                                                        Text="Array name:"/>
-
                                             <TextBox x:Name="txtPrismArrayName"
                                                      Grid.Column="4"
                                                      Height="28"
                                                      MaxLength="200"
                                                      VerticalContentAlignment="Center"/>
-
                                             <Button x:Name="btnClearPrismArrayDefinition"
                                                     Grid.Column="6"
                                                     Height="30"
                                                     Content="Clear Definition"
                                                     Click="btnClearPrismArrayDefinition_Click"/>
-
                                             <Button x:Name="btnCommitPrismArray"
                                                     Grid.Column="8"
                                                     Height="30"
                                                     Content="Commit Array"
                                                     Click="btnCommitPrismArray_Click"/>
-
                                         </Grid>
 
-                                        <!-- #endregion -->
-
-
-                                        <!-- #region ARRAY POINT ASSIGNMENT AREA -->
-
                                         <Grid Grid.Row="2">
-
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="12"/>
                                                 <ColumnDefinition Width="1.25*"/>
                                             </Grid.ColumnDefinitions>
 
-
-                                            <!-- #region AVAILABLE POINTS -->
-
                                             <GroupBox Grid.Column="0"
                                                       Header="Available Points"
                                                       Padding="8">
-
                                                 <DataGrid x:Name="dgPrismArrayAvailablePoints"
                                                           AutoGenerateColumns="False"
                                                           CanUserAddRows="False"
@@ -930,41 +615,23 @@
                                                           HeadersVisibility="Column"
                                                           GridLinesVisibility="Horizontal"
                                                           HorizontalGridLinesBrush="Gainsboro">
-
                                                     <DataGrid.Columns>
-
-                                                        <DataGridTextColumn Header="Replacement Name"
-                                                                            Width="*"
-                                                                            Binding="{Binding ReplacementName}"/>
-
+                                                        <DataGridTextColumn Header="Replacement Name" Width="*" Binding="{Binding ReplacementName}"/>
                                                     </DataGrid.Columns>
-
                                                 </DataGrid>
-
                                             </GroupBox>
 
-                                            <!-- #endregion -->
-
-
-                                            <!-- #region RIGHT-HAND ARRAY CONFIGURATION -->
-
                                             <Grid Grid.Column="2">
-
                                                 <Grid.RowDefinitions>
                                                     <RowDefinition Height="Auto"/>
                                                     <RowDefinition Height="8"/>
                                                     <RowDefinition Height="*"/>
                                                 </Grid.RowDefinitions>
 
-
-                                                <!-- #region A-E ASSIGNMENTS -->
-
                                                 <GroupBox Grid.Row="0"
                                                           Header="A-E Point Assignment"
                                                           Padding="8">
-
                                                     <Grid>
-
                                                         <Grid.RowDefinitions>
                                                             <RowDefinition Height="Auto"/>
                                                             <RowDefinition Height="7"/>
@@ -976,7 +643,6 @@
                                                             <RowDefinition Height="7"/>
                                                             <RowDefinition Height="Auto"/>
                                                         </Grid.RowDefinitions>
-
                                                         <Grid.ColumnDefinitions>
                                                             <ColumnDefinition Width="25"/>
                                                             <ColumnDefinition Width="*"/>
@@ -1010,90 +676,53 @@
                                                         <TextBox x:Name="txtPrismArrayPointE" Grid.Row="8" Grid.Column="1" Height="28" IsReadOnly="True" VerticalContentAlignment="Center"/>
                                                         <Button x:Name="btnAssignPrismArrayE" Grid.Row="8" Grid.Column="3" Height="28" Content="Assign E" Click="btnAssignPrismArrayE_Click"/>
                                                         <Button x:Name="btnClearPrismArrayE" Grid.Row="8" Grid.Column="5" Height="28" Content="Clear" IsEnabled="False" Click="btnClearPrismArrayE_Click"/>
-
                                                     </Grid>
-
                                                 </GroupBox>
 
-                                                <!-- #endregion -->
-                                        <!-- #region COMMITTED ARRAYS -->
-
-                                        <GroupBox Grid.Row="2"
-                                                  Grid.Column="2"
-                                                  Header="Committed Arrays"
-                                                  Padding="10">
-
-                                            <Grid>
-
-                                                <Grid.RowDefinitions>
-                                                    <RowDefinition Height="Auto"/>
-                                                    <RowDefinition Height="8"/>
-                                                    <RowDefinition Height="*"/>
-                                                </Grid.RowDefinitions>
-
-
-                                                <!-- #region COMMITTED ARRAYS HEADER -->
-
-                                                <TextBlock Grid.Row="0"
-                                                           VerticalAlignment="Center"
-                                                           Text="Select a committed array to view its definition."/>
-
-                                                <!-- #endregion -->
-
-
-                                                <!-- #region COMMITTED ARRAYS DATAGRID -->
-
-                                                <DataGrid x:Name="dgCommittedPrismArrays"
-                                                          Grid.Row="2"
-                                                          AutoGenerateColumns="False"
-                                                          CanUserAddRows="False"
-                                                          CanUserDeleteRows="False"
-                                                          CanUserReorderColumns="False"
-                                                          CanUserResizeRows="False"
-                                                          IsReadOnly="True"
-                                                          SelectionMode="Single"
-                                                          SelectionUnit="FullRow"
-                                                          HeadersVisibility="Column"
-                                                          GridLinesVisibility="Horizontal"
-                                                          HorizontalGridLinesBrush="LightGray"
-                                                          SelectionChanged="dgCommittedPrismArrays_SelectionChanged">
-
-                                                    <DataGrid.Columns>
-
-                                                        <DataGridTextColumn Header="Array ID"
-                                                                            Width="75"
-                                                                            Binding="{Binding Array_ID}"/>
-
-                                                        <DataGridTextColumn Header="Type"
-                                                                            Width="150"
-                                                                            Binding="{Binding ArrayTypeName}"/>
-
-                                                        <DataGridTextColumn Header="Array Name"
-                                                                            Width="*"
-                                                                            Binding="{Binding ArrayName}"/>
-
-                                                    </DataGrid.Columns>
-
-                                                </DataGrid>
-
-                                                <!-- #endregion -->
-
+                                                <GroupBox Grid.Row="2"
+                                                          Header="Committed Arrays"
+                                                          Padding="10">
+                                                    <Grid>
+                                                        <Grid.RowDefinitions>
+                                                            <RowDefinition Height="Auto"/>
+                                                            <RowDefinition Height="8"/>
+                                                            <RowDefinition Height="*"/>
+                                                        </Grid.RowDefinitions>
+                                                        <TextBlock Grid.Row="0"
+                                                                   VerticalAlignment="Center"
+                                                                   Text="Select a committed array to view its definition."/>
+                                                        <DataGrid x:Name="dgCommittedPrismArrays"
+                                                                  Grid.Row="2"
+                                                                  AutoGenerateColumns="False"
+                                                                  CanUserAddRows="False"
+                                                                  CanUserDeleteRows="False"
+                                                                  CanUserReorderColumns="False"
+                                                                  CanUserResizeRows="False"
+                                                                  IsReadOnly="False"
+                                                                  SelectionMode="Single"
+                                                                  SelectionUnit="FullRow"
+                                                                  HeadersVisibility="Column"
+                                                                  GridLinesVisibility="Horizontal"
+                                                                  HorizontalGridLinesBrush="LightGray"
+                                                                  SelectionChanged="dgCommittedPrismArrays_SelectionChanged">
+                                                            <DataGrid.Columns>
+                                                                <DataGridCheckBoxColumn Header="Included" Width="75" Binding="{Binding IsIncluded, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                                                                    <DataGridCheckBoxColumn.ElementStyle>
+                                                                        <Style TargetType="CheckBox">
+                                                                            <Setter Property="HorizontalAlignment" Value="Center"/>
+                                                                            <EventSetter Event="Click" Handler="PrismArrayIncludedCheckBox_Click"/>
+                                                                        </Style>
+                                                                    </DataGridCheckBoxColumn.ElementStyle>
+                                                                </DataGridCheckBoxColumn>
+                                                                <DataGridTextColumn Header="Array ID" Width="75" IsReadOnly="True" Binding="{Binding Array_ID}"/>
+                                                                <DataGridTextColumn Header="Type" Width="150" IsReadOnly="True" Binding="{Binding ArrayTypeName}"/>
+                                                                <DataGridTextColumn Header="Array Name" Width="*" IsReadOnly="True" Binding="{Binding ArrayName}"/>
+                                                            </DataGrid.Columns>
+                                                        </DataGrid>
+                                                    </Grid>
+                                                </GroupBox>
                                             </Grid>
-
-                                        </GroupBox>
-
-                                        <!-- #endregion -->
-
-                                            </Grid>
-
-                                            <!-- #endregion -->
-
                                         </Grid>
-
-                                        <!-- #endregion -->
-
-
-                                        <!-- #region ARRAY STATUS -->
 
                                         <TextBox x:Name="txtPrismArrayStatus"
                                                  Grid.Row="4"
@@ -1104,30 +733,21 @@
                                                  VerticalScrollBarVisibility="Disabled"
                                                  VerticalContentAlignment="Center"
                                                  Text="Select the Arrays tab to load available points."/>
-
-                                        <!-- #endregion -->
-
                                     </Grid>
-
                                 </GroupBox>
-
                             </TabItem>
 
                             <!-- #endregion -->
-
 
                             <!-- #region GEOTECH TAB -->
 
                             <TabItem x:Name="tabGeotech"
                                      Header="Geotech"
                                      IsEnabled="False">
-
                                 <GroupBox Header="Geotechnical Sensor Import"
                                           Margin="8"
                                           Padding="15">
-
                                     <Grid>
-
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto"/>
                                             <RowDefinition Height="10"/>
@@ -1138,11 +758,7 @@
                                             <RowDefinition Height="Auto"/>
                                         </Grid.RowDefinitions>
 
-
-                                        <!-- #region CSV FILE SELECTION -->
-
                                         <Grid Grid.Row="0">
-
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="95"/>
                                                 <ColumnDefinition Width="*"/>
@@ -1151,65 +767,44 @@
                                                 <ColumnDefinition Width="10"/>
                                                 <ColumnDefinition Width="90"/>
                                             </Grid.ColumnDefinitions>
-
                                             <TextBlock Grid.Column="0"
                                                        VerticalAlignment="Center"
                                                        Text="Source CSV:"/>
-
                                             <TextBox x:Name="txtGeotechCsvPath"
                                                      Grid.Column="1"
                                                      Height="28"
                                                      IsReadOnly="True"
                                                      VerticalContentAlignment="Center"/>
-
                                             <Button x:Name="btnSelectGeotechCsv"
                                                     Grid.Column="3"
                                                     Height="30"
                                                     Content="Select CSV"
                                                     Click="btnSelectGeotechCsv_Click"/>
-
                                             <Button x:Name="btnClearGeotechImport"
                                                     Grid.Column="5"
                                                     Height="30"
                                                     Content="Clear"
                                                     Click="btnClearGeotechImport_Click"/>
-
                                         </Grid>
 
-                                        <!-- #endregion -->
-
-
-                                        <!-- #region CSV COLUMN ORDER -->
-
                                         <Grid Grid.Row="2">
-
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="95"/>
                                                 <ColumnDefinition Width="500"/>
                                                 <ColumnDefinition Width="*"/>
                                             </Grid.ColumnDefinitions>
-
                                             <TextBlock Grid.Column="0"
                                                        VerticalAlignment="Center"
                                                        Text="Column order:"/>
-
                                             <ComboBox x:Name="cmbGeotechCsvColumnOrder"
                                                       Grid.Column="1"
                                                       Height="28"
                                                       SelectedIndex="0"
                                                       IsEnabled="False"
                                                       VerticalContentAlignment="Center">
-
                                                 <ComboBoxItem Content="Sensor Name, E, N, Ht, Replacement Name, Sensor Type"/>
-
                                             </ComboBox>
-
                                         </Grid>
-
-                                        <!-- #endregion -->
-
-
-                                        <!-- #region IMPORT PREVIEW DATAGRID -->
 
                                         <DataGrid x:Name="dgGeotechSensorImport"
                                                   Grid.Row="4"
@@ -1225,58 +820,24 @@
                                                   GridLinesVisibility="Horizontal"
                                                   HorizontalGridLinesBrush="LightGray"
                                                   SelectionChanged="dgGeotechSensorImport_SelectionChanged">
-
                                             <DataGrid.Columns>
-
-                                                <DataGridTextColumn Header="Row"
-                                                                    Width="50"
-                                                                    Binding="{Binding SourceRow}"/>
-
-                                                <DataGridTextColumn Header="Sensor Name"
-                                                                    Width="115"
-                                                                    Binding="{Binding SensorName}"/>
-
-                                                <DataGridTextColumn Header="Replacement Name"
-                                                                    Width="125"
-                                                                    Binding="{Binding ReplacementName}"/>
-
-                                                <DataGridTextColumn Header="Sensor Type"
-                                                                    Width="90"
-                                                                    Binding="{Binding SensorType}"/>
-
-                                                <DataGridTextColumn Header="E"
-                                                                    Width="90"
-                                                                    Binding="{Binding EastingText}"/>
-
-                                                <DataGridTextColumn Header="N"
-                                                                    Width="90"
-                                                                    Binding="{Binding NorthingText}"/>
-
-                                                <DataGridTextColumn Header="Ht"
-                                                                    Width="80"
-                                                                    Binding="{Binding HeightText}"/>
-
-                                                <DataGridTextColumn Header="Validation"
-                                                                    Width="*"
-                                                                    Binding="{Binding ValidationStatus}"/>
-
+                                                <DataGridTextColumn Header="Row" Width="50" Binding="{Binding SourceRow}"/>
+                                                <DataGridTextColumn Header="Sensor Name" Width="115" Binding="{Binding SensorName}"/>
+                                                <DataGridTextColumn Header="Replacement Name" Width="125" Binding="{Binding ReplacementName}"/>
+                                                <DataGridTextColumn Header="Sensor Type" Width="90" Binding="{Binding SensorType}"/>
+                                                <DataGridTextColumn Header="E" Width="90" Binding="{Binding EastingText}"/>
+                                                <DataGridTextColumn Header="N" Width="90" Binding="{Binding NorthingText}"/>
+                                                <DataGridTextColumn Header="Ht" Width="80" Binding="{Binding HeightText}"/>
+                                                <DataGridTextColumn Header="Validation" Width="*" Binding="{Binding ValidationStatus}"/>
                                             </DataGrid.Columns>
-
                                         </DataGrid>
 
-                                        <!-- #endregion -->
-
-
-                                        <!-- #region IMPORT STATUS AND COMMIT -->
-
                                         <Grid Grid.Row="6">
-
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="20"/>
                                                 <ColumnDefinition Width="130"/>
                                             </Grid.ColumnDefinitions>
-
                                             <TextBox x:Name="txtGeotechImportStatus"
                                                      Grid.Column="0"
                                                      Height="42"
@@ -1286,31 +847,21 @@
                                                      VerticalScrollBarVisibility="Disabled"
                                                      VerticalContentAlignment="Center"
                                                      Text="No CSV selected."/>
-
                                             <Button x:Name="btnCommitGeotechImport"
                                                     Grid.Column="2"
                                                     Height="30"
                                                     Content="Commit Import"
                                                     IsEnabled="False"
                                                     Click="btnCommitGeotechImport_Click"/>
-
                                         </Grid>
-
-                                        <!-- #endregion -->
-
                                     </Grid>
-
                                 </GroupBox>
-
                             </TabItem>
 
                             <!-- #endregion -->
-
-
                         </TabControl>
 
                         <!-- #endregion -->
-
 
                         <!-- #region PROJECT MANAGEMENT OVERLAY -->
 
@@ -1325,11 +876,7 @@
                                 CornerRadius="4"
                                 Visibility="Collapsed"
                                 Panel.ZIndex="100">
-
                             <Grid>
-
-                                <!-- #region PROJECT MANAGEMENT LAYOUT -->
-
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto"/>
                                     <RowDefinition Height="20"/>
@@ -1340,40 +887,30 @@
                                     <RowDefinition Height="Auto"/>
                                 </Grid.RowDefinitions>
 
-                                <!-- #endregion -->
-
-
-                                <!-- #region PROJECT MANAGEMENT HEADER -->
-
                                 <Grid Grid.Row="0">
-
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-
                                     <TextBlock Grid.Column="0"
                                                VerticalAlignment="Center"
                                                FontSize="16"
                                                FontWeight="Bold"
                                                Text="Project Management"/>
-
                                     <Button x:Name="btnCloseProjectManagement"
                                             Grid.Column="1"
                                             Width="80"
                                             Height="28"
                                             Content="Close"
                                             Click="btnCloseProjectManagement_Click"/>
-
                                 </Grid>
 
-                                <!-- #endregion -->
-
-
-                                <!-- #region ADD PROJECT -->
-
                                 <Grid Grid.Row="2">
-
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="10"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="120"/>
                                         <ColumnDefinition Width="260"/>
@@ -1385,42 +922,41 @@
                                         <ColumnDefinition Width="130"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
-
-                                    <TextBlock Grid.Column="0"
+                                    <TextBlock Grid.Row="0" Grid.Column="0"
                                                VerticalAlignment="Center"
                                                Text="New project:"/>
-
-                                    <TextBox x:Name="txtNewProjectName"
+                                    <TextBox x:Name="txtNewProjectName" Grid.Row="0"
                                              Grid.Column="1"
                                              Height="28"
                                              MaxLength="200"
-                                             VerticalContentAlignment="Center"/>
-
-                                    <DatePicker x:Name="dpProjectStartDate"
+                                             VerticalContentAlignment="Center"
+                                             TextChanged="ProjectRequiredField_Changed"/>
+                                    <DatePicker x:Name="dpProjectStartDate" Grid.Row="0"
                                                 Grid.Column="3"
                                                 Height="28"
                                                 SelectedDateFormat="Short"
                                                 VerticalContentAlignment="Center"
+                                                SelectedDateChanged="ProjectRequiredField_Changed"
                                                 CalendarClosed="dpProjectStartDate_CalendarClosed"/>
-
-                                    <Button x:Name="btnProjectStartCalendar"
+                                    <Button x:Name="btnProjectStartCalendar" Grid.Row="0"
                                             Grid.Column="5"
                                             Height="30"
                                             Content="Project Start"
                                             Click="btnProjectStartCalendar_Click"/>
-
-                                    <Button x:Name="btnAddProject"
+                                    <Button x:Name="btnAddProject" Grid.Row="0"
                                             Grid.Column="7"
+                                            Width="117"
                                             Height="30"
+                                            IsEnabled="False"
                                             Content="Add Project"
                                             Click="btnAddProject_Click"/>
 
+                                    <TextBlock Grid.Row="2" Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Project time zone:"/>
+                                    <ComboBox x:Name="cmbProjectTimeZone" Grid.Row="2" Grid.Column="1" Height="28" DisplayMemberPath="DisplayName" SelectedValuePath="Id" SelectionChanged="ProjectRequiredField_Changed"/>
+                                    <Button x:Name="btnSelectProjectOutputPath" Grid.Row="2" Grid.Column="3" Height="30" Content="Output Path..." Click="btnSelectProjectOutputPath_Click"/>
+                                    <TextBox x:Name="txtProjectOutputPath" Grid.Row="2" Grid.Column="4" Grid.ColumnSpan="4" Width="199" Height="28" HorizontalAlignment="Left" MaxLength="1000" IsReadOnly="True" VerticalContentAlignment="Center" TextChanged="ProjectRequiredField_Changed"/>
+                                    <Button x:Name="btnSaveProjectSettings" Grid.Row="2" Grid.Column="8" Width="110" Height="30" Margin="8,0,0,0" HorizontalAlignment="Left" Content="Save Settings" Click="btnSaveProjectSettings_Click"/>
                                 </Grid>
-
-                                <!-- #endregion -->
-
-
-                                <!-- #region PROJECT DATAGRID -->
 
                                 <DataGrid x:Name="dgProjects"
                                           Grid.Row="4"
@@ -1435,291 +971,215 @@
                                           GridLinesVisibility="Horizontal"
                                           SelectionChanged="dgProjects_SelectionChanged"
                                           MaxHeight="420">
-
                                     <DataGrid.Columns>
-
-                                        <!-- #region HIDDEN PROJECT ID -->
-
                                         <DataGridTextColumn Header="Project ID"
                                                             Binding="{Binding Project_ID}"
                                                             Visibility="Collapsed"
                                                             IsReadOnly="True"/>
-
-                                        <!-- #endregion -->
-
-
-                                        <!-- #region ACTIVE PROJECT -->
-
-                                        <DataGridTemplateColumn Header="Active"
-                                                                Width="80">
-
+                                        <DataGridTemplateColumn Header="Active" Width="80">
                                             <DataGridTemplateColumn.CellTemplate>
-
                                                 <DataTemplate>
-
                                                     <RadioButton HorizontalAlignment="Center"
                                                                  VerticalAlignment="Center"
                                                                  GroupName="ActiveProject"
-                                                                 IsChecked="{Binding IsActive,
-                                                                                     Mode=TwoWay,
-                                                                                     UpdateSourceTrigger=PropertyChanged}"
+                                                                 IsChecked="{Binding IsActive, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                                  Click="ActiveProjectRadioButton_Click">
-
                                                         <RadioButton.Style>
-
                                                             <Style TargetType="RadioButton">
-
-                                                                <Setter Property="IsEnabled"
-                                                                        Value="True"/>
-
+                                                                <Setter Property="IsEnabled" Value="True"/>
                                                                 <Style.Triggers>
-
-                                                                    <DataTrigger Binding="{Binding IsDeleted}"
-                                                                                 Value="True">
-
-                                                                        <Setter Property="IsEnabled"
-                                                                                Value="False"/>
-
+                                                                    <DataTrigger Binding="{Binding IsDeleted}" Value="True">
+                                                                        <Setter Property="IsEnabled" Value="False"/>
                                                                     </DataTrigger>
-
                                                                 </Style.Triggers>
-
                                                             </Style>
-
                                                         </RadioButton.Style>
-
                                                     </RadioButton>
-
                                                 </DataTemplate>
-
                                             </DataGridTemplateColumn.CellTemplate>
-
                                         </DataGridTemplateColumn>
-
-                                        <!-- #endregion -->
-
-
-                                        <!-- #region PROJECT NAME -->
-
                                         <DataGridTextColumn Header="Project Name"
                                                             Width="*"
-                                                            Binding="{Binding ProjectName,
-                                                                              Mode=TwoWay,
-                                                                              UpdateSourceTrigger=LostFocus}">
-
+                                                            Binding="{Binding ProjectName, Mode=TwoWay, UpdateSourceTrigger=LostFocus}">
                                             <DataGridTextColumn.EditingElementStyle>
-
                                                 <Style TargetType="TextBox">
-
-                                                    <EventSetter Event="LostFocus"
-                                                                 Handler="ProjectNameTextBox_LostFocus"/>
-
+                                                    <EventSetter Event="LostFocus" Handler="ProjectNameTextBox_LostFocus"/>
                                                 </Style>
-
                                             </DataGridTextColumn.EditingElementStyle>
-
                                         </DataGridTextColumn>
-
-                                        <!-- #endregion -->
-
-
-                                        <!-- #region PROJECT START DATE -->
-
                                         <DataGridTemplateColumn Header="Project Start Date"
                                                                 Width="145"
                                                                 IsReadOnly="True">
-
                                             <DataGridTemplateColumn.CellTemplate>
-
                                                 <DataTemplate>
-
                                                     <TextBlock Loaded="ProjectStartDateTextBlock_Loaded"
                                                                HorizontalAlignment="Center"
                                                                VerticalAlignment="Center"/>
-
                                                 </DataTemplate>
-
                                             </DataGridTemplateColumn.CellTemplate>
-
                                         </DataGridTemplateColumn>
-
-                                        <!-- #endregion -->
-
-
-                                        <!-- #region DELETED PROJECT -->
-
-                                        <DataGridTemplateColumn Header="Deleted"
-                                                                Width="90">
-
+                                        <DataGridTemplateColumn Header="Deleted" Width="90">
                                             <DataGridTemplateColumn.CellTemplate>
-
                                                 <DataTemplate>
-
                                                     <CheckBox HorizontalAlignment="Center"
                                                               VerticalAlignment="Center"
-                                                              IsChecked="{Binding IsDeleted,
-                                                                                  Mode=TwoWay,
-                                                                                  UpdateSourceTrigger=PropertyChanged}"
+                                                              IsChecked="{Binding IsDeleted, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                               Click="DeletedProjectCheckBox_Click">
-
                                                         <CheckBox.Style>
-
                                                             <Style TargetType="CheckBox">
-
-                                                                <Setter Property="IsEnabled"
-                                                                        Value="True"/>
-
+                                                                <Setter Property="IsEnabled" Value="True"/>
                                                                 <Style.Triggers>
-
-                                                                    <DataTrigger Binding="{Binding IsActive}"
-                                                                                 Value="True">
-
-                                                                        <Setter Property="IsEnabled"
-                                                                                Value="False"/>
-
+                                                                    <DataTrigger Binding="{Binding IsActive}" Value="True">
+                                                                        <Setter Property="IsEnabled" Value="False"/>
                                                                     </DataTrigger>
-
                                                                 </Style.Triggers>
-
                                                             </Style>
-
                                                         </CheckBox.Style>
-
                                                     </CheckBox>
-
                                                 </DataTemplate>
-
                                             </DataGridTemplateColumn.CellTemplate>
-
                                         </DataGridTemplateColumn>
-
-                                        <!-- #endregion -->
-
                                     </DataGrid.Columns>
-
                                 </DataGrid>
 
-                                <!-- #endregion -->
-
-
-                                <!-- #region PROJECT MANAGEMENT STATUS -->
-
                                 <Grid Grid.Row="6">
-
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-
                                     <TextBlock x:Name="txtProjectManagementStatus"
                                                Grid.Column="0"
                                                VerticalAlignment="Center"/>
-
                                     <TextBlock Grid.Column="1"
                                                VerticalAlignment="Center"
                                                Foreground="DimGray"
                                                Text="Changes are saved after validation."/>
-
                                 </Grid>
-
-                                <!-- #endregion -->
-
                             </Grid>
-
                         </Border>
 
                         <!-- #endregion -->
-
                     </Grid>
-
                 </TabItem>
 
                 <!-- #endregion -->
 
-
-                <!-- #region CHART TAB -->
+                <!-- #region CHARTS TAB -->
 
                 <TabItem x:Name="tabCharts"
                          Header="Charts"
                          IsEnabled="False">
-
                     <Grid Margin="20">
-
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="12"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
 
-                        <!-- #region CHART COMMAND BAR -->
+                        <!-- #region CHART MANAGEMENT -->
 
                         <GroupBox Grid.Row="0"
                                   Header="Chart Management"
-                                  Padding="12">
-
+                                  Padding="10">
                             <Grid>
-
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="6"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="8"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="120"/>
-                                    <ColumnDefinition Width="255"/>
-                                    <ColumnDefinition Width="12"/>
-                                    <ColumnDefinition Width="80"/>
-                                    <ColumnDefinition Width="80"/>
-                                    <ColumnDefinition Width="80"/>
-                                    <ColumnDefinition Width="80"/>
-                                    <ColumnDefinition Width="95"/>
+                                    <ColumnDefinition Width="105"/>
+                                    <ColumnDefinition Width="245"/>
+                                    <ColumnDefinition Width="10"/>
+                                    <ColumnDefinition Width="105"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
 
-                                <TextBlock Grid.Column="0"
+                                <TextBlock Grid.Row="0"
+                                           Grid.Column="0"
+                                           Margin="0,0,8,0"
+                                           HorizontalAlignment="Right"
                                            VerticalAlignment="Center"
-                                           Text="Existing charts:"/>
-
-                                <ComboBox x:Name="cmbExistingChart"
+                                           Text="Templates:"/>
+                                <ComboBox x:Name="cmbChartTemplate"
+                                          Grid.Row="0"
                                           Grid.Column="1"
                                           Height="28"
                                           DisplayMemberPath="DisplayText"/>
-
-                                <Button x:Name="btnChartNew"
+                                <Button x:Name="btnLoadChartTemplate"
+                                        Grid.Row="0"
                                         Grid.Column="3"
                                         Height="30"
-                                        Content="New"
-                                        Click="btnChartNew_Click"/>
-
-                                <Button x:Name="btnChartLoad"
+                                        Content="Load Template"
+                                        Click="btnLoadChartTemplate_Click"/>
+                                <Button x:Name="btnChartPreviewCanvas"
+                                        Grid.Row="0"
                                         Grid.Column="4"
+                                        Width="105"
                                         Height="30"
-                                        Margin="6,0,0,0"
-                                        Content="Load"
+                                        Margin="10,0,0,0"
+                                        HorizontalAlignment="Left"
+                                        Content="Preview Canvas"
+                                        Click="btnChartPreview_Click"/>
+
+                                <TextBlock Grid.Row="2"
+                                           Grid.Column="0"
+                                           Margin="0,0,8,0"
+                                           HorizontalAlignment="Right"
+                                           VerticalAlignment="Center"
+                                           Text="Existing charts:"/>
+                                <ComboBox x:Name="cmbExistingChart"
+                                          Grid.Row="2"
+                                          Grid.Column="1"
+                                          Height="28"
+                                          DisplayMemberPath="DisplayText"/>
+                                <Button x:Name="btnChartLoad"
+                                        Grid.Row="2"
+                                        Grid.Column="3"
+                                        Height="30"
+                                        Content="Load Chart"
                                         Click="btnChartLoad_Click"/>
 
-                                <Button x:Name="btnChartCopy"
-                                        Grid.Column="5"
-                                        Height="30"
-                                        Margin="6,0,0,0"
-                                        Content="Copy"
-                                        Click="btnChartCopy_Click"/>
-
-                                <Button x:Name="btnChartDelete"
-                                        Grid.Column="6"
-                                        Height="30"
-                                        Margin="6,0,0,0"
-                                        Content="Delete"
-                                        Click="btnChartDelete_Click"/>
-
-                                <Button x:Name="btnChartCommit"
-                                        Grid.Column="7"
-                                        Height="30"
-                                        Margin="6,0,0,0"
-                                        Content="Commit"
-                                        Click="btnChartCommit_Click"/>
-
+                                <WrapPanel Grid.Row="4"
+                                           Grid.Column="1"
+                                           Grid.ColumnSpan="4"
+                                           HorizontalAlignment="Left">
+                                    <Button x:Name="btnChartNew"
+                                            Width="82"
+                                            Height="30"
+                                            Content="New chart"
+                                            Click="btnChartNew_Click"/>
+                                    <Button x:Name="btnChartCopy"
+                                            Width="70"
+                                            Height="30"
+                                            Margin="6,0,0,0"
+                                            Content="Copy"
+                                            Click="btnChartCopy_Click"/>
+                                    <Button x:Name="btnChartDelete"
+                                            Width="70"
+                                            Height="30"
+                                            Margin="6,0,0,0"
+                                            Content="Delete"
+                                            Click="btnChartDelete_Click"/>
+                                    <Button x:Name="btnSaveChartTemplate"
+                                            Width="105"
+                                            Height="30"
+                                            Margin="6,0,0,0"
+                                            Content="Save Template"
+                                            Click="btnSaveChartTemplate_Click"/>
+                                    <Button x:Name="btnChartCommit"
+                                            Width="90"
+                                            Height="30"
+                                            Margin="6,0,0,0"
+                                            Content="Save Chart"
+                                            Click="btnChartCommit_Click"/>
+                                </WrapPanel>
                             </Grid>
-
                         </GroupBox>
 
                         <!-- #endregion -->
-
 
                         <!-- #region CHART CONFIGURATION TABS -->
 
@@ -1731,10 +1191,14 @@
                             <TabItem Header="Definition">
                                 <Grid Margin="12">
                                     <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto"/><RowDefinition Height="12"/>
-                                        <RowDefinition Height="Auto"/><RowDefinition Height="12"/>
-                                        <RowDefinition Height="Auto"/><RowDefinition Height="12"/>
-                                        <RowDefinition Height="Auto"/><RowDefinition Height="*"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="12"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="12"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="12"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="*"/>
                                     </Grid.RowDefinitions>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="150"/>
@@ -1745,38 +1209,30 @@
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
 
-                                    <TextBlock Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Text="Chart number:"/>
-                                    <TextBox x:Name="txtChartNumber" Grid.Row="0" Grid.Column="1" Width="120" Height="28"
-                                             HorizontalAlignment="Left" IsReadOnly="True" VerticalContentAlignment="Center" Text="New"/>
+                                    <TextBlock Grid.Row="0" Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Chart number:"/>
+                                    <TextBox x:Name="txtChartNumber" Grid.Row="0" Grid.Column="1" Width="120" Height="28" HorizontalAlignment="Left" IsReadOnly="True" VerticalContentAlignment="Center" Text="New"/>
 
-                                    <TextBlock Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Text="Chart name:"/>
-                                    <TextBox x:Name="txtChartName" Grid.Row="2" Grid.Column="1" Height="28"
-                                             MaxLength="200" VerticalContentAlignment="Center"/>
+                                    <TextBlock Grid.Row="2" Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Chart name:"/>
+                                    <TextBox x:Name="txtChartName" Grid.Row="2" Grid.Column="1" Height="28" MaxLength="200" VerticalContentAlignment="Center"/>
 
-                                    <TextBlock Grid.Row="4" Grid.Column="0" VerticalAlignment="Center" Text="Chart type:"/>
-                                    <ComboBox x:Name="cmbChartType" Grid.Row="4" Grid.Column="1" Height="28"
-                                              DisplayMemberPath="DisplayName"
-                                              SelectionChanged="cmbChartType_SelectionChanged"/>
+                                    <TextBlock Grid.Row="4" Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Chart type:"/>
+                                    <ComboBox x:Name="cmbChartType" Grid.Row="4" Grid.Column="1" Height="28" DisplayMemberPath="DisplayName" SelectionChanged="cmbChartType_SelectionChanged"/>
 
-                                    <TextBlock Grid.Row="6" Grid.Column="0" VerticalAlignment="Center" Text="Source:"/>
-                                    <TextBox x:Name="txtChartDataSource" Grid.Row="6" Grid.Column="1" Height="28"
-                                             IsReadOnly="True" VerticalContentAlignment="Center"/>
+                                    <TextBlock Grid.Row="6" Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Source:"/>
+                                    <TextBox x:Name="txtChartDataSource" Grid.Row="6" Grid.Column="1" Height="28" IsReadOnly="True" VerticalContentAlignment="Center"/>
 
-                                    <TextBlock Grid.Row="6" Grid.Column="3" VerticalAlignment="Center" Text="Unit:"/>
-                                    <TextBox x:Name="txtChartUnit" Grid.Row="6" Grid.Column="4" Width="112" Height="28"
-                                             HorizontalAlignment="Left" IsReadOnly="True" VerticalContentAlignment="Center"/>
+                                    <TextBlock Grid.Row="6" Grid.Column="3" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Unit:"/>
+                                    <TextBox x:Name="txtChartUnit" Grid.Row="6" Grid.Column="4" Width="112" Height="28" HorizontalAlignment="Left" IsReadOnly="True" VerticalContentAlignment="Center"/>
+
                                 </Grid>
-</TabItem>
+                            </TabItem>
 
                             <!-- #endregion -->
-
 
                             <!-- #region SERIES -->
 
                             <TabItem Header="Series">
-
                                 <Grid Margin="12">
-
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto"/>
                                         <RowDefinition Height="10"/>
@@ -1786,7 +1242,6 @@
                                     </Grid.RowDefinitions>
 
                                     <Grid Grid.Row="0">
-
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="140"/>
                                             <ColumnDefinition Width="300"/>
@@ -1796,22 +1251,10 @@
                                             <ColumnDefinition Width="*"/>
                                         </Grid.ColumnDefinitions>
 
-                                        <TextBlock Grid.Column="0"
-                                                   VerticalAlignment="Center"
-                                                   Text="Entity:"/>
-
-                                        <ComboBox x:Name="cmbChartSeriesEntity"
-                                                  Grid.Column="1"
-                                                  Height="28"/>
-
-                                        <TextBlock Grid.Column="3"
-                                                   VerticalAlignment="Center"
-                                                   Text="Data element:"/>
-
-                                        <ComboBox x:Name="cmbChartDataElement"
-                                                  Grid.Column="4"
-                                                  Height="28"/>
-
+                                        <TextBlock Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Entity:"/>
+                                        <ComboBox x:Name="cmbChartSeriesEntity" Grid.Column="1" Height="28"/>
+                                        <TextBlock Grid.Column="3" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Data element:"/>
+                                        <ComboBox x:Name="cmbChartDataElement" Grid.Column="4" Height="28"/>
                                     </Grid>
 
                                     <DataGrid x:Name="dgChartSeries"
@@ -1820,7 +1263,6 @@
                                               CanUserAddRows="False"
                                               CanUserDeleteRows="False"
                                               HeadersVisibility="Column">
-
                                         <DataGrid.Columns>
                                             <DataGridTextColumn Header="Order" Width="70" Binding="{Binding DisplayOrder}"/>
                                             <DataGridTextColumn Header="Entity" Width="220" Binding="{Binding EntityDisplayName}"/>
@@ -1830,60 +1272,35 @@
                                             <DataGridTextColumn Header="Line" Width="80" Binding="{Binding LineWidth}"/>
                                             <DataGridTextColumn Header="Marker" Width="80" Binding="{Binding MarkerSize}"/>
                                         </DataGrid.Columns>
-
                                     </DataGrid>
 
-                                    <StackPanel Grid.Row="4"
-                                                Orientation="Horizontal"
-                                                HorizontalAlignment="Right">
-
-                                        <Button x:Name="btnChartAddSeries"
-                                                Width="100"
-                                                Height="30"
-                                                Content="Add Series"
-                                                Click="btnChartAddSeries_Click"/>
-
-                                        <Button x:Name="btnChartRemoveSeries"
-                                                Width="110"
-                                                Height="30"
-                                                Margin="8,0,0,0"
-                                                Content="Remove Series"
-                                                Click="btnChartRemoveSeries_Click"/>
-
-                                        <Button x:Name="btnChartSeriesUp"
-                                                Width="90"
-                                                Height="30"
-                                                Margin="8,0,0,0"
-                                                Content="Move Up"
-                                                Click="btnChartSeriesUp_Click"/>
-
-                                        <Button x:Name="btnChartSeriesDown"
-                                                Width="90"
-                                                Height="30"
-                                                Margin="8,0,0,0"
-                                                Content="Move Down"
-                                                Click="btnChartSeriesDown_Click"/>
-
+                                    <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
+                                        <Button x:Name="btnChartAddSeries" Width="100" Height="30" Content="Add Series" Click="btnChartAddSeries_Click"/>
+                                        <Button x:Name="btnChartRemoveSeries" Width="110" Height="30" Margin="8,0,0,0" Content="Remove Series" Click="btnChartRemoveSeries_Click"/>
+                                        <Button x:Name="btnChartSeriesUp" Width="90" Height="30" Margin="8,0,0,0" Content="Move Up" Click="btnChartSeriesUp_Click"/>
+                                        <Button x:Name="btnChartSeriesDown" Width="90" Height="30" Margin="8,0,0,0" Content="Move Down" Click="btnChartSeriesDown_Click"/>
                                     </StackPanel>
-
                                 </Grid>
-
                             </TabItem>
 
                             <!-- #endregion -->
 
-
                             <!-- #region TIME AND REFERENCE -->
 
-                            <TabItem Header="Time &amp; Reference">
+                            <TabItem Header="Time Basis">
                                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                                     <Grid Margin="12">
-                                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-                                        <GroupBox Grid.Row="0" Header="Chart Dates" Padding="12">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="*"/>
+                                        </Grid.RowDefinitions>
+                                        <GroupBox Grid.Row="0" Header="Report-Resolved Time Basis" Padding="12">
                                             <Grid>
                                                 <Grid.RowDefinitions>
-                                                    <RowDefinition Height="Auto"/><RowDefinition Height="12"/>
-                                                    <RowDefinition Height="Auto"/><RowDefinition Height="12"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="12"/>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="12"/>
                                                     <RowDefinition Height="Auto"/>
                                                 </Grid.RowDefinitions>
                                                 <Grid.ColumnDefinitions>
@@ -1895,50 +1312,39 @@
                                                     <ColumnDefinition Width="*"/>
                                                 </Grid.ColumnDefinitions>
 
-                                                <TextBlock Grid.Row="0"
-                                                           Grid.Column="0"
-                                                           VerticalAlignment="Center"
-                                                           Text="Report start date:"/>
+                                                <TextBlock Grid.Row="0" Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Start date basis:"/>
+                                                <StackPanel Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3" Orientation="Horizontal">
+                                                    <RadioButton x:Name="rbChartReportStart" GroupName="ChartStartDateBasis" Content="Report Start" IsChecked="True" Checked="ChartStartDateBasis_Checked"/>
+                                                    <RadioButton x:Name="rbChartProjectStart" Margin="24,0,0,0" GroupName="ChartStartDateBasis" Content="Project Start" Checked="ChartStartDateBasis_Checked"/>
+                                                </StackPanel>
 
-                                                <DatePicker x:Name="dpChartStartDate" Grid.Row="0" Grid.Column="1"
-                                                            Height="28" SelectedDateFormat="Short"/>
-                                                <Button x:Name="btnChartProjectStart" Grid.Row="0" Grid.Column="3"
-                                                        Height="30" Content="Project start date"
-                                                        Click="btnChartProjectStart_Click"/>
-
-                                                <TextBlock Grid.Row="2"
-                                                           Grid.Column="0"
-                                                           VerticalAlignment="Center"
-                                                           Text="Report end date:"/>
-
-                                                <DatePicker x:Name="dpChartEndDate" Grid.Row="2" Grid.Column="1"
-                                                            Height="28" SelectedDateFormat="Short"/>
-                                                <Button x:Name="btnChartUseNow" Grid.Row="2" Grid.Column="3"
-                                                        Height="30" Content="Now"
-                                                        Click="btnChartUseNow_Click"/>
-
-                                                <TextBlock Grid.Row="4" Grid.Column="0" VerticalAlignment="Center"
-                                                           Text="Report Duration (days):"/>
-                                                <TextBox x:Name="txtChartRecentDays" Grid.Row="4" Grid.Column="1"
-                                                         Width="80" Height="28" HorizontalAlignment="Left"
-                                                         VerticalContentAlignment="Center" Text="14"/>
-                                                <Button x:Name="btnChartRecentPeriod" Grid.Row="4" Grid.Column="3"
-                                                        Height="30" Content="Update Start"
-                                                        Click="btnChartRecentPeriod_Click"/>
+                                                <!-- Legacy date controls are retained only to preserve binary compatibility during schema migration. -->
+                                                <StackPanel Visibility="Collapsed">
+                                                    <TextBox x:Name="txtChartStartDateBasis" Text="Report Start"/>
+                                                    <ComboBox x:Name="cmbChartStartDateMode" SelectionChanged="cmbChartStartDateMode_SelectionChanged">
+                                                        <ComboBoxItem Content="Report Start" Tag="ReportStart" IsSelected="True"/>
+                                                        <ComboBoxItem Content="Project Start" Tag="ProjectStart"/>
+                                                    </ComboBox>
+                                                    <TextBox x:Name="txtChartProjectTimeZone" Text="Not configured"/>
+                                                    <DatePicker x:Name="dpChartStartDate" SelectedDateFormat="Short"/>
+                                                    <DatePicker x:Name="dpChartEndDate" SelectedDateFormat="Short"/>
+                                                    <TextBox x:Name="txtChartRecentDays" Text="14"/>
+                                                    <Button x:Name="btnChartProjectStart" Click="btnChartProjectStart_Click"/>
+                                                    <Button x:Name="btnChartUseNow" Click="btnChartUseNow_Click"/>
+                                                    <Button x:Name="btnChartRecentPeriod" Click="btnChartRecentPeriod_Click"/>
+                                                </StackPanel>
                                             </Grid>
                                         </GroupBox>
                                     </Grid>
                                 </ScrollViewer>
-</TabItem>
+                            </TabItem>
 
                             <!-- #endregion -->
-
 
                             <!-- #region TRIGGER BANDS -->
 
                             <TabItem Header="Trigger Bands">
                                 <Grid Margin="12">
-
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto"/>
                                         <RowDefinition Height="10"/>
@@ -1951,7 +1357,6 @@
                                         <RowDefinition Height="Auto"/>
                                         <RowDefinition Height="*"/>
                                     </Grid.RowDefinitions>
-
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="145"/>
                                         <ColumnDefinition Width="100"/>
@@ -1959,86 +1364,48 @@
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
 
-                                    <TextBlock Grid.Row="0" Grid.Column="0"
-                                               VerticalAlignment="Center"
-                                               Text="Green trigger:"/>
+                                    <TextBlock Grid.Row="0" Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Green trigger:"/>
+                                    <TextBox x:Name="txtChartGreenTrigger" Grid.Row="0" Grid.Column="1" Height="28" TextAlignment="Center" VerticalContentAlignment="Center" Text="2"/>
 
-                                    <TextBox x:Name="txtChartGreenTrigger"
-                                             Grid.Row="0" Grid.Column="1"
-                                             Height="28"
-                                             VerticalContentAlignment="Center"
-                                             Text="2"/>
+                                    <TextBlock Grid.Row="2" Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Amber trigger:"/>
+                                    <TextBox x:Name="txtChartAmberTrigger" Grid.Row="2" Grid.Column="1" Height="28" TextAlignment="Center" VerticalContentAlignment="Center" Text="4"/>
 
-                                    <TextBlock Grid.Row="2" Grid.Column="0"
-                                               VerticalAlignment="Center"
-                                               Text="Amber trigger:"/>
+                                    <TextBlock Grid.Row="4" Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Red trigger:"/>
+                                    <TextBox x:Name="txtChartRedTrigger" Grid.Row="4" Grid.Column="1" Height="28" TextAlignment="Center" VerticalContentAlignment="Center" Text="6" LostFocus="txtChartRedTrigger_LostFocus"/>
 
-                                    <TextBox x:Name="txtChartAmberTrigger"
-                                             Grid.Row="2" Grid.Column="1"
-                                             Height="28"
-                                             VerticalContentAlignment="Center"
-                                             Text="5"/>
+                                    <TextBlock Grid.Row="6" Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Current unit:"/>
+                                    <TextBox x:Name="txtChartTriggerUnit" Grid.Row="6" Grid.Column="1" Width="90" Height="28" HorizontalAlignment="Left" IsReadOnly="True" TextAlignment="Center" VerticalContentAlignment="Center"/>
 
-                                    <TextBlock Grid.Row="4" Grid.Column="0"
-                                               VerticalAlignment="Center"
-                                               Text="Red trigger:"/>
-
-                                    <TextBox x:Name="txtChartRedTrigger"
-                                             Grid.Row="4" Grid.Column="1"
-                                             Height="28"
-                                             VerticalContentAlignment="Center"
-                                             Text="10"/>
-
-                                    <TextBlock Grid.Row="6" Grid.Column="0"
-                                               VerticalAlignment="Center"
-                                               Text="Current unit:"/>
-
-                                    <TextBox x:Name="txtChartTriggerUnit"
-                                             Grid.Row="6" Grid.Column="1"
-                                             Width="90"
-                                             Height="28"
-                                             HorizontalAlignment="Left"
-                                             IsReadOnly="True"
-                                             VerticalContentAlignment="Center"/>
-
-                                    <TextBlock Grid.Row="8"
-                                               Grid.Column="0"
-                                               Grid.ColumnSpan="4"
-                                               TextWrapping="Wrap"
-                                               Foreground="DimGray"
-                                               Text="Bands are mirrored about zero:&#x0a;Light Green from 0 to ±Green&#x0a;Light Yellow from ±Green to ±Amber&#x0a;Light Red from ±Amber to ±Red&#x0a;Light Grey from ±Red to the Vertical Axis limits&#x0a;A black zero line is drawn through the central Light Green zone"/>
-
+                                    <StackPanel Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="4">
+                                        <TextBlock Foreground="DimGray" Text="Bands are mirrored about zero:"/>
+                                        <TextBlock Margin="28,3,0,0" Foreground="DimGray" Text="Light Green from 0 to ±Green"/>
+                                        <TextBlock Margin="28,2,0,0" Foreground="DimGray" Text="Light Yellow from ±Green to ±Amber"/>
+                                        <TextBlock Margin="28,2,0,0" Foreground="DimGray" Text="Light Red from ±Amber to ±Red"/>
+                                        <TextBlock Margin="28,2,0,0" Foreground="DimGray" Text="Light Grey from ±Red to the Vertical Axis limits"/>
+                                    </StackPanel>
                                 </Grid>
-</TabItem>
+                            </TabItem>
 
                             <!-- #endregion -->
-
 
                             <!-- #region AXES AND TITLES -->
 
                             <TabItem Header="Axes &amp; Titles">
                                 <ScrollViewer VerticalScrollBarVisibility="Auto">
-
                                     <Grid Margin="12">
-
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto"/>
                                             <RowDefinition Height="14"/>
                                             <RowDefinition Height="Auto"/>
                                         </Grid.RowDefinitions>
 
-                                        <GroupBox Grid.Row="0"
-                                                  Header="Vertical Axis"
-                                                  Padding="12">
-
+                                        <GroupBox Grid.Row="0" Header="Vertical Axis" Padding="12">
                                             <Grid>
-
                                                 <Grid.RowDefinitions>
                                                     <RowDefinition Height="Auto"/>
                                                     <RowDefinition Height="10"/>
                                                     <RowDefinition Height="Auto"/>
                                                 </Grid.RowDefinitions>
-
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="150"/>
                                                     <ColumnDefinition Width="100"/>
@@ -2057,36 +1424,15 @@
                                                           Checked="chkChartAutomaticYAxis_Changed"
                                                           Unchecked="chkChartAutomaticYAxis_Changed"/>
 
-                                                <TextBlock Grid.Row="2" Grid.Column="0"
-                                                           VerticalAlignment="Center"
-                                                           Text="Minimum:"/>
-
-                                                <TextBox x:Name="txtChartYAxisMinimum"
-                                                         Grid.Row="2" Grid.Column="1"
-                                                         Height="28"
-                                                         IsEnabled="False"
-                                                         VerticalContentAlignment="Center"/>
-
-                                                <TextBlock Grid.Row="2" Grid.Column="3"
-                                                           VerticalAlignment="Center"
-                                                           Text="Maximum:"/>
-
-                                                <TextBox x:Name="txtChartYAxisMaximum"
-                                                         Grid.Row="2" Grid.Column="4"
-                                                         Height="28"
-                                                         IsEnabled="False"
-                                                         VerticalContentAlignment="Center"/>
-
+                                                <TextBlock Grid.Row="2" Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Minimum:"/>
+                                                <TextBox x:Name="txtChartYAxisMinimum" Grid.Row="2" Grid.Column="1" Height="28" IsEnabled="False" Tag="SignedDecimal" PreviewTextInput="NumericTextBox_PreviewTextInput" DataObject.Pasting="NumericTextBox_Pasting" VerticalContentAlignment="Center"/>
+                                                <TextBlock Grid.Row="2" Grid.Column="3" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Maximum:"/>
+                                                <TextBox x:Name="txtChartYAxisMaximum" Grid.Row="2" Grid.Column="4" Height="28" IsEnabled="False" Tag="SignedDecimal" PreviewTextInput="NumericTextBox_PreviewTextInput" DataObject.Pasting="NumericTextBox_Pasting" VerticalContentAlignment="Center"/>
                                             </Grid>
-
                                         </GroupBox>
 
-                                        <GroupBox Grid.Row="2"
-                                                  Header="Titles and Legend"
-                                                  Padding="12">
-
+                                        <GroupBox Grid.Row="2" Header="Titles and Legend" Padding="12">
                                             <Grid>
-
                                                 <Grid.RowDefinitions>
                                                     <RowDefinition Height="Auto"/>
                                                     <RowDefinition Height="10"/>
@@ -2094,7 +1440,6 @@
                                                     <RowDefinition Height="10"/>
                                                     <RowDefinition Height="Auto"/>
                                                 </Grid.RowDefinitions>
-
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="120"/>
                                                     <ColumnDefinition Width="240"/>
@@ -2104,33 +1449,14 @@
                                                     <ColumnDefinition Width="*"/>
                                                 </Grid.ColumnDefinitions>
 
-                                                <TextBlock Grid.Row="0" Grid.Column="0"
-                                                           VerticalAlignment="Center"
-                                                           Text="Chart Title:"/>
+                                                <TextBlock Grid.Row="0" Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Chart Title:"/>
+                                                <TextBox x:Name="txtChartTitleOverride" Grid.Row="0" Grid.Column="1" Height="28" VerticalContentAlignment="Center"/>
 
-                                                <TextBox x:Name="txtChartTitleOverride"
-                                                         Grid.Row="0" Grid.Column="1"
-                                                         Height="28"
-                                                         VerticalContentAlignment="Center"/>
+                                                <TextBlock Grid.Row="2" Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Vertical Axis:"/>
+                                                <TextBox x:Name="txtChartYAxisTitle" Grid.Row="2" Grid.Column="1" Height="28" VerticalContentAlignment="Center"/>
 
-                                                <TextBlock Grid.Row="2" Grid.Column="0"
-                                                           VerticalAlignment="Center"
-                                                           Text="Vertical Axis:"/>
-
-                                                <TextBox x:Name="txtChartYAxisTitle"
-                                                         Grid.Row="2" Grid.Column="1"
-                                                         Height="28"
-                                                         VerticalContentAlignment="Center"/>
-
-                                                <CheckBox x:Name="chkChartShowLegend"
-                                                          Grid.Row="0" Grid.Column="3"
-                                                          Content="Show Legend"
-                                                          IsChecked="True"/>
-
-                                                <ComboBox x:Name="cmbChartLegendPosition"
-                                                          Grid.Row="0" Grid.Column="4"
-                                                          Height="28"
-                                                          SelectedIndex="0">
+                                                <CheckBox x:Name="chkChartShowLegend" Grid.Row="0" Grid.Column="3" Content="Show Legend" IsChecked="True"/>
+                                                <ComboBox x:Name="cmbChartLegendPosition" Grid.Row="0" Grid.Column="4" Height="28" SelectedIndex="0">
                                                     <ComboBoxItem Content="Below Title"/>
                                                     <ComboBoxItem Content="Below Chart"/>
                                                     <ComboBoxItem Content="Right of Chart"/>
@@ -2142,25 +1468,18 @@
                                                            Grid.ColumnSpan="5"
                                                            Foreground="DimGray"
                                                            Text="Horizontal Axis: Date / Time. Display time is fixed to Local Time."/>
-
                                             </Grid>
-
                                         </GroupBox>
-
                                     </Grid>
-
                                 </ScrollViewer>
-</TabItem>
+                            </TabItem>
 
                             <!-- #endregion -->
-
 
                             <!-- #region APPEARANCE -->
 
                             <TabItem Header="Appearance">
-
                                 <Grid Margin="12">
-
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto"/>
                                         <RowDefinition Height="12"/>
@@ -2169,7 +1488,6 @@
                                         <RowDefinition Height="Auto"/>
                                         <RowDefinition Height="*"/>
                                     </Grid.RowDefinitions>
-
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="160"/>
                                         <ColumnDefinition Width="150"/>
@@ -2179,114 +1497,42 @@
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
 
-                                    <TextBlock Grid.Row="0"
-                                               Grid.Column="0"
-                                               VerticalAlignment="Center"
-                                               Text="PNG width (px):"/>
+                                    <TextBlock Grid.Row="0" Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Width (mm):"/>
+                                    <TextBox x:Name="txtChartWidthMm" Grid.Row="0" Grid.Column="1" Height="28" Tag="PositiveInteger" PreviewTextInput="NumericTextBox_PreviewTextInput" DataObject.Pasting="NumericTextBox_Pasting" VerticalContentAlignment="Center" Text="150" TextChanged="ChartPhysicalSize_Changed"/>
 
-                                    <TextBox x:Name="txtChartPngWidth"
-                                             Grid.Row="0"
-                                             Grid.Column="1"
-                                             Height="28"
-                                             VerticalContentAlignment="Center"
-                                             Text="3000"/>
+                                    <TextBlock Grid.Row="0" Grid.Column="3" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Height (mm):"/>
+                                    <TextBox x:Name="txtChartHeightMm" Grid.Row="0" Grid.Column="4" Height="28" Tag="PositiveInteger" PreviewTextInput="NumericTextBox_PreviewTextInput" DataObject.Pasting="NumericTextBox_Pasting" VerticalContentAlignment="Center" Text="80" TextChanged="ChartPhysicalSize_Changed"/>
 
-                                    <TextBlock Grid.Row="0"
-                                               Grid.Column="3"
-                                               VerticalAlignment="Center"
-                                               Text="PNG height (px):"/>
+                                    <TextBlock Grid.Row="2" Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Resolution:"/>
+                                    <ComboBox x:Name="cmbChartResolutionDpi" Grid.Row="2" Grid.Column="1" Height="28" SelectionChanged="ChartPhysicalSize_Changed">
+                                        <ComboBoxItem Content="Standard - 300 DPI" Tag="300" IsSelected="True"/>
+                                        <ComboBoxItem Content="High - 600 DPI" Tag="600"/>
+                                    </ComboBox>
 
-                                    <TextBox x:Name="txtChartPngHeight"
-                                             Grid.Row="0"
-                                             Grid.Column="4"
-                                             Height="28"
-                                             VerticalContentAlignment="Center"
-                                             Text="1000"/>
+                                    <TextBlock Grid.Row="2" Grid.Column="3" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Calculated size:"/>
+                                    <TextBox x:Name="txtChartCalculatedPixels" Grid.Row="2" Grid.Column="4" Height="28" IsReadOnly="True" VerticalContentAlignment="Center" Text="1772 x 945 px"/>
 
-                                    <TextBlock Grid.Row="2"
-                                               Grid.Column="0"
-                                               VerticalAlignment="Center"
-                                               Text="Default line width:"/>
+                                    <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="5" Orientation="Horizontal">
+                                        <TextBlock Margin="0,0,8,0" VerticalAlignment="Center" Text="Font: Arial (fixed)"/>
+                                        <CheckBox x:Name="chkChartGridLines" Margin="25,0,0,0" VerticalAlignment="Center" Content="Show major gridlines" IsChecked="True"/>
+                                        <TextBlock Margin="25,0,8,0" VerticalAlignment="Center" Text="Line width:"/>
+                                        <ComboBox x:Name="txtChartDefaultLineWidth" Width="55" Height="28" SelectedIndex="0" VerticalContentAlignment="Center">
+                                            <ComboBoxItem Content="2"/>
+                                            <ComboBoxItem Content="4"/>
+                                            <ComboBoxItem Content="6"/>
+                                        </ComboBox>
+                                        <TextBlock Margin="20,0,8,0" VerticalAlignment="Center" Text="Marker size:"/>
+                                        <ComboBox x:Name="txtChartDefaultMarkerSize" Width="55" Height="28" SelectedIndex="1" VerticalContentAlignment="Center">
+                                            <ComboBoxItem Content="2"/>
+                                            <ComboBoxItem Content="4"/>
+                                            <ComboBoxItem Content="6"/>
+                                        </ComboBox>
+                                    </StackPanel>
 
-                                    <TextBox x:Name="txtChartDefaultLineWidth"
-                                             Grid.Row="2"
-                                             Grid.Column="1"
-                                             Height="28"
-                                             VerticalContentAlignment="Center"
-                                             Text="2"/>
-
-                                    <TextBlock Grid.Row="2"
-                                               Grid.Column="3"
-                                               VerticalAlignment="Center"
-                                               Text="Default marker size:"/>
-
-                                    <TextBox x:Name="txtChartDefaultMarkerSize"
-                                             Grid.Row="2"
-                                             Grid.Column="4"
-                                             Height="28"
-                                             VerticalContentAlignment="Center"
-                                             Text="4"/>
-
-                                    <CheckBox x:Name="chkChartGridLines"
-                                              Grid.Row="4"
-                                              Grid.Column="0"
-                                              Grid.ColumnSpan="2"
-                                              Content="Show major gridlines"
-                                              IsChecked="True"/>
-
+                                    <TextBox x:Name="txtChartPngWidth" Visibility="Collapsed" Text="1772"/>
+                                    <TextBox x:Name="txtChartPngHeight" Visibility="Collapsed" Text="945"/>
                                 </Grid>
-
                             </TabItem>
-
-                            <!-- #endregion -->
-
-
-                            <!-- #region PREVIEW -->
-
-                            <TabItem Header="Preview">
-                                <Grid Margin="12">
-
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto"/>
-                                        <RowDefinition Height="12"/>
-                                        <RowDefinition Height="*"/>
-                                        <RowDefinition Height="12"/>
-                                        <RowDefinition Height="Auto"/>
-                                    </Grid.RowDefinitions>
-
-                                    <Button x:Name="btnChartRefreshPreview"
-                                            Grid.Row="0"
-                                            Width="150"
-                                            Height="30"
-                                            HorizontalAlignment="Left"
-                                            Content="Refresh Preview"
-                                            Click="btnChartPreview_Click"/>
-
-                                    <Border Grid.Row="2"
-                                            BorderBrush="DarkGray"
-                                            BorderThickness="1"
-                                            Background="White"
-                                            Padding="4">
-
-                                        <Grid>
-                                            <TextBlock x:Name="txtChartPreviewPlaceholder"
-                                                       HorizontalAlignment="Center"
-                                                       VerticalAlignment="Center"
-                                                       TextAlignment="Center"
-                                                       Foreground="DimGray"
-                                                       FontSize="16"
-                                                       Text="ScottPlot preview surface&#x0a;The complete chart will be rendered here at final report proportions."/>
-                                        </Grid>
-
-                                    </Border>
-
-                                    <TextBlock x:Name="txtChartStatus"
-                                               Grid.Row="4"
-                                               TextWrapping="Wrap"
-                                               Text="Create or select a chart definition."/>
-
-                                </Grid>
-</TabItem>
 
                             <!-- #endregion -->
 
@@ -2294,18 +1540,52 @@
 
                         <!-- #endregion -->
 
-                    </Grid>
+                        <!-- #region CHART PREVIEW FLYOUT -->
 
+                        <Popup x:Name="popChartPreview"
+                               Grid.Row="2"
+                               Placement="Absolute"
+                               AllowsTransparency="True"
+                               StaysOpen="False"
+                               PopupAnimation="Fade">
+                            <Border Padding="16" Background="WhiteSmoke" BorderBrush="DimGray" BorderThickness="1" CornerRadius="4">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="10"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="10"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <DockPanel Grid.Row="0">
+                                        <TextBlock DockPanel.Dock="Left" FontSize="15" FontWeight="Bold" Text="Chart Preview"/>
+                                        <Button Width="70" Height="26" HorizontalAlignment="Right" Content="Close" Click="btnCloseChartPreview_Click"/>
+                                    </DockPanel>
+                                    <Border Grid.Row="2" BorderBrush="DarkGray" BorderThickness="1" Background="White">
+                                        <Canvas x:Name="cnvChartPreview" Width="566.93" Height="302.36" Background="White" ClipToBounds="True"/>
+                                    </Border>
+                                    <TextBlock x:Name="txtChartPreviewStatus" Grid.Row="4" Foreground="DimGray"/>
+                                </Grid>
+                            </Border>
+                        </Popup>
+
+                        <!-- #endregion -->
+
+                        <TextBlock x:Name="txtChartStatus"
+                                   Grid.Row="2"
+                                   Margin="12,0,12,8"
+                                   VerticalAlignment="Bottom"
+                                   Panel.ZIndex="10"
+                                   TextWrapping="Wrap"
+                                   Text="Create or select a chart definition."/>
+                    </Grid>
                 </TabItem>
 
                 <!-- #endregion -->
-
             </TabControl>
-
         </Grid>
 
         <!-- #endregion -->
-
 
         <!-- #region COPYRIGHT FOOTER -->
 
@@ -2321,9 +1601,7 @@
                    Text="{Binding CopyrightText, RelativeSource={RelativeSource AncestorType=Window}}"/>
 
         <!-- #endregion -->
-
     </Grid>
 
     <!-- #endregion -->
-
 </Window>

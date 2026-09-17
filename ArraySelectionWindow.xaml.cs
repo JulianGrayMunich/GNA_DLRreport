@@ -78,7 +78,7 @@ namespace GNA_DLRreport
             dgCommittedArrays.ItemsSource =
                 arrays;
 
-            btnViewSelectedArray.IsEnabled =
+            btnUpdateSelectedArray.IsEnabled =
                 false;
 
             #endregion
@@ -93,9 +93,9 @@ namespace GNA_DLRreport
             object sender,
             SelectionChangedEventArgs e)
         {
-            #region Update View Button
+            #region Update Array Button
 
-            btnViewSelectedArray.IsEnabled =
+            btnUpdateSelectedArray.IsEnabled =
                 dgCommittedArrays.SelectedItem
                     is ArraySelectionItem;
 
@@ -115,11 +115,11 @@ namespace GNA_DLRreport
         }
 
 
-        private void btnViewSelectedArray_Click(
+        private void btnUpdateSelectedArray_Click(
             object sender,
             RoutedEventArgs e)
         {
-            #region View Selected Array
+            #region Update Selected Array
 
             CommitSelectedArray();
 

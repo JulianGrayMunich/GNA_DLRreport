@@ -9,8 +9,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="EPPlus" Version="8.6.3" />
-    <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.2" />
+    <PackageReference Include="EPPlus" Version="8.7.0" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.3" />
   </ItemGroup>
 
   <ItemGroup>
@@ -18,5 +18,14 @@
       <HintPath>..\..\GNAtools\GNAtools\bin\Release\net8.0\GNAtools.dll</HintPath>
     </Reference>
   </ItemGroup>
+
+<ItemGroup>
+  <None Remove="TrackGeometryImportProfiles.json" />
+
+  <Content Include="TrackGeometryImportProfiles.json">
+    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+  </Content>
+</ItemGroup>
 
 </Project>

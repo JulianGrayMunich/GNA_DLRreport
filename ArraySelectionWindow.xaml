@@ -103,13 +103,13 @@
                     Content="Cancel"
                     Click="btnCancel_Click"/>
 
-            <Button x:Name="btnViewSelectedArray"
+            <Button x:Name="btnUpdateSelectedArray"
                     Grid.Column="2"
                     Height="30"
-                    Content="View Array"
+                    Content="Update Array"
                     IsDefault="True"
                     IsEnabled="False"
-                    Click="btnViewSelectedArray_Click"/>
+                    Click="btnUpdateSelectedArray_Click"/>
 
         </Grid>
 
