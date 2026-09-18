@@ -113,6 +113,28 @@ namespace GNA_DLRreport
         #endregion
 
 
+        #region Report Generation Date State
+
+        private const int DefaultReportDayOffset =
+            14;
+
+        private bool _isSynchronisingReportDates;
+
+        private bool _isUpdatingReportProjectStart;
+
+        private DateTime _reportStartDate =
+            DateTime.Today.AddDays(
+                value: -DefaultReportDayOffset);
+
+        private DateTime _reportEndDate =
+            DateTime.Today;
+
+        private int _reportDayOffset =
+            DefaultReportDayOffset;
+
+        #endregion
+
+
         #region Project Configuration State
 
         // Project records currently displayed in the Project Management DataGrid.
@@ -4046,6 +4068,13 @@ namespace GNA_DLRreport
             #endregion
 
 
+            #region Initialise Report Generation Dates
+
+            InitialiseReportGenerationDates();
+
+            #endregion
+
+
             #region Initialise Chart Configuration
 
             InitialiseChartConfigurationUi();
@@ -4140,6 +4169,585 @@ namespace GNA_DLRreport
         #endregion
 
 
+        #region Report Generation Dates
+
+        private void InitialiseReportGenerationDates()
+        {
+            #region Apply Default Report Period
+
+            _reportEndDate =
+                DateTime.Today;
+
+            _reportDayOffset =
+                DefaultReportDayOffset;
+
+            _reportStartDate =
+                _reportEndDate.AddDays(
+                    value: -_reportDayOffset);
+
+            _isSynchronisingReportDates =
+                true;
+
+            try
+            {
+                dpReportStartDate.SelectedDate =
+                    _reportStartDate;
+
+                dpReportEndDate.SelectedDate =
+                    _reportEndDate;
+
+                txtReportDayOffset.Text =
+                    _reportDayOffset.ToString(
+                        provider: CultureInfo.InvariantCulture);
+            }
+            finally
+            {
+                _isSynchronisingReportDates =
+                    false;
+            }
+
+            #endregion
+        }
+
+
+        private async Task LoadActiveProjectStartDateIntoReportAsync()
+        {
+            #region Handle Missing Active Project
+
+            if (!_activeProjectId.HasValue)
+            {
+                _isUpdatingReportProjectStart =
+                    true;
+
+                try
+                {
+                    dpReportProjectStart.SelectedDate =
+                        null;
+
+                    dpReportProjectStart.IsEnabled =
+                        false;
+                }
+                finally
+                {
+                    _isUpdatingReportProjectStart =
+                        false;
+                }
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Load Active Project Start Date
+
+            DateTime projectStartDate =
+                await GetActiveProjectStartDateAsync();
+
+            _projectStartDates[_activeProjectId.Value] =
+                projectStartDate.Date;
+
+            _isUpdatingReportProjectStart =
+                true;
+
+            try
+            {
+                dpReportProjectStart.SelectedDate =
+                    projectStartDate.Date;
+
+                dpReportProjectStart.IsEnabled =
+                    true;
+            }
+            finally
+            {
+                _isUpdatingReportProjectStart =
+                    false;
+            }
+
+            #endregion
+        }
+
+
+        private async Task UpdateActiveProjectStartDateFromReportAsync(
+            DateTime projectStartDate)
+        {
+            #region Validate Active Project
+
+            int projectId =
+                _activeProjectId
+                ?? throw new InvalidOperationException(
+                    "Select an active project before changing Project Start.");
+
+            #endregion
+
+
+            #region Persist Active Project Start Date
+
+            const string updateSql = """
+                UPDATE [dbo].[Project]
+                SET [ProjectStartDate] = @ProjectStartDate
+                WHERE
+                    [Project_ID] = @Project_ID
+                    AND [IsDeleted] = 0;
+                """;
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand updateCommand =
+                new(
+                    cmdText: updateSql,
+                    connection: databaseConnection);
+
+            updateCommand.Parameters.Add(
+                parameterName: "@ProjectStartDate",
+                sqlDbType: System.Data.SqlDbType.Date)
+                .Value =
+                    projectStartDate.Date;
+
+            updateCommand.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    projectId;
+
+            int affectedRows =
+                await updateCommand.ExecuteNonQueryAsync();
+
+            if (affectedRows != 1)
+            {
+                throw new InvalidOperationException(
+                    "The active project's start date was not updated.");
+            }
+
+            #endregion
+
+
+            #region Synchronise Project Management State
+
+            _projectStartDates[projectId] =
+                projectStartDate.Date;
+
+            if (dgProjects.SelectedItem
+                    is ProjectConfigurationItem selectedProject &&
+                selectedProject.Project_ID == projectId)
+            {
+                _pendingProjectStartDate =
+                    projectStartDate.Date;
+
+                _isUpdatingProjectStartDateControl =
+                    true;
+
+                try
+                {
+                    dpProjectStartDate.SelectedDate =
+                        projectStartDate.Date;
+                }
+                finally
+                {
+                    _isUpdatingProjectStartDateControl =
+                        false;
+                }
+
+                dgProjects.Items.Refresh();
+            }
+
+            #endregion
+        }
+
+
+        private async void dpReportProjectStart_SelectedDateChanged(
+            object sender,
+            SelectionChangedEventArgs e)
+        {
+            if (!IsInitialized)
+            {
+                return;
+            }
+
+            #region Ignore Programmatic Synchronisation
+
+            if (_isUpdatingReportProjectStart)
+            {
+                return;
+            }
+
+            #endregion
+
+
+            #region Validate Selected Date
+
+            if (!dpReportProjectStart.SelectedDate.HasValue)
+            {
+                await LoadActiveProjectStartDateIntoReportAsync();
+
+                return;
+            }
+
+            DateTime selectedProjectStartDate =
+                dpReportProjectStart.SelectedDate.Value.Date;
+
+            #endregion
+
+
+            #region Update Active Project
+
+            dpReportProjectStart.IsEnabled =
+                false;
+
+            try
+            {
+                await UpdateActiveProjectStartDateFromReportAsync(
+                    projectStartDate: selectedProjectStartDate);
+
+                txtReportGenerationStatus.Text =
+                    $"Project Start updated to {selectedProjectStartDate:yyyy-MM-dd}.";
+            }
+            catch (Exception ex)
+            {
+                txtReportGenerationStatus.Text =
+                    $"Report Generation: Unable to update Project Start: {ex.Message}";
+
+                try
+                {
+                    await LoadActiveProjectStartDateIntoReportAsync();
+                }
+                catch (Exception reloadEx)
+                {
+                    txtReportGenerationStatus.Text +=
+                        $" Unable to reload the stored date: {reloadEx.Message}";
+                }
+            }
+            finally
+            {
+                dpReportProjectStart.IsEnabled =
+                    _activeProjectId.HasValue;
+            }
+
+            #endregion
+        }
+
+
+        private void dpReportStartDate_SelectedDateChanged(
+            object sender,
+            SelectionChangedEventArgs e)
+        {
+            if (!IsInitialized)
+            {
+                return;
+            }
+
+            #region Synchronise Day Offset From Report Start
+
+            if (_isSynchronisingReportDates)
+            {
+                return;
+            }
+
+            if (!dpReportStartDate.SelectedDate.HasValue)
+            {
+                _isSynchronisingReportDates =
+                    true;
+
+                try
+                {
+                    dpReportStartDate.SelectedDate =
+                        _reportStartDate;
+                }
+                finally
+                {
+                    _isSynchronisingReportDates =
+                        false;
+                }
+
+                return;
+            }
+
+            DateTime selectedStartDate =
+                dpReportStartDate.SelectedDate.Value.Date;
+
+            if (selectedStartDate > _reportEndDate)
+            {
+                txtReportGenerationStatus.Text =
+                    "Report Generation: Report Start Date cannot be later than Report End Date.";
+
+                _isSynchronisingReportDates =
+                    true;
+
+                try
+                {
+                    dpReportStartDate.SelectedDate =
+                        _reportStartDate;
+                }
+                finally
+                {
+                    _isSynchronisingReportDates =
+                        false;
+                }
+
+                return;
+            }
+
+            _reportStartDate =
+                selectedStartDate;
+
+            _reportDayOffset =
+                (int)(_reportEndDate - _reportStartDate).TotalDays;
+
+            _isSynchronisingReportDates =
+                true;
+
+            try
+            {
+                txtReportDayOffset.Text =
+                    _reportDayOffset.ToString(
+                        provider: CultureInfo.InvariantCulture);
+            }
+            finally
+            {
+                _isSynchronisingReportDates =
+                    false;
+            }
+
+            txtReportGenerationStatus.Text =
+                string.Empty;
+
+            #endregion
+        }
+
+
+        private void dpReportEndDate_SelectedDateChanged(
+            object sender,
+            SelectionChangedEventArgs e)
+        {
+            if (!IsInitialized)
+            {
+                return;
+            }
+
+            #region Synchronise Report Start From Report End
+
+            if (_isSynchronisingReportDates)
+            {
+                return;
+            }
+
+            if (!dpReportEndDate.SelectedDate.HasValue)
+            {
+                _isSynchronisingReportDates =
+                    true;
+
+                try
+                {
+                    dpReportEndDate.SelectedDate =
+                        _reportEndDate;
+                }
+                finally
+                {
+                    _isSynchronisingReportDates =
+                        false;
+                }
+
+                return;
+            }
+
+            DateTime selectedEndDate =
+                dpReportEndDate.SelectedDate.Value.Date;
+
+            DateTime calculatedStartDate;
+
+            try
+            {
+                calculatedStartDate =
+                    selectedEndDate.AddDays(
+                        value: -_reportDayOffset);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                txtReportGenerationStatus.Text =
+                    "Report Generation: The selected End Date and Day offset exceed the supported date range.";
+
+                _isSynchronisingReportDates =
+                    true;
+
+                try
+                {
+                    dpReportEndDate.SelectedDate =
+                        _reportEndDate;
+                }
+                finally
+                {
+                    _isSynchronisingReportDates =
+                        false;
+                }
+
+                return;
+            }
+
+            _reportEndDate =
+                selectedEndDate;
+
+            _reportStartDate =
+                calculatedStartDate;
+
+            _isSynchronisingReportDates =
+                true;
+
+            try
+            {
+                dpReportStartDate.SelectedDate =
+                    _reportStartDate;
+
+                txtReportDayOffset.Text =
+                    _reportDayOffset.ToString(
+                        provider: CultureInfo.InvariantCulture);
+            }
+            finally
+            {
+                _isSynchronisingReportDates =
+                    false;
+            }
+
+            txtReportGenerationStatus.Text =
+                string.Empty;
+
+            #endregion
+        }
+
+
+        private void txtReportDayOffset_PreviewTextInput(
+            object sender,
+            TextCompositionEventArgs e)
+        {
+            #region Restrict Input To Whole Numbers
+
+            e.Handled =
+                e.Text.Any(
+                    predicate: character => !char.IsDigit(
+                        c: character));
+
+            #endregion
+        }
+
+
+        private void txtReportDayOffset_TextChanged(
+            object sender,
+            TextChangedEventArgs e)
+        {
+            if (!IsInitialized)
+            {
+                return;
+            }
+
+            #region Synchronise Report Start From Day Offset
+
+            if (_isSynchronisingReportDates)
+            {
+                return;
+            }
+
+            if (!int.TryParse(
+                    s: txtReportDayOffset.Text,
+                    style: NumberStyles.None,
+                    provider: CultureInfo.InvariantCulture,
+                    result: out int selectedDayOffset) ||
+                selectedDayOffset < 0)
+            {
+                txtReportGenerationStatus.Text =
+                    "Report Generation: Day offset must be a nonnegative whole number.";
+
+                return;
+            }
+
+            DateTime calculatedStartDate;
+
+            try
+            {
+                calculatedStartDate =
+                    _reportEndDate.AddDays(
+                        value: -selectedDayOffset);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                txtReportGenerationStatus.Text =
+                    "Report Generation: The Day offset exceeds the supported date range.";
+
+                return;
+            }
+
+            _reportDayOffset =
+                selectedDayOffset;
+
+            _reportStartDate =
+                calculatedStartDate;
+
+            _isSynchronisingReportDates =
+                true;
+
+            try
+            {
+                dpReportStartDate.SelectedDate =
+                    _reportStartDate;
+            }
+            finally
+            {
+                _isSynchronisingReportDates =
+                    false;
+            }
+
+            txtReportGenerationStatus.Text =
+                string.Empty;
+
+            #endregion
+        }
+
+
+        private void txtReportDayOffset_LostFocus(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (!IsInitialized)
+            {
+                return;
+            }
+
+            #region Restore Last Valid Day Offset
+
+            if (int.TryParse(
+                    s: txtReportDayOffset.Text,
+                    style: NumberStyles.None,
+                    provider: CultureInfo.InvariantCulture,
+                    result: out int selectedDayOffset) &&
+                selectedDayOffset >= 0)
+            {
+                return;
+            }
+
+            _isSynchronisingReportDates =
+                true;
+
+            try
+            {
+                txtReportDayOffset.Text =
+                    _reportDayOffset.ToString(
+                        provider: CultureInfo.InvariantCulture);
+            }
+            finally
+            {
+                _isSynchronisingReportDates =
+                    false;
+            }
+
+            #endregion
+        }
+
+        #endregion
+
+
         #region Window Initialisation
 
         #region Application Startup
@@ -4171,6 +4779,16 @@ namespace GNA_DLRreport
             await InitialiseStartupActiveProjectAsync();
 
             UpdateConfigurationWorkflowTabAvailability();
+
+            try
+            {
+                await LoadActiveProjectStartDateIntoReportAsync();
+            }
+            catch (Exception ex)
+            {
+                txtReportGenerationStatus.Text =
+                    $"Report Generation: Unable to load Project Start: {ex.Message}";
+            }
 
             if (_activeProjectId.HasValue)
             {
@@ -8500,6 +9118,24 @@ namespace GNA_DLRreport
             _pendingProjectStartDate =
                 projectStartDate.Date;
 
+            if (_activeProjectId.HasValue &&
+                _activeProjectId.Value == selectedProject.Project_ID)
+            {
+                _isUpdatingReportProjectStart =
+                    true;
+
+                try
+                {
+                    dpReportProjectStart.SelectedDate =
+                        projectStartDate.Date;
+                }
+                finally
+                {
+                    _isUpdatingReportProjectStart =
+                        false;
+                }
+            }
+
             dgProjects.Items.Refresh();
 
             txtProjectManagementStatus.Text =
@@ -9447,6 +10083,16 @@ namespace GNA_DLRreport
                     databaseProjectName;
 
                 UpdateConfigurationWorkflowTabAvailability();
+
+                try
+                {
+                    await LoadActiveProjectStartDateIntoReportAsync();
+                }
+                catch (Exception reportDateEx)
+                {
+                    txtReportGenerationStatus.Text =
+                        $"Report Generation: Unable to load Project Start: {reportDateEx.Message}";
+                }
 
                 #endregion
 
@@ -15200,24 +15846,55 @@ namespace GNA_DLRreport
                 TimeZoneInfo.FindSystemTimeZoneById(
                     id: timeZoneId);
 
-            DateTime projectToday =
-                TimeZoneInfo.ConvertTimeFromUtc(
-                    dateTime: DateTime.UtcNow,
-                    destinationTimeZone: projectTimeZone)
-                .Date;
+            DateTime reportStartDate =
+                dpReportStartDate.SelectedDate?.Date
+                ?? throw new InvalidOperationException(
+                    "Report Generation: Select a Report Start Date.");
+
+            DateTime reportEndDate =
+                dpReportEndDate.SelectedDate?.Date
+                ?? throw new InvalidOperationException(
+                    "Report Generation: Select a Report End Date.");
+
+            string startDateMode =
+                GetSelectedChartStartDateMode();
 
             DateTime previewStartDate =
                 string.Equals(
-                    a: GetSelectedChartStartDateMode(),
+                    a: startDateMode,
                     b: ChartStartDateModeProjectStart,
                     comparisonType: StringComparison.Ordinal)
                     ? projectStartDate
-                    : projectToday.AddDays(
-                        value: -14);
+                    : reportStartDate;
 
-            DateTime previewEndExclusiveDate =
-                projectToday.AddDays(
-                    value: 1);
+            if (previewStartDate > reportEndDate)
+            {
+                string selectedStartDescription =
+                    string.Equals(
+                        a: startDateMode,
+                        b: ChartStartDateModeProjectStart,
+                        comparisonType: StringComparison.Ordinal)
+                        ? "Project Start"
+                        : "Report Start Date";
+
+                throw new InvalidOperationException(
+                    $"Time Basis: {selectedStartDescription} cannot be later " +
+                    "than Report End Date.");
+            }
+
+            DateTime previewEndExclusiveDate;
+
+            try
+            {
+                previewEndExclusiveDate =
+                    reportEndDate.AddDays(
+                        value: 1);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                throw new InvalidOperationException(
+                    "Report Generation: Report End Date exceeds the supported preview range.");
+            }
 
             _chartPreviewStartUtc = TimeZoneInfo.ConvertTimeToUtc(
                 dateTime: DateTime.SpecifyKind(
@@ -15232,7 +15909,7 @@ namespace GNA_DLRreport
                 sourceTimeZone: projectTimeZone);
 
             dpChartStartDate.SelectedDate = previewStartDate;
-            dpChartEndDate.SelectedDate = projectToday;
+            dpChartEndDate.SelectedDate = reportEndDate;
 
             _chartPreviewSeries.Clear();
 
@@ -15451,7 +16128,9 @@ namespace GNA_DLRreport
                         _chartPreviewRenderer.Render));
 
             txtChartPreviewStatus.Text =
-                $"Final physical size: {widthMm} x {heightMm} mm; " +
+                $"Date range: {dpChartStartDate.SelectedDate:yyyy.MM.dd} to " +
+                $"{dpChartEndDate.SelectedDate:yyyy.MM.dd}; " +
+                $"final physical size: {widthMm} x {heightMm} mm; " +
                 $"production bitmap: {txtChartCalculatedPixels.Text}; {DefaultChartFontFamily}.";
 
             txtChartStatus.Text =
