@@ -15,6 +15,15 @@
         Cursor="Arrow"
         WindowStartupLocation="CenterScreen">
 
+    <Window.Resources>
+        <Style TargetType="{x:Type TextBox}">
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style TargetType="{x:Type DataGridCell}">
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+    </Window.Resources>
+
     <!-- #region MAIN WINDOW LAYOUT -->
 
     <Grid>
@@ -105,8 +114,7 @@
                                          VerticalContentAlignment="Center"
                                          Text="14"
                                          PreviewTextInput="txtReportDayOffset_PreviewTextInput"
-                                         TextChanged="txtReportDayOffset_TextChanged"
-                                         LostFocus="txtReportDayOffset_LostFocus"/>
+                                         TextChanged="txtReportDayOffset_TextChanged"/>
                                 <TextBlock Grid.Column="5"
                                            VerticalAlignment="Center"
                                            Text="Day offset"/>
@@ -156,6 +164,7 @@
 
                                 <TextBlock Grid.Row="0"
                                            Grid.Column="0"
+                                           Visibility="Collapsed"
                                            VerticalAlignment="Center"
                                            Text="Connection string:"/>
                                 <TextBox x:Name="txtDbConnectionString"
@@ -1084,6 +1093,7 @@
                                                             Binding="{Binding ProjectName, Mode=TwoWay, UpdateSourceTrigger=LostFocus}">
                                             <DataGridTextColumn.EditingElementStyle>
                                                 <Style TargetType="TextBox">
+                                                    <Setter Property="VerticalContentAlignment" Value="Center"/>
                                                     <EventSetter Event="LostFocus" Handler="ProjectNameTextBox_LostFocus"/>
                                                 </Style>
                                             </DataGridTextColumn.EditingElementStyle>
@@ -1178,32 +1188,45 @@
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
 
-                                <TextBlock Grid.Row="0"
+                                <TextBlock x:Name="txtChartReportDateInformation"
+                                           Grid.Row="0"
                                            Grid.Column="0"
-                                           Margin="0,0,8,0"
-                                           HorizontalAlignment="Right"
+                                           Grid.ColumnSpan="5"
                                            VerticalAlignment="Center"
-                                           Text="Templates:"/>
+                                           Foreground="DimGray"
+                                           Text="Report Start: —    Report End: —"/>
                                 <ComboBox x:Name="cmbChartTemplate"
                                           Grid.Row="0"
                                           Grid.Column="1"
+                                          Visibility="Collapsed"
                                           Height="28"
                                           DisplayMemberPath="DisplayText"/>
                                 <Button x:Name="btnLoadChartTemplate"
                                         Grid.Row="0"
                                         Grid.Column="3"
+                                        Visibility="Collapsed"
                                         Height="30"
                                         Content="Load Template"
                                         Click="btnLoadChartTemplate_Click"/>
-                                <Button x:Name="btnChartPreviewCanvas"
-                                        Grid.Row="0"
-                                        Grid.Column="4"
-                                        Width="105"
-                                        Height="30"
-                                        Margin="10,0,0,0"
-                                        HorizontalAlignment="Left"
-                                        Content="Preview Canvas"
-                                        Click="btnChartPreview_Click"/>
+                                <StackPanel Grid.Row="2"
+                                            Grid.Column="4"
+                                            Margin="10,0,0,0"
+                                            HorizontalAlignment="Left"
+                                            Orientation="Horizontal">
+                                    <Button x:Name="btnChartPreviewTemplate"
+                                            Width="120"
+                                            Height="30"
+                                            Visibility="Collapsed"
+                                            Content="Preview Template"
+                                            Click="btnChartPreviewTemplate_Click"/>
+                                    <Button x:Name="btnChartPreviewChart"
+                                            Width="110"
+                                            Height="30"
+                                            Margin="0,0,0,0"
+                                            IsEnabled="False"
+                                            Content="Preview Chart"
+                                            Click="btnChartPreviewChart_Click"/>
+                                </StackPanel>
 
                                 <TextBlock Grid.Row="2"
                                            Grid.Column="0"
@@ -1215,7 +1238,8 @@
                                           Grid.Row="2"
                                           Grid.Column="1"
                                           Height="28"
-                                          DisplayMemberPath="DisplayText"/>
+                                          DisplayMemberPath="DisplayText"
+                                          SelectionChanged="cmbExistingChart_SelectionChanged"/>
                                 <Button x:Name="btnChartLoad"
                                         Grid.Row="2"
                                         Grid.Column="3"
@@ -1248,6 +1272,7 @@
                                             Width="105"
                                             Height="30"
                                             Margin="6,0,0,0"
+                                            Visibility="Collapsed"
                                             Content="Save Template"
                                             Click="btnSaveChartTemplate_Click"/>
                                     <Button x:Name="btnChartCommit"
@@ -1333,23 +1358,67 @@
                                         </Grid.ColumnDefinitions>
 
                                         <TextBlock Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Entity:"/>
-                                        <ComboBox x:Name="cmbChartSeriesEntity" Grid.Column="1" Height="28"/>
+                                        <ComboBox x:Name="cmbChartSeriesEntity"
+                                                  Grid.Column="1"
+                                                  Height="28"
+                                                  IsEditable="False"
+                                                  IsTextSearchEnabled="True"/>
                                         <TextBlock Grid.Column="3" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Data element:"/>
-                                        <ComboBox x:Name="cmbChartDataElement" Grid.Column="4" Height="28"/>
+                                        <ComboBox x:Name="cmbChartDataElement"
+                                                  Grid.Column="4"
+                                                  Height="28"
+                                                  SelectionChanged="cmbChartDataElement_SelectionChanged"/>
                                     </Grid>
 
                                     <DataGrid x:Name="dgChartSeries"
                                               Grid.Row="2"
+                                              RowHeight="30"
                                               AutoGenerateColumns="False"
                                               CanUserAddRows="False"
                                               CanUserDeleteRows="False"
                                               HeadersVisibility="Column">
+                                        <DataGrid.Resources>
+                                            <Style TargetType="{x:Type TextBlock}">
+                                                <Setter Property="VerticalAlignment" Value="Center"/>
+                                            </Style>
+                                            <Style TargetType="{x:Type TextBox}">
+                                                <Setter Property="VerticalAlignment" Value="Stretch"/>
+                                                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                                            </Style>
+                                        </DataGrid.Resources>
+                                        <DataGrid.CellStyle>
+                                            <Style TargetType="{x:Type DataGridCell}">
+                                                <Setter Property="VerticalContentAlignment" Value="Center"/>
+                                            </Style>
+                                        </DataGrid.CellStyle>
                                         <DataGrid.Columns>
                                             <DataGridTextColumn Header="Order" Width="70" Binding="{Binding DisplayOrder}"/>
                                             <DataGridTextColumn Header="Entity" Width="220" Binding="{Binding EntityDisplayName}"/>
                                             <DataGridTextColumn Header="Data Element" Width="180" Binding="{Binding DataElementDisplayName}"/>
                                             <DataGridTextColumn Header="Legend" Width="*" Binding="{Binding LegendText}"/>
-                                            <DataGridTextColumn Header="Colour" Width="110" Binding="{Binding ColourHex}"/>
+                                            <DataGridTemplateColumn Header="Colour" Width="150">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <ComboBox Height="26"
+                                                                  ItemsSource="{Binding ChartSeriesColourOptions, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                  SelectedItem="{Binding ColourHex, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}">
+                                                            <ComboBox.ItemTemplate>
+                                                                <DataTemplate>
+                                                                    <StackPanel Orientation="Horizontal">
+                                                                        <Border Width="18"
+                                                                                Height="18"
+                                                                                Margin="2,0,8,0"
+                                                                                Background="{Binding}"
+                                                                                BorderBrush="Black"
+                                                                                BorderThickness="1"/>
+                                                                        <TextBlock VerticalAlignment="Center" Text="{Binding}"/>
+                                                                    </StackPanel>
+                                                                </DataTemplate>
+                                                            </ComboBox.ItemTemplate>
+                                                        </ComboBox>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
                                             <DataGridTextColumn Header="Line" Width="80" Binding="{Binding LineWidth}"/>
                                             <DataGridTextColumn Header="Marker" Width="80" Binding="{Binding MarkerSize}"/>
                                         </DataGrid.Columns>
@@ -1358,8 +1427,7 @@
                                     <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
                                         <Button x:Name="btnChartAddSeries" Width="100" Height="30" Content="Add Series" Click="btnChartAddSeries_Click"/>
                                         <Button x:Name="btnChartRemoveSeries" Width="110" Height="30" Margin="8,0,0,0" Content="Remove Series" Click="btnChartRemoveSeries_Click"/>
-                                        <Button x:Name="btnChartSeriesUp" Width="90" Height="30" Margin="8,0,0,0" Content="Move Up" Click="btnChartSeriesUp_Click"/>
-                                        <Button x:Name="btnChartSeriesDown" Width="90" Height="30" Margin="8,0,0,0" Content="Move Down" Click="btnChartSeriesDown_Click"/>
+                                        <Button x:Name="btnChartClearSeries" Width="100" Height="30" Margin="8,0,0,0" Content="Clear Series" Click="btnChartClearSeries_Click"/>
                                     </StackPanel>
                                 </Grid>
                             </TabItem>
@@ -1595,15 +1663,32 @@
 
                                     <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="5" Orientation="Horizontal">
                                         <TextBlock Margin="0,0,8,0" VerticalAlignment="Center" Text="Font: Arial (fixed)"/>
-                                        <CheckBox x:Name="chkChartGridLines" Margin="25,0,0,0" VerticalAlignment="Center" Content="Show major gridlines" IsChecked="True"/>
+                                        <StackPanel Margin="25,0,0,0" VerticalAlignment="Center">
+                                            <CheckBox x:Name="chkChartGridLines" Content="Show major gridlines" IsChecked="True"/>
+                                            <CheckBox x:Name="chkChartTemperature" Margin="0,6,0,0" Content="Show temperature"/>
+                                            <CheckBox x:Name="chkChartEastAsY"
+                                                      Margin="0,6,0,0"
+                                                      Content="dE = dY"
+                                                      Visibility="Collapsed"
+                                                      Checked="ChartAxisAlias_CheckedChanged"
+                                                      Unchecked="ChartAxisAlias_CheckedChanged"/>
+                                            <CheckBox x:Name="chkChartNorthAsX"
+                                                      Margin="0,6,0,0"
+                                                      Content="dN = dX"
+                                                      Visibility="Collapsed"
+                                                      Checked="ChartAxisAlias_CheckedChanged"
+                                                      Unchecked="ChartAxisAlias_CheckedChanged"/>
+                                        </StackPanel>
                                         <TextBlock Margin="25,0,8,0" VerticalAlignment="Center" Text="Line width:"/>
-                                        <ComboBox x:Name="txtChartDefaultLineWidth" Width="55" Height="28" SelectedIndex="0" VerticalContentAlignment="Center">
+                                        <ComboBox x:Name="txtChartDefaultLineWidth" Width="55" Height="28" SelectedIndex="1" VerticalContentAlignment="Center">
+                                            <ComboBoxItem Content="1"/>
                                             <ComboBoxItem Content="2"/>
                                             <ComboBoxItem Content="4"/>
                                             <ComboBoxItem Content="6"/>
                                         </ComboBox>
                                         <TextBlock Margin="20,0,8,0" VerticalAlignment="Center" Text="Marker size:"/>
-                                        <ComboBox x:Name="txtChartDefaultMarkerSize" Width="55" Height="28" SelectedIndex="1" VerticalContentAlignment="Center">
+                                        <ComboBox x:Name="txtChartDefaultMarkerSize" Width="55" Height="28" SelectedIndex="2" VerticalContentAlignment="Center">
+                                            <ComboBoxItem Content="None" Tag="0"/>
                                             <ComboBoxItem Content="2"/>
                                             <ComboBoxItem Content="4"/>
                                             <ComboBoxItem Content="6"/>
@@ -1627,25 +1712,45 @@
                                Grid.Row="2"
                                Placement="Absolute"
                                AllowsTransparency="True"
-                               StaysOpen="False"
+                               StaysOpen="True"
                                PopupAnimation="Fade">
                             <Border Padding="16" Background="WhiteSmoke" BorderBrush="DimGray" BorderThickness="1" CornerRadius="4">
                                 <Grid>
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto"/>
-                                        <RowDefinition Height="10"/>
-                                        <RowDefinition Height="Auto"/>
-                                        <RowDefinition Height="10"/>
-                                        <RowDefinition Height="Auto"/>
-                                    </Grid.RowDefinitions>
-                                    <DockPanel Grid.Row="0">
+                                     <Grid.RowDefinitions>
+                                         <RowDefinition Height="Auto"/>
+                                         <RowDefinition Height="10"/>
+                                         <RowDefinition Height="Auto"/>
+                                         <RowDefinition Height="10"/>
+                                         <RowDefinition Height="Auto"/>
+                                         <RowDefinition Height="10"/>
+                                         <RowDefinition Height="Auto"/>
+                                     </Grid.RowDefinitions>
+                                    <DockPanel x:Name="pnlChartPreviewDragHeader"
+                                               Grid.Row="0"
+                                               Background="Transparent"
+                                               Cursor="SizeAll"
+                                               MouseLeftButtonDown="pnlChartPreviewDragHeader_MouseLeftButtonDown"
+                                               MouseMove="pnlChartPreviewDragHeader_MouseMove"
+                                               MouseLeftButtonUp="pnlChartPreviewDragHeader_MouseLeftButtonUp">
                                         <TextBlock DockPanel.Dock="Left" FontSize="15" FontWeight="Bold" Text="Chart Preview"/>
-                                        <Button Width="70" Height="26" HorizontalAlignment="Right" Content="Close" Click="btnCloseChartPreview_Click"/>
+                                        <Button Width="70" Height="26" HorizontalAlignment="Right" Cursor="Arrow" Content="Close" Click="btnCloseChartPreview_Click"/>
                                     </DockPanel>
                                     <Border Grid.Row="2" BorderBrush="DarkGray" BorderThickness="1" Background="White">
                                         <Canvas x:Name="cnvChartPreview" Width="566.93" Height="302.36" Background="White" ClipToBounds="True"/>
                                     </Border>
                                     <TextBlock x:Name="txtChartPreviewStatus" Grid.Row="4" Foreground="DimGray"/>
+                                    <GroupBox Grid.Row="6" Header="Plotted Data" Padding="8">
+                                        <TextBox x:Name="txtChartPreviewData"
+                                                 Width="566.93"
+                                                 Height="160"
+                                                 IsReadOnly="True"
+                                                 AcceptsReturn="True"
+                                                 FontFamily="Consolas"
+                                                 FontSize="11"
+                                                 TextWrapping="NoWrap"
+                                                 HorizontalScrollBarVisibility="Auto"
+                                                 VerticalScrollBarVisibility="Auto"/>
+                                    </GroupBox>
                                 </Grid>
                             </Border>
                         </Popup>
@@ -1659,6 +1764,34 @@
                                    Panel.ZIndex="10"
                                    TextWrapping="Wrap"
                                    Text="Create or select a chart definition."/>
+                    </Grid>
+                </TabItem>
+
+                <!-- #endregion -->
+
+                <!-- #region TEMPORARY DATA INSERT TAB -->
+
+                <TabItem x:Name="tabDataInsert"
+                         Header="Data Insert">
+                    <Grid Margin="20">
+                        <StackPanel Width="420"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center">
+                            <TextBlock Margin="0,0,0,16"
+                                       Text="Temporary test-data generator. This clears all existing coordinate and dH epoch rows before inserting new data."
+                                       TextAlignment="Center"
+                                       TextWrapping="Wrap"/>
+                            <Button x:Name="btnInsertCoordinateData"
+                                    Width="190"
+                                    Height="35"
+                                    HorizontalAlignment="Center"
+                                    Content="Insert Coordinate Data"
+                                    Click="btnInsertCoordinateData_Click"/>
+                            <TextBlock x:Name="txtDataInsertStatus"
+                                       Margin="0,12,0,0"
+                                       TextAlignment="Center"
+                                       TextWrapping="Wrap"/>
+                        </StackPanel>
                     </Grid>
                 </TabItem>
 

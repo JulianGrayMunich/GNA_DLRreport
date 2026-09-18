@@ -11,6 +11,15 @@
         ShowInTaskbar="False"
         WindowStartupLocation="CenterOwner">
 
+    <Window.Resources>
+        <Style TargetType="{x:Type TextBox}">
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style TargetType="{x:Type DataGridCell}">
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+    </Window.Resources>
+
     <!-- #region ARRAY SELECTION WINDOW -->
 
     <Grid Margin="18">

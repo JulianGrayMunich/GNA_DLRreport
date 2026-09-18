@@ -33,6 +33,10 @@ namespace GNA_DLRreport
 
         #region Application Footer
 
+        private const string ApplicationRevision =
+            "029";
+
+
         public string CopyrightText
         {
             get
@@ -44,7 +48,8 @@ namespace GNA_DLRreport
                     buildDate.Year;
 
                 return
-                    $"© {year} GNA Software — Built {buildDate:yyyy-MM-dd}";
+                    $"© {year} GNA Software — Built {buildDate:yyyy-MM-dd} — " +
+                    $"Revision {ApplicationRevision}";
             }
         }
 
@@ -227,11 +232,40 @@ namespace GNA_DLRreport
         private const string ChartZeroAxisColourHex =
             "#000000";
 
+        private static readonly string[] ChartSeriesColourPalette =
+        [
+            "#0000FF", // Blue
+            "#FFA500", // Orange
+            "#008000", // Green
+            "#800080", // Purple
+            "#DC143C", // Crimson
+            "#008080", // Teal
+            "#A52A2A", // Brown
+            "#FF1493", // DeepPink
+            "#000080", // Navy
+            "#800000", // Maroon
+            "#808000", // Olive
+            "#00CED1", // DarkTurquoise
+            "#4B0082", // Indigo
+            "#FF4500", // OrangeRed
+            "#2F4F4F"  // DarkSlateGray
+        ];
+
+        public IReadOnlyList<string> ChartSeriesColourOptions =>
+            ChartSeriesColourPalette;
+
         private readonly ObservableCollection<ChartTypeUiItem> _chartTypes =
             new();
 
         private readonly ObservableCollection<ChartSeriesUiItem> _chartSeries =
             new();
+
+        private readonly List<ChartEntityUiItem> _allChartSeriesEntities =
+            new();
+
+        private bool _isSynchronisingChartAxisAliases;
+
+        private int _chartEntityLoadVersion;
 
 
         private readonly ObservableCollection<ExistingChartUiItem> _existingCharts =
@@ -296,6 +330,9 @@ namespace GNA_DLRreport
         private int? _loadedChartDefinitionId;
 
         private int? _loadedChartNumber;
+
+        private string _chartCopyBaseName =
+            string.Empty;
 
         private sealed class ExistingChartUiItem
         {
@@ -398,6 +435,9 @@ namespace GNA_DLRreport
             public double LineWidth { get; init; } =
                 2.0;
 
+            public double MarkerSize { get; init; } =
+                4.0;
+
             public List<ChartPreviewPoint> Points { get; } =
                 new();
         }
@@ -405,9 +445,23 @@ namespace GNA_DLRreport
         private readonly List<ChartPreviewSeries> _chartPreviewSeries =
             new();
 
+        private readonly List<ChartPreviewPoint> _chartPreviewTemperaturePoints =
+            new();
+
         private DateTime _chartPreviewStartUtc;
 
         private DateTime _chartPreviewEndUtcExclusive;
+
+        private TimeZoneInfo _chartPreviewTimeZone =
+            TimeZoneInfo.Utc;
+
+        private bool _isDraggingChartPreview;
+
+        private Point _chartPreviewDragStartScreen;
+
+        private double _chartPreviewDragStartHorizontalOffset;
+
+        private double _chartPreviewDragStartVerticalOffset;
 
         #endregion
 
@@ -1045,6 +1099,22 @@ namespace GNA_DLRreport
                                 reader.GetString(
                                     i: 1)
                         });
+            }
+
+            ChartSeriesUiItem? firstSeries =
+                _chartSeries
+                    .OrderBy(
+                        keySelector: series => series.DisplayOrder)
+                    .FirstOrDefault();
+
+            if (firstSeries is not null)
+            {
+                txtChartDefaultLineWidth.Text =
+                    firstSeries.LineWidth.ToString(
+                        provider: CultureInfo.InvariantCulture);
+
+                SelectChartMarkerSize(
+                    markerSize: firstSeries.MarkerSize);
             }
 
             #endregion
@@ -4163,6 +4233,9 @@ namespace GNA_DLRreport
             tabCharts.IsEnabled =
                 activeProjectAvailable;
 
+            tabDataInsert.IsEnabled =
+                activeProjectAvailable;
+
             #endregion
         }
 
@@ -4205,6 +4278,38 @@ namespace GNA_DLRreport
                 _isSynchronisingReportDates =
                     false;
             }
+
+            UpdateChartReportDateInformation();
+
+            #endregion
+        }
+
+
+        private void UpdateChartReportDateInformation()
+        {
+            #region Display Report Date Information In Chart Management
+
+            if (txtChartReportDateInformation is null)
+            {
+                return;
+            }
+
+            string reportStartText =
+                dpReportStartDate.SelectedDate.HasValue
+                    ? dpReportStartDate.SelectedDate.Value.ToString(
+                        format: "yyyy.MM.dd",
+                        provider: CultureInfo.InvariantCulture)
+                    : "—";
+
+            string reportEndText =
+                dpReportEndDate.SelectedDate.HasValue
+                    ? dpReportEndDate.SelectedDate.Value.ToString(
+                        format: "yyyy.MM.dd",
+                        provider: CultureInfo.InvariantCulture)
+                    : "—";
+
+            txtChartReportDateInformation.Text =
+                $"Report Start: {reportStartText}    Report End: {reportEndText}";
 
             #endregion
         }
@@ -4379,7 +4484,7 @@ namespace GNA_DLRreport
             #endregion
 
 
-            #region Validate Selected Date
+            #region Read Selected Date
 
             if (!dpReportProjectStart.SelectedDate.HasValue)
             {
@@ -4406,6 +4511,8 @@ namespace GNA_DLRreport
 
                 txtReportGenerationStatus.Text =
                     $"Project Start updated to {selectedProjectStartDate:yyyy-MM-dd}.";
+
+                WarnIfReportStartPrecedesProjectStart();
             }
             catch (Exception ex)
             {
@@ -4450,53 +4557,19 @@ namespace GNA_DLRreport
 
             if (!dpReportStartDate.SelectedDate.HasValue)
             {
-                _isSynchronisingReportDates =
-                    true;
-
-                try
-                {
-                    dpReportStartDate.SelectedDate =
-                        _reportStartDate;
-                }
-                finally
-                {
-                    _isSynchronisingReportDates =
-                        false;
-                }
-
                 return;
             }
 
             DateTime selectedStartDate =
                 dpReportStartDate.SelectedDate.Value.Date;
 
-            if (selectedStartDate > _reportEndDate)
-            {
-                txtReportGenerationStatus.Text =
-                    "Report Generation: Report Start Date cannot be later than Report End Date.";
-
-                _isSynchronisingReportDates =
-                    true;
-
-                try
-                {
-                    dpReportStartDate.SelectedDate =
-                        _reportStartDate;
-                }
-                finally
-                {
-                    _isSynchronisingReportDates =
-                        false;
-                }
-
-                return;
-            }
-
             _reportStartDate =
                 selectedStartDate;
 
             _reportDayOffset =
-                (int)(_reportEndDate - _reportStartDate).TotalDays;
+                Math.Abs(
+                    value:
+                        (int)(_reportEndDate - _reportStartDate).TotalDays);
 
             _isSynchronisingReportDates =
                 true;
@@ -4515,6 +4588,10 @@ namespace GNA_DLRreport
 
             txtReportGenerationStatus.Text =
                 string.Empty;
+
+            WarnIfReportStartPrecedesProjectStart();
+
+            UpdateChartReportDateInformation();
 
             #endregion
         }
@@ -4538,55 +4615,15 @@ namespace GNA_DLRreport
 
             if (!dpReportEndDate.SelectedDate.HasValue)
             {
-                _isSynchronisingReportDates =
-                    true;
-
-                try
-                {
-                    dpReportEndDate.SelectedDate =
-                        _reportEndDate;
-                }
-                finally
-                {
-                    _isSynchronisingReportDates =
-                        false;
-                }
-
                 return;
             }
 
             DateTime selectedEndDate =
                 dpReportEndDate.SelectedDate.Value.Date;
 
-            DateTime calculatedStartDate;
-
-            try
-            {
-                calculatedStartDate =
-                    selectedEndDate.AddDays(
-                        value: -_reportDayOffset);
-            }
-            catch (ArgumentOutOfRangeException)
-            {
-                txtReportGenerationStatus.Text =
-                    "Report Generation: The selected End Date and Day offset exceed the supported date range.";
-
-                _isSynchronisingReportDates =
-                    true;
-
-                try
-                {
-                    dpReportEndDate.SelectedDate =
-                        _reportEndDate;
-                }
-                finally
-                {
-                    _isSynchronisingReportDates =
-                        false;
-                }
-
-                return;
-            }
+            DateTime calculatedStartDate =
+                selectedEndDate.AddDays(
+                    value: -_reportDayOffset);
 
             _reportEndDate =
                 selectedEndDate;
@@ -4614,6 +4651,10 @@ namespace GNA_DLRreport
 
             txtReportGenerationStatus.Text =
                 string.Empty;
+
+            WarnIfReportStartPrecedesProjectStart();
+
+            UpdateChartReportDateInformation();
 
             #endregion
         }
@@ -4654,30 +4695,14 @@ namespace GNA_DLRreport
                     s: txtReportDayOffset.Text,
                     style: NumberStyles.None,
                     provider: CultureInfo.InvariantCulture,
-                    result: out int selectedDayOffset) ||
-                selectedDayOffset < 0)
+                    result: out int selectedDayOffset))
             {
-                txtReportGenerationStatus.Text =
-                    "Report Generation: Day offset must be a nonnegative whole number.";
-
                 return;
             }
 
-            DateTime calculatedStartDate;
-
-            try
-            {
-                calculatedStartDate =
-                    _reportEndDate.AddDays(
-                        value: -selectedDayOffset);
-            }
-            catch (ArgumentOutOfRangeException)
-            {
-                txtReportGenerationStatus.Text =
-                    "Report Generation: The Day offset exceeds the supported date range.";
-
-                return;
-            }
+            DateTime calculatedStartDate =
+                _reportEndDate.AddDays(
+                    value: -selectedDayOffset);
 
             _reportDayOffset =
                 selectedDayOffset;
@@ -4702,47 +4727,612 @@ namespace GNA_DLRreport
             txtReportGenerationStatus.Text =
                 string.Empty;
 
+            WarnIfReportStartPrecedesProjectStart();
+
+            UpdateChartReportDateInformation();
+
             #endregion
         }
 
 
-        private void txtReportDayOffset_LostFocus(
+        private void WarnIfReportStartPrecedesProjectStart()
+        {
+            #region Warn Without Changing Dates
+
+            if (!dpReportProjectStart.SelectedDate.HasValue ||
+                !dpReportStartDate.SelectedDate.HasValue ||
+                dpReportStartDate.SelectedDate.Value.Date >=
+                dpReportProjectStart.SelectedDate.Value.Date)
+            {
+                return;
+            }
+
+            const string warningMessage =
+                "Report Start Date precedes Project Start. " +
+                "The selected dates have not been changed.";
+
+            txtReportGenerationStatus.Text =
+                $"Report Generation: {warningMessage}";
+
+            MessageBox.Show(
+                owner: this,
+                messageBoxText: warningMessage,
+                caption: "Report Generation Date Warning",
+                button: MessageBoxButton.OK,
+                icon: MessageBoxImage.Warning);
+
+            #endregion
+        }
+
+
+        #endregion
+
+
+        #region Temporary Coordinate Data Insert
+
+        private async void btnInsertCoordinateData_Click(
             object sender,
             RoutedEventArgs e)
         {
-            if (!IsInitialized)
+            #region Validate Data Insert Context
+
+            if (!_activeProjectId.HasValue)
             {
+                txtDataInsertStatus.Text =
+                    "Data Insert: Select an active project.";
+
                 return;
             }
 
-            #region Restore Last Valid Day Offset
-
-            if (int.TryParse(
-                    s: txtReportDayOffset.Text,
-                    style: NumberStyles.None,
-                    provider: CultureInfo.InvariantCulture,
-                    result: out int selectedDayOffset) &&
-                selectedDayOffset >= 0)
+            if (!dpReportStartDate.SelectedDate.HasValue ||
+                !dpReportEndDate.SelectedDate.HasValue)
             {
+                txtDataInsertStatus.Text =
+                    "Data Insert: Select Report Start and Report End dates.";
+
                 return;
             }
 
-            _isSynchronisingReportDates =
-                true;
+            DateTime reportStartDate =
+                dpReportStartDate.SelectedDate.Value.Date;
 
-            try
+            DateTime reportEndDate =
+                dpReportEndDate.SelectedDate.Value.Date;
+
+            if (reportStartDate >= reportEndDate)
             {
-                txtReportDayOffset.Text =
-                    _reportDayOffset.ToString(
-                        provider: CultureInfo.InvariantCulture);
-            }
-            finally
-            {
-                _isSynchronisingReportDates =
-                    false;
+                txtDataInsertStatus.Text =
+                    "Data Insert: Report End Date must be at least one day later than Report Start Date.";
+
+                return;
             }
 
             #endregion
+
+
+            #region Generate And Insert Data
+
+            btnInsertCoordinateData.IsEnabled =
+                false;
+
+            txtDataInsertStatus.Text =
+                "Clearing epoch tables and inserting test coordinate data...";
+
+            try
+            {
+                (int pointCount, int timeBlockCount, long coordinateRowCount) =
+                    await InsertTemporaryCoordinateDataAsync(
+                        projectId: _activeProjectId.Value,
+                        reportStartDate: reportStartDate,
+                        reportEndDate: reportEndDate);
+
+                txtDataInsertStatus.Text =
+                    $"Data Insert complete: {pointCount} point(s), " +
+                    $"{timeBlockCount} two-hour block(s), " +
+                    $"{coordinateRowCount} row(s) inserted into each epoch table.";
+            }
+            catch (Exception ex)
+            {
+                txtDataInsertStatus.Text =
+                    $"Data Insert failed; all changes were rolled back: {ex.Message}";
+            }
+            finally
+            {
+                btnInsertCoordinateData.IsEnabled =
+                    _activeProjectId.HasValue;
+            }
+
+            #endregion
+        }
+
+
+        private async Task<(int PointCount, int TimeBlockCount, long CoordinateRowCount)>
+            InsertTemporaryCoordinateDataAsync(
+                int projectId,
+                DateTime reportStartDate,
+                DateTime reportEndDate)
+        {
+            #region Open Database Transaction
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString:
+                        GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            using SqlTransaction transaction =
+                databaseConnection.BeginTransaction(
+                    iso: System.Data.IsolationLevel.Serializable);
+
+            try
+            {
+                #region Read Active Project Time Zone
+
+                const string projectSql = """
+                    SELECT [TimeZoneId]
+                    FROM [dbo].[Project]
+                    WHERE
+                        [Project_ID] = @Project_ID
+                        AND [IsDeleted] = 0;
+                    """;
+
+                string timeZoneId;
+
+                await using (SqlCommand projectCommand =
+                    new(
+                        cmdText: projectSql,
+                        connection: databaseConnection,
+                        transaction: transaction))
+                {
+                    projectCommand.Parameters.Add(
+                        parameterName: "@Project_ID",
+                        sqlDbType: System.Data.SqlDbType.Int)
+                        .Value =
+                            projectId;
+
+                    object? timeZoneValue =
+                        await projectCommand.ExecuteScalarAsync();
+
+                    if (timeZoneValue is null ||
+                        timeZoneValue == DBNull.Value ||
+                        string.IsNullOrWhiteSpace(
+                            value: Convert.ToString(
+                                value: timeZoneValue,
+                                provider: CultureInfo.InvariantCulture)))
+                    {
+                        throw new InvalidOperationException(
+                            "The active project does not have a valid time zone.");
+                    }
+
+                    timeZoneId =
+                        Convert.ToString(
+                            value: timeZoneValue,
+                            provider: CultureInfo.InvariantCulture)
+                        ?? throw new InvalidOperationException(
+                            "The active project time zone could not be read.");
+                }
+
+                TimeZoneInfo projectTimeZone =
+                    TimeZoneInfo.FindSystemTimeZoneById(
+                        id: timeZoneId);
+
+                DateTime localStart =
+                    DateTime.SpecifyKind(
+                        value: reportStartDate.Date,
+                        kind: DateTimeKind.Unspecified);
+
+                DateTime localEndExclusive =
+                    DateTime.SpecifyKind(
+                        value: reportEndDate.Date.AddDays(
+                            value: 1),
+                        kind: DateTimeKind.Unspecified);
+
+                DateTime startUtc =
+                    TimeZoneInfo.ConvertTimeToUtc(
+                        dateTime: localStart,
+                        sourceTimeZone: projectTimeZone);
+
+                DateTime endUtcExclusive =
+                    TimeZoneInfo.ConvertTimeToUtc(
+                        dateTime: localEndExclusive,
+                        sourceTimeZone: projectTimeZone);
+
+                #endregion
+
+
+                #region Clear Existing Epoch Rows
+
+                const string clearEpochSql = """
+                    DELETE FROM [dbo].[DhEpochs];
+                    DELETE FROM [dbo].[CoordinatesEpochs];
+                    """;
+
+                await using (SqlCommand clearEpochCommand =
+                    new(
+                        cmdText: clearEpochSql,
+                        connection: databaseConnection,
+                        transaction: transaction))
+                {
+                    await clearEpochCommand.ExecuteNonQueryAsync();
+                }
+
+                #endregion
+
+
+                #region Read Active Project Points And References
+
+                const string pointsSql = """
+                    SELECT
+                        P.[PointName_ID],
+                        P.[PointName],
+                        CR.[Eref],
+                        CR.[Nref],
+                        CR.[Href]
+                    FROM [dbo].[PointName] AS P
+                    LEFT JOIN [dbo].[CoordinatesReference] AS CR
+                        ON CR.[PointName_ID] = P.[PointName_ID]
+                        AND CR.[IsDeleted] = 0
+                    WHERE
+                        P.[Project_ID] = @Project_ID
+                        AND P.[IsDeleted] = 0
+                    ORDER BY
+                        P.[PointName_ID];
+                    """;
+
+                List<(int PointNameId, string PointName, decimal Eref, decimal Nref, decimal Href)>
+                    points =
+                        new();
+
+                List<string> pointsWithoutReferences =
+                    new();
+
+                await using (SqlCommand pointsCommand =
+                    new(
+                        cmdText: pointsSql,
+                        connection: databaseConnection,
+                        transaction: transaction))
+                {
+                    pointsCommand.Parameters.Add(
+                        parameterName: "@Project_ID",
+                        sqlDbType: System.Data.SqlDbType.Int)
+                        .Value =
+                            projectId;
+
+                    await using SqlDataReader reader =
+                        await pointsCommand.ExecuteReaderAsync();
+
+                    while (await reader.ReadAsync())
+                    {
+                        string pointName =
+                            reader.GetString(
+                                i: 1);
+
+                        if (reader.IsDBNull(
+                                i: 2) ||
+                            reader.IsDBNull(
+                                i: 3) ||
+                            reader.IsDBNull(
+                                i: 4))
+                        {
+                            pointsWithoutReferences.Add(
+                                item: pointName);
+
+                            continue;
+                        }
+
+                        points.Add(
+                            item:
+                                (
+                                    PointNameId: reader.GetInt32(
+                                        i: 0),
+                                    PointName: pointName,
+                                    Eref: reader.GetDecimal(
+                                        i: 2),
+                                    Nref: reader.GetDecimal(
+                                        i: 3),
+                                    Href: reader.GetDecimal(
+                                        i: 4)
+                                ));
+                    }
+                }
+
+                if (pointsWithoutReferences.Count > 0)
+                {
+                    throw new InvalidOperationException(
+                        "Reference coordinates are missing for: " +
+                        string.Join(
+                            separator: ", ",
+                            values: pointsWithoutReferences));
+                }
+
+                if (points.Count == 0)
+                {
+                    throw new InvalidOperationException(
+                        "The active project has no available points with reference coordinates.");
+                }
+
+                #endregion
+
+
+                #region Prepare Epoch Insert Commands
+
+                const string coordinateInsertSql = """
+                    INSERT INTO [dbo].[CoordinatesEpochs]
+                    (
+                        [PointName_ID],
+                        [UTCtime],
+                        [LatestReading],
+                        [ReadingCount],
+                        [E],
+                        [N],
+                        [H],
+                        [IsDeleted]
+                    )
+                    VALUES
+                    (
+                        @PointName_ID,
+                        @UTCtime,
+                        @LatestReading,
+                        @ReadingCount,
+                        @E,
+                        @N,
+                        @H,
+                        0
+                    );
+                    """;
+
+                const string dhInsertSql = """
+                    INSERT INTO [dbo].[DhEpochs]
+                    (
+                        [UTCtime],
+                        [PointName_ID],
+                        [dH],
+                        [IsDeleted]
+                    )
+                    VALUES
+                    (
+                        @UTCtime,
+                        @PointName_ID,
+                        @dH,
+                        0
+                    );
+                    """;
+
+                await using SqlCommand coordinateInsertCommand =
+                    new(
+                        cmdText: coordinateInsertSql,
+                        connection: databaseConnection,
+                        transaction: transaction);
+
+                SqlParameter coordinatePointIdParameter =
+                    coordinateInsertCommand.Parameters.Add(
+                        parameterName: "@PointName_ID",
+                        sqlDbType: System.Data.SqlDbType.Int);
+
+                SqlParameter coordinateUtcParameter =
+                    coordinateInsertCommand.Parameters.Add(
+                        parameterName: "@UTCtime",
+                        sqlDbType: System.Data.SqlDbType.DateTime2);
+
+                coordinateUtcParameter.Scale =
+                    0;
+
+                SqlParameter coordinateLatestReadingParameter =
+                    coordinateInsertCommand.Parameters.Add(
+                        parameterName: "@LatestReading",
+                        sqlDbType: System.Data.SqlDbType.DateTime2);
+
+                coordinateLatestReadingParameter.Scale =
+                    0;
+
+                SqlParameter coordinateReadingCountParameter =
+                    coordinateInsertCommand.Parameters.Add(
+                        parameterName: "@ReadingCount",
+                        sqlDbType: System.Data.SqlDbType.Int);
+
+                SqlParameter coordinateEParameter =
+                    AddDecimalParameter(
+                        command: coordinateInsertCommand,
+                        parameterName: "@E",
+                        precision: 18,
+                        scale: 4);
+
+                SqlParameter coordinateNParameter =
+                    AddDecimalParameter(
+                        command: coordinateInsertCommand,
+                        parameterName: "@N",
+                        precision: 18,
+                        scale: 4);
+
+                SqlParameter coordinateHParameter =
+                    AddDecimalParameter(
+                        command: coordinateInsertCommand,
+                        parameterName: "@H",
+                        precision: 18,
+                        scale: 4);
+
+                await using SqlCommand dhInsertCommand =
+                    new(
+                        cmdText: dhInsertSql,
+                        connection: databaseConnection,
+                        transaction: transaction);
+
+                SqlParameter dhUtcParameter =
+                    dhInsertCommand.Parameters.Add(
+                        parameterName: "@UTCtime",
+                        sqlDbType: System.Data.SqlDbType.DateTime2);
+
+                dhUtcParameter.Scale =
+                    0;
+
+                SqlParameter dhPointIdParameter =
+                    dhInsertCommand.Parameters.Add(
+                        parameterName: "@PointName_ID",
+                        sqlDbType: System.Data.SqlDbType.Int);
+
+                SqlParameter dhValueParameter =
+                    AddDecimalParameter(
+                        command: dhInsertCommand,
+                        parameterName: "@dH",
+                        precision: 18,
+                        scale: 4);
+
+                #endregion
+
+
+                #region Generate And Insert Epoch Rows
+
+                Random random =
+                    new();
+
+                int timeBlockCount =
+                    0;
+
+                long coordinateRowCount =
+                    0;
+
+                for (DateTime utcTime = startUtc;
+                     utcTime < endUtcExclusive;
+                     utcTime = utcTime.AddHours(
+                         value: 2))
+                {
+                    foreach ((int pointNameId, string pointName, decimal eRef, decimal nRef, decimal hRef)
+                        in points)
+                    {
+                        decimal dE =
+                            CreateRandomTestDisplacement(
+                                random: random);
+
+                        decimal dN =
+                            CreateRandomTestDisplacement(
+                                random: random);
+
+                        decimal dH =
+                            CreateRandomTestDisplacement(
+                                random: random);
+
+                        decimal e =
+                            Math.Round(
+                                d: eRef + dE,
+                                decimals: 4,
+                                mode: MidpointRounding.AwayFromZero);
+
+                        decimal n =
+                            Math.Round(
+                                d: nRef + dN,
+                                decimals: 4,
+                                mode: MidpointRounding.AwayFromZero);
+
+                        decimal h =
+                            Math.Round(
+                                d: hRef + dH,
+                                decimals: 4,
+                                mode: MidpointRounding.AwayFromZero);
+
+                        coordinatePointIdParameter.Value =
+                            pointNameId;
+
+                        coordinateUtcParameter.Value =
+                            utcTime;
+
+                        coordinateLatestReadingParameter.Value =
+                            utcTime;
+
+                        coordinateReadingCountParameter.Value =
+                            1;
+
+                        coordinateEParameter.Value =
+                            e;
+
+                        coordinateNParameter.Value =
+                            n;
+
+                        coordinateHParameter.Value =
+                            h;
+
+                        await coordinateInsertCommand.ExecuteNonQueryAsync();
+
+                        dhUtcParameter.Value =
+                            utcTime;
+
+                        dhPointIdParameter.Value =
+                            pointNameId;
+
+                        dhValueParameter.Value =
+                            dH;
+
+                        await dhInsertCommand.ExecuteNonQueryAsync();
+
+                        coordinateRowCount++;
+                    }
+
+                    timeBlockCount++;
+                }
+
+                #endregion
+
+
+                #region Commit Generated Data
+
+                transaction.Commit();
+
+                return
+                    (
+                        PointCount: points.Count,
+                        TimeBlockCount: timeBlockCount,
+                        CoordinateRowCount: coordinateRowCount
+                    );
+
+                #endregion
+            }
+            catch
+            {
+                transaction.Rollback();
+
+                throw;
+            }
+
+            #endregion
+        }
+
+
+        private static SqlParameter AddDecimalParameter(
+            SqlCommand command,
+            string parameterName,
+            byte precision,
+            byte scale)
+        {
+            SqlParameter parameter =
+                command.Parameters.Add(
+                    parameterName: parameterName,
+                    sqlDbType: System.Data.SqlDbType.Decimal);
+
+            parameter.Precision =
+                precision;
+
+            parameter.Scale =
+                scale;
+
+            return parameter;
+        }
+
+
+        private static decimal CreateRandomTestDisplacement(
+            Random random)
+        {
+            ArgumentNullException.ThrowIfNull(
+                argument: random);
+
+            double randomValue =
+                (random.NextDouble() * 0.04) - 0.02;
+
+            return Math.Round(
+                d: Convert.ToDecimal(
+                    value: randomValue,
+                    provider: CultureInfo.InvariantCulture),
+                decimals: 4,
+                mode: MidpointRounding.AwayFromZero);
         }
 
         #endregion
@@ -9134,6 +9724,8 @@ namespace GNA_DLRreport
                     _isUpdatingReportProjectStart =
                         false;
                 }
+
+                WarnIfReportStartPrecedesProjectStart();
             }
 
             dgProjects.Items.Refresh();
@@ -11492,6 +12084,98 @@ namespace GNA_DLRreport
         }
 
 
+        private static int GetChartUnitDecimalPlaces(
+            string unit)
+        {
+            #region Resolve Unit Display Precision
+
+            return unit.Trim().ToLowerInvariant() switch
+            {
+                "decimal degrees" => 6,
+                "mm/m" => 1,
+                "mm" => 1,
+                "mm/3m" => 1,
+                "ratio" => 0,
+                "mm/15m" => 1,
+                _ => 3
+            };
+
+            #endregion
+        }
+
+
+        private static string FormatChartEngineeringValue(
+            decimal value,
+            string unit)
+        {
+            #region Format Engineering Value
+
+            int decimalPlaces =
+                GetChartUnitDecimalPlaces(
+                    unit: unit);
+
+            return value.ToString(
+                format: $"F{decimalPlaces}",
+                provider: CultureInfo.InvariantCulture);
+
+            #endregion
+        }
+
+
+        private static string FormatChartEngineeringValue(
+            double value,
+            string unit)
+        {
+            #region Format Engineering Value
+
+            int decimalPlaces =
+                GetChartUnitDecimalPlaces(
+                    unit: unit);
+
+            return value.ToString(
+                format: $"F{decimalPlaces}",
+                provider: CultureInfo.InvariantCulture);
+
+            #endregion
+        }
+
+
+        private void ApplyChartEngineeringDisplayPrecision()
+        {
+            #region Apply Unit Display Precision
+
+            if (cmbChartType.SelectedItem
+                is not ChartTypeUiItem chartType)
+            {
+                return;
+            }
+
+            foreach (TextBox textBox in new[]
+            {
+                txtChartGreenTrigger,
+                txtChartAmberTrigger,
+                txtChartRedTrigger,
+                txtChartYAxisMinimum,
+                txtChartYAxisMaximum
+            })
+            {
+                if (decimal.TryParse(
+                    s: textBox.Text,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture,
+                    result: out decimal value))
+                {
+                    textBox.Text =
+                        FormatChartEngineeringValue(
+                            value: value,
+                            unit: chartType.Unit);
+                }
+            }
+
+            #endregion
+        }
+
+
         private void ApplyChartTypeDefaults(
             ChartTypeUiItem chartType)
         {
@@ -11599,6 +12283,8 @@ namespace GNA_DLRreport
             {
                 ApplyDefaultVerticalAxisFromRedTrigger();
             }
+
+            ApplyChartEngineeringDisplayPrecision();
         }
 
         #endregion
@@ -11639,6 +12325,8 @@ namespace GNA_DLRreport
             if (cmbChartType.SelectedItem
                 is not ChartTypeUiItem selectedType)
             {
+                _chartEntityLoadVersion++;
+
                 txtChartDataSource.Text =
                     string.Empty;
 
@@ -11654,6 +12342,8 @@ namespace GNA_DLRreport
                 cmbChartSeriesEntity.ItemsSource =
                     null;
 
+                _allChartSeriesEntities.Clear();
+
                 return;
             }
 
@@ -11668,6 +12358,8 @@ namespace GNA_DLRreport
 
             ApplyChartTypeDefaults(
                 chartType: selectedType);
+
+            ApplyChartEngineeringDisplayPrecision();
 
             cmbChartDataElement.ItemsSource =
                 selectedType.DataElements;
@@ -11713,6 +12405,13 @@ namespace GNA_DLRreport
         private async Task LoadChartEntitiesAsync(
             ChartTypeUiItem chartType)
         {
+            #region Begin Latest Entity Load
+
+            int loadVersion =
+                ++_chartEntityLoadVersion;
+
+            _allChartSeriesEntities.Clear();
+
             cmbChartSeriesEntity.ItemsSource =
                 null;
 
@@ -11720,6 +12419,8 @@ namespace GNA_DLRreport
             {
                 return;
             }
+
+            #endregion
 
             string sql = chartType.EntityKind switch
             {
@@ -11798,26 +12499,36 @@ namespace GNA_DLRreport
                         });
             }
 
-            HashSet<int> selectedEntityIds =
-                _chartSeries
-                    .Where(
-                        predicate: series => series.EntityId > 0)
-                    .Select(
-                        selector: series => series.EntityId)
-                    .ToHashSet();
+            #region Publish Only The Latest Distinct Entity Result
 
-            entities.RemoveAll(
-                match: entity => selectedEntityIds.Contains(
-                    item: entity.EntityId));
+            if (loadVersion != _chartEntityLoadVersion)
+            {
+                return;
+            }
+
+            List<ChartEntityUiItem> distinctEntities =
+                entities
+                    .GroupBy(
+                        keySelector: entity => entity.EntityId)
+                    .Select(
+                        selector: group => group.First())
+                    .OrderBy(
+                        keySelector: entity => entity.DisplayName,
+                        comparer: StringComparer.CurrentCultureIgnoreCase)
+                    .ToList();
+
+            _allChartSeriesEntities.AddRange(
+                collection: distinctEntities);
+
+            #endregion
 
             cmbChartSeriesEntity.ItemsSource =
-                entities;
+                _allChartSeriesEntities;
 
-            if (entities.Count > 0)
-            {
-                cmbChartSeriesEntity.SelectedIndex =
-                    0;
-            }
+            cmbChartSeriesEntity.SelectedIndex =
+                _allChartSeriesEntities.Count > 0
+                    ? 0
+                    : -1;
         }
 
 
@@ -11832,6 +12543,9 @@ namespace GNA_DLRreport
 
             _loadedChartNumber =
                 null;
+
+            _chartCopyBaseName =
+                string.Empty;
 
             _loadedChartTemplateId =
                 null;
@@ -11851,6 +12565,8 @@ namespace GNA_DLRreport
             txtChartName.Clear();
 
             _chartSeries.Clear();
+
+            ResetChartAxisAliasControls();
 
             SelectDefaultChartType();
 
@@ -11902,6 +12618,8 @@ namespace GNA_DLRreport
             chkChartGridLines.IsChecked =
                 true;
 
+            ResetChartAxisAliasControls();
+
             txtChartStatus.Text =
                 "New chart canvas ready with default values.";
 
@@ -11919,31 +12637,26 @@ namespace GNA_DLRreport
 
             try
             {
-                if (!_activeProjectId.HasValue)
-                {
-                    throw new InvalidOperationException(
-                        "Select an active project.");
-                }
+                btnChartPreviewChart.IsEnabled =
+                    false;
 
-                await RefreshExistingChartsAsync();
-
-                if (cmbExistingChart.SelectedItem
-                    is not ExistingChartUiItem selectedChart)
-                {
-                    txtChartStatus.Text =
-                        "Select an existing chart.";
-
-                    return;
-                }
-
-                await LoadChartDefinitionIntoEditorAsync(
-                    chartDefinitionId: selectedChart.ChartDefinitionId);
+                ExistingChartUiItem selectedChart =
+                    await LoadSelectedExistingChartIntoEditorAsync();
 
                 txtChartStatus.Text =
                     $"Loaded {selectedChart.DisplayText}.";
+
+                _chartCopyBaseName =
+                    selectedChart.ChartName;
+
+                btnChartPreviewChart.IsEnabled =
+                    true;
             }
             catch (Exception ex)
             {
+                btnChartPreviewChart.IsEnabled =
+                    false;
+
                 txtChartStatus.Text =
                     $"Unable to load chart: {ex.Message}";
             }
@@ -11952,49 +12665,145 @@ namespace GNA_DLRreport
         }
 
 
-        private void btnChartCopy_Click(
+        private async Task<ExistingChartUiItem>
+            LoadSelectedExistingChartIntoEditorAsync()
+        {
+            #region Load Selected Chart Into Complete Editor
+
+            if (!_activeProjectId.HasValue)
+            {
+                throw new InvalidOperationException(
+                    "Select an active project.");
+            }
+
+            ExistingChartUiItem selectedChart =
+                cmbExistingChart.SelectedItem
+                as ExistingChartUiItem
+                ?? throw new InvalidOperationException(
+                    "Select an existing chart.");
+
+            await LoadChartDefinitionIntoEditorAsync(
+                chartDefinitionId:
+                    selectedChart.ChartDefinitionId);
+
+            return selectedChart;
+
+            #endregion
+        }
+
+
+        private void cmbExistingChart_SelectionChanged(
+            object sender,
+            SelectionChangedEventArgs e)
+        {
+            #region Update Preview Chart Availability
+
+            btnChartPreviewChart.IsEnabled =
+                false;
+
+            #endregion
+        }
+
+
+        private async void btnChartCopy_Click(
             object sender,
             RoutedEventArgs e)
         {
-            #region Copy Current Chart Definition
+            #region Validate Copy Source
 
-            if (string.IsNullOrWhiteSpace(
-                value: txtChartName.Text))
+            if (!_loadedChartDefinitionId.HasValue ||
+                string.IsNullOrWhiteSpace(
+                    value: _chartCopyBaseName))
             {
                 txtChartStatus.Text =
-                    "Load or define a chart before creating a copy.";
+                    "Load an existing chart before creating a copy.";
 
                 return;
             }
 
-            // All current editor settings already represent the source chart.
-            // Creating a copy therefore preserves all settings and only removes
-            // the database identity and changes the name.
+            if (!TryValidateChartConfiguration(
+                validationMessage: out string validationMessage))
+            {
+                txtChartStatus.Text =
+                    validationMessage;
 
-            _loadedChartDefinitionId =
-                null;
+                return;
+            }
 
-            _loadedChartNumber =
-                null;
+            #endregion
 
-            cmbExistingChart.SelectedItem =
-                null;
 
-            txtChartNumber.Text =
-                "New";
+            #region Save Complete Chart Copy
 
-            string sourceName =
-                txtChartName.Text.Trim();
+            int? originalChartDefinitionId =
+                _loadedChartDefinitionId;
 
-            txtChartName.Text =
-                $"{sourceName}-Copy";
+            int? originalChartNumber =
+                _loadedChartNumber;
 
-            txtChartStatus.Text =
-                "Chart copied. All settings retained; edit the copy and Commit.";
+            string originalChartName =
+                txtChartName.Text;
 
-            txtChartName.Focus();
+            try
+            {
+                await EnsureChartTypeCatalogueAsync();
 
-            txtChartName.SelectAll();
+                int suffix =
+                    1;
+
+                string copyName;
+
+                do
+                {
+                    copyName =
+                        $"{_chartCopyBaseName}{suffix}";
+
+                    suffix++;
+                }
+                while (await FindChartByNameAsync(
+                    chartName: copyName,
+                    excludeChartDefinitionId: null) is not null);
+
+                txtChartName.Text =
+                    copyName;
+
+                ApplyChartAppearanceToSeries();
+
+                (int ChartDefinitionId, int ChartNumber) copyResult =
+                    await SaveChartDefinitionAsync(
+                        chartDefinitionId: null,
+                        chartNumber: null);
+
+                _loadedChartDefinitionId =
+                    copyResult.ChartDefinitionId;
+
+                _loadedChartNumber =
+                    copyResult.ChartNumber;
+
+                txtChartNumber.Text =
+                    $"Chart_{copyResult.ChartNumber:0000}";
+
+                await RefreshExistingChartsAsync(
+                    selectedChartDefinitionId:
+                        copyResult.ChartDefinitionId);
+
+                txtChartStatus.Text =
+                    $"Chart '{copyName}' created and saved.";
+            }
+            catch (Exception ex)
+            {
+                _loadedChartDefinitionId =
+                    originalChartDefinitionId;
+
+                _loadedChartNumber =
+                    originalChartNumber;
+
+                txtChartName.Text =
+                    originalChartName;
+
+                txtChartStatus.Text =
+                    $"Unable to copy chart: {ex.Message}";
+            }
 
             #endregion
         }
@@ -12790,11 +13599,7 @@ namespace GNA_DLRreport
                         2.0);
 
             double defaultMarkerSize =
-                ParseNonNegativeDoubleOrDefault(
-                    text:
-                        txtChartDefaultMarkerSize.Text,
-                    defaultValue:
-                        4.0);
+                GetSelectedChartMarkerSize();
 
             #endregion
 
@@ -13792,10 +14597,11 @@ namespace GNA_DLRreport
                     provider:
                         CultureInfo.InvariantCulture);
 
-            txtChartDefaultMarkerSize.Text =
-                defaultMarkerSize.ToString(
-                    provider:
-                        CultureInfo.InvariantCulture);
+            SelectChartMarkerSize(
+                markerSize:
+                    Convert.ToDouble(
+                        value: defaultMarkerSize,
+                        provider: CultureInfo.InvariantCulture));
 
             chkChartGridLines.IsChecked =
                 showGridLines;
@@ -13875,6 +14681,8 @@ namespace GNA_DLRreport
                                         CultureInfo.InvariantCulture)
                         });
             }
+
+            ApplyChartEngineeringDisplayPrecision();
 
             #endregion
         }
@@ -14102,10 +14910,19 @@ namespace GNA_DLRreport
         {
             #region Clear Existing Chart List
 
+            int? chartDefinitionIdToRestore =
+                selectedChartDefinitionId
+                ?? (cmbExistingChart.SelectedItem
+                    as ExistingChartUiItem)
+                    ?.ChartDefinitionId;
+
             _existingCharts.Clear();
 
             if (!_activeProjectId.HasValue)
             {
+                btnChartPreviewChart.IsEnabled =
+                    false;
+
                 return;
             }
 
@@ -14179,13 +14996,13 @@ namespace GNA_DLRreport
 
             #region Restore Selection
 
-            if (selectedChartDefinitionId.HasValue)
+            if (chartDefinitionIdToRestore.HasValue)
             {
                 foreach (ExistingChartUiItem item
                     in _existingCharts)
                 {
                     if (item.ChartDefinitionId ==
-                        selectedChartDefinitionId.Value)
+                        chartDefinitionIdToRestore.Value)
                     {
                         cmbExistingChart.SelectedItem =
                             item;
@@ -14194,6 +15011,9 @@ namespace GNA_DLRreport
                     }
                 }
             }
+
+            btnChartPreviewChart.IsEnabled =
+                false;
 
             #endregion
         }
@@ -14532,7 +15352,10 @@ namespace GNA_DLRreport
                         provider: CultureInfo.InvariantCulture);
 
             txtChartTitleOverride.Text =
-                chartTitle;
+                string.IsNullOrWhiteSpace(
+                    value: chartTitle)
+                    ? chartName
+                    : chartTitle;
 
             #endregion
 
@@ -14555,6 +15378,16 @@ namespace GNA_DLRreport
                     chartDefinitionId,
                 databaseConnection:
                     databaseConnection);
+
+            await LoadChartEntitiesAsync(
+                chartType:
+                    _chartTypes.First(
+                        predicate: item => string.Equals(
+                            a: item.Key,
+                            b: chartTypeKey,
+                            comparisonType: StringComparison.OrdinalIgnoreCase)));
+
+            ApplyChartEngineeringDisplayPrecision();
 
             #endregion
         }
@@ -14715,6 +15548,18 @@ namespace GNA_DLRreport
 
             while (await reader.ReadAsync())
             {
+                string colourHex =
+                    reader.IsDBNull(4)
+                        ? string.Empty
+                        : reader.GetString(4);
+
+                if (string.IsNullOrWhiteSpace(
+                    value: colourHex))
+                {
+                    colourHex =
+                        CreateRandomChartSeriesColour();
+                }
+
                 _chartSeries.Add(
                     item:
                         new ChartSeriesUiItem
@@ -14735,9 +15580,7 @@ namespace GNA_DLRreport
                                 reader.GetString(3),
 
                             ColourHex =
-                                reader.IsDBNull(4)
-                                    ? string.Empty
-                                    : reader.GetString(4),
+                                colourHex,
 
                             LineWidth =
                                 Convert.ToDouble(
@@ -14751,6 +15594,8 @@ namespace GNA_DLRreport
                         });
             }
 
+            RestoreChartAxisAliasControlsFromSeries();
+
             #endregion
         }
 
@@ -14761,6 +15606,8 @@ namespace GNA_DLRreport
                 int? chartNumber)
         {
             #region Validate Active Project And Selected Type
+
+            ApplyChartAppearanceToSeries();
 
             if (!_activeProjectId.HasValue)
             {
@@ -15793,7 +16640,8 @@ namespace GNA_DLRreport
 
         #region Chart Preview Data
 
-        private async Task LoadChartPreviewDataAsync()
+        private async Task LoadChartPreviewDataAsync(
+            bool includeSeriesData)
         {
             if (!_activeProjectId.HasValue ||
                 cmbChartType.SelectedItem is not ChartTypeUiItem chartType)
@@ -15846,6 +16694,9 @@ namespace GNA_DLRreport
                 TimeZoneInfo.FindSystemTimeZoneById(
                     id: timeZoneId);
 
+            _chartPreviewTimeZone =
+                projectTimeZone;
+
             DateTime reportStartDate =
                 dpReportStartDate.SelectedDate?.Date
                 ?? throw new InvalidOperationException(
@@ -15867,7 +16718,7 @@ namespace GNA_DLRreport
                     ? projectStartDate
                     : reportStartDate;
 
-            if (previewStartDate > reportEndDate)
+            if (previewStartDate >= reportEndDate)
             {
                 string selectedStartDescription =
                     string.Equals(
@@ -15913,19 +16764,12 @@ namespace GNA_DLRreport
 
             _chartPreviewSeries.Clear();
 
-            Brush[] palette =
-            [
-                Brushes.Blue,
-                Brushes.DarkOrange,
-                Brushes.ForestGreen,
-                Brushes.Purple,
-                Brushes.Crimson,
-                Brushes.Teal,
-                Brushes.SaddleBrown,
-                Brushes.DeepPink
-            ];
+            _chartPreviewTemperaturePoints.Clear();
 
-            int seriesIndex = 0;
+            if (!includeSeriesData)
+            {
+                return;
+            }
 
             foreach (ChartSeriesUiItem configuredSeries
                 in _chartSeries.OrderBy(
@@ -15961,10 +16805,14 @@ namespace GNA_DLRreport
                     new()
                     {
                         LegendText = configuredSeries.LegendText,
-                        Stroke = palette[seriesIndex % palette.Length],
+                        Stroke = GetChartSeriesBrush(
+                            colourHex: configuredSeries.ColourHex),
                         LineWidth = Math.Max(
                             val1: 0.5,
-                            val2: configuredSeries.LineWidth)
+                            val2: configuredSeries.LineWidth),
+                        MarkerSize = Math.Max(
+                            val1: 0.0,
+                            val2: configuredSeries.MarkerSize)
                     };
 
                 await using SqlCommand seriesCommand =
@@ -16006,10 +16854,181 @@ namespace GNA_DLRreport
 
                 _chartPreviewSeries.Add(
                     item: previewSeries);
-
-                seriesIndex++;
             }
+
+            if (chkChartTemperature.IsChecked == true)
+            {
+                _chartPreviewTemperaturePoints.AddRange(
+                    collection:
+                        RetrieveTemperature(
+                            startUtc: _chartPreviewStartUtc,
+                            endUtcExclusive: _chartPreviewEndUtcExclusive));
+            }
+
+            ApplyAutomaticVerticalAxisFromPreviewData();
         }
+
+
+        #region Temporary Temperature Retrieval
+
+        private static IReadOnlyList<ChartPreviewPoint> RetrieveTemperature(
+            DateTime startUtc,
+            DateTime endUtcExclusive)
+        {
+            #region Generate Temporary Hourly Temperature Values
+
+            List<ChartPreviewPoint> temperaturePoints =
+                new();
+
+            for (DateTime readingTime = startUtc;
+                 readingTime < endUtcExclusive;
+                 readingTime = readingTime.AddHours(
+                     value: 1))
+            {
+                double temperatureCelsius =
+                    20.0 +
+                    (Random.Shared.NextDouble() * 10.0);
+
+                temperaturePoints.Add(
+                    item:
+                        new ChartPreviewPoint(
+                            UtcTime: readingTime,
+                            Value: temperatureCelsius));
+            }
+
+            return temperaturePoints;
+
+            #endregion
+        }
+
+        #endregion
+
+
+        #region Automatic Vertical Axis From Preview Data
+
+        private void ApplyAutomaticVerticalAxisFromPreviewData()
+        {
+            if (chkChartAutomaticYAxis.IsChecked != true)
+            {
+                return;
+            }
+
+            decimal maximumAbsoluteValue =
+                0m;
+
+            foreach (ChartPreviewSeries previewSeries in _chartPreviewSeries)
+            {
+                foreach (ChartPreviewPoint previewPoint in previewSeries.Points)
+                {
+                    if (!double.IsFinite(
+                        d: previewPoint.Value))
+                    {
+                        continue;
+                    }
+
+                    decimal absoluteValue =
+                        Math.Abs(
+                            value:
+                                Convert.ToDecimal(
+                                    value: previewPoint.Value,
+                                    provider: CultureInfo.InvariantCulture));
+
+                    maximumAbsoluteValue =
+                        Math.Max(
+                            val1: maximumAbsoluteValue,
+                            val2: absoluteValue);
+                }
+            }
+
+            if (decimal.TryParse(
+                    s: txtChartRedTrigger.Text,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture,
+                    result: out decimal redTrigger))
+            {
+                maximumAbsoluteValue =
+                    Math.Max(
+                        val1: maximumAbsoluteValue,
+                        val2: Math.Abs(
+                            value: redTrigger));
+            }
+
+            decimal axisExtent =
+                CalculateAutomaticAxisExtent(
+                    maximumAbsoluteValue: maximumAbsoluteValue);
+
+            string formattedExtent =
+                FormatChartEngineeringValue(
+                    value: axisExtent,
+                    unit:
+                        (cmbChartType.SelectedItem as ChartTypeUiItem)?.Unit
+                        ?? string.Empty);
+
+            txtChartYAxisMinimum.Text =
+                $"-{formattedExtent}";
+
+            txtChartYAxisMaximum.Text =
+                formattedExtent;
+        }
+
+
+        private static decimal CalculateAutomaticAxisExtent(
+            decimal maximumAbsoluteValue)
+        {
+            #region Add Ten Percent And Round To A Major Grid Line
+
+            decimal expandedMaximum =
+                maximumAbsoluteValue > 0m
+                    ? maximumAbsoluteValue * 1.10m
+                    : 1m;
+
+            const int majorAxisIntervalCount =
+                4;
+
+            decimal approximateInterval =
+                expandedMaximum /
+                majorAxisIntervalCount;
+
+            int intervalExponent =
+                (int)Math.Floor(
+                    d: Math.Log10(
+                        d: Convert.ToDouble(
+                            value: approximateInterval,
+                            provider: CultureInfo.InvariantCulture)));
+
+            decimal intervalMagnitude =
+                Convert.ToDecimal(
+                    value: Math.Pow(
+                        x: 10.0,
+                        y: intervalExponent),
+                    provider: CultureInfo.InvariantCulture);
+
+            decimal normalisedInterval =
+                approximateInterval /
+                intervalMagnitude;
+
+            decimal intervalMultiplier =
+                normalisedInterval <= 1m
+                    ? 1m
+                    : normalisedInterval <= 2m
+                        ? 2m
+                        : normalisedInterval <= 5m
+                            ? 5m
+                            : 10m;
+
+            decimal majorGridInterval =
+                intervalMultiplier *
+                intervalMagnitude;
+
+            return
+                Math.Ceiling(
+                    d: expandedMaximum / majorGridInterval) *
+                majorGridInterval;
+
+            #endregion
+        }
+
+        #endregion
 
 
         private static string GetChartPreviewValueExpression(
@@ -16031,6 +17050,13 @@ namespace GNA_DLRreport
                 ("PrismTiltMmPerM", "TiltX") => "E.[TiltX_MperM] * 1000.0",
                 ("PrismTiltMmPerM", "TiltY") => "E.[TiltY_MperM] * 1000.0",
                 ("CrackMeter", "d2D") or ("CrackMeter", "d3D") or ("CrackMeter", "dH") => $"E.[{dataElement}] * 1000.0",
+                _ when string.Equals(
+                    a: chartType.Unit,
+                    b: "mm",
+                    comparisonType: StringComparison.OrdinalIgnoreCase) &&
+                    chartType.DataElements.Contains(
+                        value: dataElement,
+                        comparer: StringComparer.Ordinal) => $"E.[{dataElement}] * 1000.0",
                 _ when chartType.DataElements.Contains(
                     value: dataElement,
                     comparer: StringComparer.Ordinal) => $"E.[{dataElement}]",
@@ -16042,9 +17068,46 @@ namespace GNA_DLRreport
         #endregion
 
 
-        private async void btnChartPreview_Click(
+        private async void btnChartPreviewTemplate_Click(
             object sender,
             RoutedEventArgs e)
+        {
+            await GenerateChartPreviewAsync(
+                includeSeriesData: false,
+                previewDescription: "Template preview");
+        }
+
+
+        private async void btnChartPreviewChart_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Validate Loaded Chart
+
+            if (!_loadedChartDefinitionId.HasValue)
+            {
+                txtChartStatus.Text =
+                    "Load an existing chart before previewing it.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Generate Populated Chart Preview
+
+            await GenerateChartPreviewAsync(
+                includeSeriesData: true,
+                previewDescription: "Chart preview");
+
+            #endregion
+        }
+
+
+        private async Task GenerateChartPreviewAsync(
+            bool includeSeriesData,
+            string previewDescription)
         {
             #region Validate Canvas Configuration
 
@@ -16064,7 +17127,13 @@ namespace GNA_DLRreport
 
             try
             {
-                await LoadChartPreviewDataAsync();
+                if (includeSeriesData)
+                {
+                    ApplyChartAppearanceToSeries();
+                }
+
+                await LoadChartPreviewDataAsync(
+                    includeSeriesData: includeSeriesData);
             }
             catch (Exception ex)
             {
@@ -16094,6 +17163,11 @@ namespace GNA_DLRreport
 
             cnvChartPreview.Height =
                 heightMm * 96.0 / 25.4;
+
+            txtChartPreviewData.Width =
+                cnvChartPreview.Width;
+
+            PopulateChartPreviewDiagnosticText();
 
             popChartPreview.IsOpen =
                 true;
@@ -16134,7 +17208,7 @@ namespace GNA_DLRreport
                 $"production bitmap: {txtChartCalculatedPixels.Text}; {DefaultChartFontFamily}.";
 
             txtChartStatus.Text =
-                $"Preview generated at {txtChartCalculatedPixels.Text} using " +
+                $"{previewDescription} generated at {txtChartCalculatedPixels.Text} using " +
                 $"{DefaultChartFontFamily}. The renderer boundary is ready for ScottPlot 5.";
 
             #endregion
@@ -16147,6 +17221,211 @@ namespace GNA_DLRreport
         {
             popChartPreview.IsOpen =
                 false;
+        }
+
+
+        private void PopulateChartPreviewDiagnosticText()
+        {
+            #region Build Temporary Preview Data Listing
+
+            if (cmbChartType.SelectedItem
+                is not ChartTypeUiItem chartType)
+            {
+                txtChartPreviewData.Text =
+                    "No chart type is selected.";
+
+                return;
+            }
+
+            StringBuilder output =
+                new();
+
+            string plottedValueFormat =
+                string.Equals(
+                    a: chartType.Unit,
+                    b: "mm",
+                    comparisonType: StringComparison.OrdinalIgnoreCase)
+                    ? "F1"
+                    : "F4";
+
+            foreach (ChartPreviewSeries previewSeries
+                in _chartPreviewSeries)
+            {
+                output.AppendLine(
+                    value:
+                        $"Series: {previewSeries.LegendText} " +
+                        $"[{chartType.Unit}] - {previewSeries.Points.Count} value(s)");
+
+                foreach (ChartPreviewPoint previewPoint
+                    in previewSeries.Points)
+                {
+                    DateTime utcTime =
+                        DateTime.SpecifyKind(
+                            value: previewPoint.UtcTime,
+                            kind: DateTimeKind.Utc);
+
+                    DateTime localTime =
+                        TimeZoneInfo.ConvertTimeFromUtc(
+                            dateTime: utcTime,
+                            destinationTimeZone: _chartPreviewTimeZone);
+
+                    output.AppendLine(
+                        value:
+                            $"{localTime:yyyy.MM.dd HH:mm:ss} | " +
+                            $"{previewSeries.LegendText} | " +
+                            $"{previewPoint.Value.ToString(format: plottedValueFormat, provider: CultureInfo.InvariantCulture)} " +
+                            chartType.Unit);
+                }
+
+                output.AppendLine();
+            }
+
+            if (_chartPreviewTemperaturePoints.Count > 0)
+            {
+                output.AppendLine(
+                    value:
+                        $"Series: Temperature [°C] - {_chartPreviewTemperaturePoints.Count} value(s)");
+
+                foreach (ChartPreviewPoint temperaturePoint
+                    in _chartPreviewTemperaturePoints)
+                {
+                    DateTime utcTime =
+                        DateTime.SpecifyKind(
+                            value: temperaturePoint.UtcTime,
+                            kind: DateTimeKind.Utc);
+
+                    DateTime localTime =
+                        TimeZoneInfo.ConvertTimeFromUtc(
+                            dateTime: utcTime,
+                            destinationTimeZone: _chartPreviewTimeZone);
+
+                    output.AppendLine(
+                        value:
+                            $"{localTime:yyyy.MM.dd HH:mm:ss} | Temperature | " +
+                            $"{temperaturePoint.Value.ToString(format: "F1", provider: CultureInfo.InvariantCulture)} °C");
+                }
+
+                output.AppendLine();
+            }
+
+            if (output.Length == 0)
+            {
+                output.AppendLine(
+                    value:
+                        "No plotted series values were returned for the selected date range.");
+            }
+
+            txtChartPreviewData.Text =
+                output.ToString();
+
+            txtChartPreviewData.ScrollToHome();
+
+            #endregion
+        }
+
+
+        private void pnlChartPreviewDragHeader_MouseLeftButtonDown(
+            object sender,
+            MouseButtonEventArgs e)
+        {
+            #region Begin Preview Flyout Drag
+
+            if (e.OriginalSource is Button)
+            {
+                return;
+            }
+
+            _isDraggingChartPreview =
+                true;
+
+            _chartPreviewDragStartScreen =
+                GetPreviewPointerScreenPosition(
+                    referenceElement: pnlChartPreviewDragHeader,
+                    mouseEventArgs: e);
+
+            _chartPreviewDragStartHorizontalOffset =
+                popChartPreview.HorizontalOffset;
+
+            _chartPreviewDragStartVerticalOffset =
+                popChartPreview.VerticalOffset;
+
+            pnlChartPreviewDragHeader.CaptureMouse();
+            e.Handled =
+                true;
+
+            #endregion
+        }
+
+
+        private void pnlChartPreviewDragHeader_MouseMove(
+            object sender,
+            MouseEventArgs e)
+        {
+            #region Move Preview Flyout
+
+            if (!_isDraggingChartPreview ||
+                e.LeftButton != MouseButtonState.Pressed)
+            {
+                return;
+            }
+
+            Point currentScreenPosition =
+                GetPreviewPointerScreenPosition(
+                    referenceElement: pnlChartPreviewDragHeader,
+                    mouseEventArgs: e);
+
+            popChartPreview.HorizontalOffset =
+                _chartPreviewDragStartHorizontalOffset +
+                currentScreenPosition.X -
+                _chartPreviewDragStartScreen.X;
+
+            popChartPreview.VerticalOffset =
+                _chartPreviewDragStartVerticalOffset +
+                currentScreenPosition.Y -
+                _chartPreviewDragStartScreen.Y;
+
+            #endregion
+        }
+
+
+        private void pnlChartPreviewDragHeader_MouseLeftButtonUp(
+            object sender,
+            MouseButtonEventArgs e)
+        {
+            #region End Preview Flyout Drag
+
+            _isDraggingChartPreview =
+                false;
+
+            pnlChartPreviewDragHeader.ReleaseMouseCapture();
+            e.Handled =
+                true;
+
+            #endregion
+        }
+
+
+        private static Point GetPreviewPointerScreenPosition(
+            FrameworkElement referenceElement,
+            MouseEventArgs mouseEventArgs)
+        {
+            #region Resolve Device-Independent Screen Position
+
+            Point devicePosition =
+                referenceElement.PointToScreen(
+                    point: mouseEventArgs.GetPosition(
+                        relativeTo: referenceElement));
+
+            PresentationSource? presentationSource =
+                PresentationSource.FromVisual(
+                    visual: referenceElement);
+
+            return presentationSource?.CompositionTarget is null
+                ? devicePosition
+                : presentationSource.CompositionTarget.TransformFromDevice.Transform(
+                    point: devicePosition);
+
+            #endregion
         }
 
 
@@ -16481,15 +17760,13 @@ namespace GNA_DLRreport
                 return false;
             }
 
-            if (!double.TryParse(
-                s: txtChartDefaultMarkerSize.Text,
-                style: NumberStyles.Float,
-                provider: CultureInfo.InvariantCulture,
-                result: out double markerSize) ||
-                markerSize <= 0)
+            double markerSize =
+                GetSelectedChartMarkerSize();
+
+            if (markerSize < 0)
             {
                 validationMessage =
-                    "Appearance: Marker size must be greater than zero.";
+                    "Appearance: Marker size cannot be negative.";
 
                 return false;
             }
@@ -16500,6 +17777,102 @@ namespace GNA_DLRreport
                 string.Empty;
 
             return true;
+        }
+
+
+        private double GetSelectedChartMarkerSize()
+        {
+            #region Read Marker Size Selection
+
+            if (txtChartDefaultMarkerSize.SelectedItem
+                is ComboBoxItem selectedItem)
+            {
+                string selectedValue =
+                    selectedItem.Tag?.ToString()
+                    ?? selectedItem.Content?.ToString()
+                    ?? string.Empty;
+
+                if (double.TryParse(
+                    s: selectedValue,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture,
+                    result: out double markerSize))
+                {
+                    return markerSize;
+                }
+            }
+
+            return ParseNonNegativeDoubleOrDefault(
+                text: txtChartDefaultMarkerSize.Text,
+                defaultValue: 0.0);
+
+            #endregion
+        }
+
+
+        private void SelectChartMarkerSize(
+            double markerSize)
+        {
+            #region Select Stored Marker Size
+
+            foreach (object item in txtChartDefaultMarkerSize.Items)
+            {
+                if (item is not ComboBoxItem comboBoxItem)
+                {
+                    continue;
+                }
+
+                string itemValue =
+                    comboBoxItem.Tag?.ToString()
+                    ?? comboBoxItem.Content?.ToString()
+                    ?? string.Empty;
+
+                if (double.TryParse(
+                    s: itemValue,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture,
+                    result: out double availableSize) &&
+                    Math.Abs(
+                        value: availableSize - markerSize) < 0.001)
+                {
+                    txtChartDefaultMarkerSize.SelectedItem =
+                        comboBoxItem;
+
+                    return;
+                }
+            }
+
+            txtChartDefaultMarkerSize.SelectedIndex =
+                0;
+
+            #endregion
+        }
+
+
+        private void ApplyChartAppearanceToSeries()
+        {
+            #region Apply Global Appearance To Every Series
+
+            double lineWidth =
+                ParsePositiveDoubleOrDefault(
+                    text: txtChartDefaultLineWidth.Text,
+                    defaultValue: 2.0);
+
+            double markerSize =
+                GetSelectedChartMarkerSize();
+
+            foreach (ChartSeriesUiItem series in _chartSeries)
+            {
+                series.LineWidth =
+                    lineWidth;
+
+                series.MarkerSize =
+                    markerSize;
+            }
+
+            dgChartSeries.Items.Refresh();
+
+            #endregion
         }
 
         private void ChartPhysicalSize_Changed(
@@ -16741,11 +18114,13 @@ namespace GNA_DLRreport
             const double leftMargin =
                 72;
 
-            const double rightMargin =
-                24;
+            double rightMargin =
+                _chartPreviewTemperaturePoints.Count > 0
+                    ? 72
+                    : 24;
 
             const double topMargin =
-                58;
+                72;
 
             const double bottomMargin =
                 92;
@@ -16901,18 +18276,35 @@ namespace GNA_DLRreport
 
             #region Draw Grid And Vertical Labels
 
-            PenLineDefinition[] gridDefinitions =
+            const int majorAxisIntervalCount =
+                4;
+
+            decimal majorAxisInterval =
+                (verticalMaximum - verticalMinimum) /
+                majorAxisIntervalCount;
+
+            List<PenLineDefinition> gridDefinitions =
+                new();
+
+            for (int tickIndex = 0;
+                 tickIndex <= majorAxisIntervalCount;
+                 tickIndex++)
             {
-                new(verticalMaximum, verticalMaximum.ToString(CultureInfo.InvariantCulture)),
-                new(redTrigger, redTrigger.ToString(CultureInfo.InvariantCulture)),
-                new(amberTrigger, amberTrigger.ToString(CultureInfo.InvariantCulture)),
-                new(greenTrigger, greenTrigger.ToString(CultureInfo.InvariantCulture)),
-                new(0m, "0"),
-                new(-greenTrigger, (-greenTrigger).ToString(CultureInfo.InvariantCulture)),
-                new(-amberTrigger, (-amberTrigger).ToString(CultureInfo.InvariantCulture)),
-                new(-redTrigger, (-redTrigger).ToString(CultureInfo.InvariantCulture)),
-                new(verticalMinimum, verticalMinimum.ToString(CultureInfo.InvariantCulture))
-            };
+                decimal tickValue =
+                    tickIndex == majorAxisIntervalCount
+                        ? verticalMaximum
+                        : verticalMinimum +
+                          (majorAxisInterval * tickIndex);
+
+                gridDefinitions.Add(
+                    item:
+                        new PenLineDefinition(
+                            Value: tickValue,
+                            Label:
+                                FormatChartEngineeringValue(
+                                    value: tickValue,
+                                    unit: chartType.Unit)));
+            }
 
             foreach (PenLineDefinition gridDefinition
                 in gridDefinitions)
@@ -16922,25 +18314,22 @@ namespace GNA_DLRreport
                         engineeringValue:
                             gridDefinition.Value);
 
-                Line gridLine =
-                    new()
-                    {
-                        X1 = plotLeft,
-                        X2 = plotLeft + plotWidth,
-                        Y1 = y,
-                        Y2 = y,
-                        Stroke =
-                            gridDefinition.Value == 0m
-                                ? Brushes.Black
-                                : Brushes.LightGray,
-                        StrokeThickness =
-                            gridDefinition.Value == 0m
-                                ? 1.8
-                                : 0.7
-                    };
+                if (chkChartGridLines.IsChecked == true)
+                {
+                    Line gridLine =
+                        new()
+                        {
+                            X1 = plotLeft,
+                            X2 = plotLeft + plotWidth,
+                            Y1 = y,
+                            Y2 = y,
+                            Stroke = Brushes.Gray,
+                            StrokeThickness = 0.5
+                        };
 
-                cnvChartPreview.Children.Add(
-                    element: gridLine);
+                    cnvChartPreview.Children.Add(
+                        element: gridLine);
+                }
 
                 Line verticalAxisTick =
                     new()
@@ -16985,6 +18374,29 @@ namespace GNA_DLRreport
 
                 cnvChartPreview.Children.Add(
                     element: label);
+            }
+
+            if (verticalMinimum < 0m &&
+                verticalMaximum > 0m)
+            {
+                double zeroY =
+                    ToY(
+                        engineeringValue: 0m);
+
+                Line zeroReferenceLine =
+                    new()
+                    {
+                        X1 = plotLeft,
+                        X2 = plotLeft + plotWidth,
+                        Y1 = zeroY,
+                        Y2 = zeroY,
+                        Stroke = BrushFromHex(
+                            colourHex: ChartZeroAxisColourHex),
+                        StrokeThickness = 0.5
+                    };
+
+                cnvChartPreview.Children.Add(
+                    element: zeroReferenceLine);
             }
 
             #endregion
@@ -17035,7 +18447,256 @@ namespace GNA_DLRreport
                 {
                     cnvChartPreview.Children.Add(
                         element: polyline);
+
+                    if (previewSeries.MarkerSize > 0)
+                    {
+                        foreach (Point markerPoint in polyline.Points)
+                        {
+                            System.Windows.Shapes.Ellipse marker =
+                                new()
+                                {
+                                    Width = previewSeries.MarkerSize,
+                                    Height = previewSeries.MarkerSize,
+                                    Fill = previewSeries.Stroke,
+                                    Stroke = previewSeries.Stroke,
+                                    StrokeThickness = 0.5
+                                };
+
+                            Canvas.SetLeft(
+                                element: marker,
+                                length:
+                                    markerPoint.X -
+                                    (previewSeries.MarkerSize / 2.0));
+
+                            Canvas.SetTop(
+                                element: marker,
+                                length:
+                                    markerPoint.Y -
+                                    (previewSeries.MarkerSize / 2.0));
+
+                            cnvChartPreview.Children.Add(
+                                element: marker);
+                        }
+                    }
                 }
+            }
+
+            #endregion
+
+
+            #region Draw Temporary Temperature Series And Right Axis
+
+            if (_chartPreviewTemperaturePoints.Count > 0)
+            {
+                const double temperatureMinimum =
+                    -10.0;
+
+                const double temperatureMaximum =
+                    50.0;
+
+                double ToTemperatureY(
+                    double temperatureCelsius)
+                {
+                    double clippedTemperature =
+                        Math.Min(
+                            val1: temperatureMaximum,
+                            val2: Math.Max(
+                                val1: temperatureMinimum,
+                                val2: temperatureCelsius));
+
+                    double fraction =
+                        (temperatureMaximum - clippedTemperature) /
+                        (temperatureMaximum - temperatureMinimum);
+
+                    return
+                        plotTop +
+                        (fraction * plotHeight);
+                }
+
+                List<Point> temperatureSplinePoints =
+                    new();
+
+                foreach (ChartPreviewPoint temperaturePoint
+                    in _chartPreviewTemperaturePoints)
+                {
+                    double x =
+                        plotLeft +
+                        ((temperaturePoint.UtcTime - _chartPreviewStartUtc).TotalSeconds /
+                         previewDurationSeconds * plotWidth);
+
+                    temperatureSplinePoints.Add(
+                        item:
+                            new Point(
+                                x: x,
+                                y: ToTemperatureY(
+                                    temperatureCelsius: temperaturePoint.Value)));
+                }
+
+                if (temperatureSplinePoints.Count >= 2)
+                {
+                    PathFigure temperatureFigure =
+                        new()
+                        {
+                            StartPoint = temperatureSplinePoints[0],
+                            IsClosed = false,
+                            IsFilled = false
+                        };
+
+                    for (int pointIndex = 0;
+                         pointIndex < temperatureSplinePoints.Count - 1;
+                         pointIndex++)
+                    {
+                        Point previousPoint =
+                            pointIndex == 0
+                                ? temperatureSplinePoints[pointIndex]
+                                : temperatureSplinePoints[pointIndex - 1];
+
+                        Point startPoint =
+                            temperatureSplinePoints[pointIndex];
+
+                        Point endPoint =
+                            temperatureSplinePoints[pointIndex + 1];
+
+                        Point followingPoint =
+                            pointIndex + 2 < temperatureSplinePoints.Count
+                                ? temperatureSplinePoints[pointIndex + 2]
+                                : endPoint;
+
+                        Point firstControlPoint =
+                            new(
+                                x:
+                                    startPoint.X +
+                                    ((endPoint.X - previousPoint.X) / 6.0),
+                                y:
+                                    startPoint.Y +
+                                    ((endPoint.Y - previousPoint.Y) / 6.0));
+
+                        Point secondControlPoint =
+                            new(
+                                x:
+                                    endPoint.X -
+                                    ((followingPoint.X - startPoint.X) / 6.0),
+                                y:
+                                    endPoint.Y -
+                                    ((followingPoint.Y - startPoint.Y) / 6.0));
+
+                        temperatureFigure.Segments.Add(
+                            value:
+                                new BezierSegment(
+                                    point1: firstControlPoint,
+                                    point2: secondControlPoint,
+                                    point3: endPoint,
+                                    isStroked: true));
+                    }
+
+                    PathGeometry temperatureGeometry =
+                        new();
+
+                    temperatureGeometry.Figures.Add(
+                        value: temperatureFigure);
+
+                    System.Windows.Shapes.Path temperatureSpline =
+                        new()
+                        {
+                            Data = temperatureGeometry,
+                            Stroke = Brushes.DarkBlue,
+                            StrokeThickness = 1.5,
+                            StrokeLineJoin = PenLineJoin.Round,
+                            Fill = Brushes.Transparent
+                        };
+
+                    cnvChartPreview.Children.Add(
+                        element: temperatureSpline);
+                }
+
+                double rightAxisX =
+                    plotLeft + plotWidth;
+
+                Line temperatureAxis =
+                    new()
+                    {
+                        X1 = rightAxisX,
+                        X2 = rightAxisX,
+                        Y1 = plotTop,
+                        Y2 = plotBottom,
+                        Stroke = Brushes.DarkBlue,
+                        StrokeThickness = 1.0
+                    };
+
+                cnvChartPreview.Children.Add(
+                    element: temperatureAxis);
+
+                for (int temperature = -10;
+                     temperature <= 50;
+                     temperature += 10)
+                {
+                    double tickY =
+                        ToTemperatureY(
+                            temperatureCelsius: temperature);
+
+                    Line temperatureTick =
+                        new()
+                        {
+                            X1 = rightAxisX,
+                            X2 = rightAxisX + 5,
+                            Y1 = tickY,
+                            Y2 = tickY,
+                            Stroke = Brushes.DarkBlue,
+                            StrokeThickness = 1.0
+                        };
+
+                    cnvChartPreview.Children.Add(
+                        element: temperatureTick);
+
+                    TextBlock temperatureLabel =
+                        new()
+                        {
+                            Text =
+                                temperature.ToString(
+                                    provider: CultureInfo.InvariantCulture),
+                            FontSize = 10,
+                            Foreground = Brushes.DarkBlue,
+                            Width = 28,
+                            TextAlignment = TextAlignment.Left
+                        };
+
+                    Canvas.SetLeft(
+                        element: temperatureLabel,
+                        length: rightAxisX + 7);
+
+                    Canvas.SetTop(
+                        element: temperatureLabel,
+                        length: tickY - 8);
+
+                    cnvChartPreview.Children.Add(
+                        element: temperatureLabel);
+                }
+
+                TextBlock temperatureAxisTitle =
+                    new()
+                    {
+                        Text = "Temperature (°C)",
+                        FontSize = 11,
+                        Foreground = Brushes.DarkBlue,
+                        RenderTransform =
+                            new RotateTransform(
+                                angle: 90),
+                        RenderTransformOrigin =
+                            new Point(
+                                x: 0,
+                                y: 0)
+                    };
+
+                Canvas.SetLeft(
+                    element: temperatureAxisTitle,
+                    length: rightAxisX + 53);
+
+                Canvas.SetTop(
+                    element: temperatureAxisTitle,
+                    length: plotTop + (plotHeight * 0.28));
+
+                cnvChartPreview.Children.Add(
+                    element: temperatureAxisTitle);
             }
 
             #endregion
@@ -17065,7 +18726,7 @@ namespace GNA_DLRreport
                     Y1 = plotBottom,
                     Y2 = plotBottom,
                     Stroke = Brushes.Black,
-                    StrokeThickness = 0.5
+                    StrokeThickness = 0.25
                 };
 
             cnvChartPreview.Children.Add(
@@ -17110,10 +18771,48 @@ namespace GNA_DLRreport
 
             Canvas.SetTop(
                 element: title,
-                length: 12);
+                length: 8);
 
             cnvChartPreview.Children.Add(
                 element: title);
+
+            DateTime titleStartDate =
+                dpChartStartDate.SelectedDate!.Value.Date;
+
+            DateTime titleEndDate =
+                dpChartEndDate.SelectedDate!.Value.Date;
+
+            bool representsAllData =
+                string.Equals(
+                    a: GetSelectedChartStartDateMode(),
+                    b: ChartStartDateModeProjectStart,
+                    comparisonType: StringComparison.Ordinal) &&
+                titleEndDate == DateTime.Today;
+
+            TextBlock dateSubtitle =
+                new()
+                {
+                    Text =
+                        $"{titleStartDate:yyyy.MM.dd} to {titleEndDate:yyyy.MM.dd}" +
+                        (representsAllData
+                            ? " (All data)"
+                            : string.Empty),
+                    FontSize = 10,
+                    Width = plotWidth,
+                    TextAlignment = TextAlignment.Center,
+                    Foreground = Brushes.Black
+                };
+
+            Canvas.SetLeft(
+                element: dateSubtitle,
+                length: plotLeft);
+
+            Canvas.SetTop(
+                element: dateSubtitle,
+                length: 29);
+
+            cnvChartPreview.Children.Add(
+                element: dateSubtitle);
 
             #endregion
 
@@ -17180,11 +18879,6 @@ namespace GNA_DLRreport
                     ? 1
                     : 7;
 
-            int labelIntervalDays =
-                previewDurationDays <= 14
-                    ? 7
-                    : 28;
-
             List<DateTime> tickDates =
                 new();
 
@@ -17231,30 +18925,35 @@ namespace GNA_DLRreport
             List<DateTime> labelDates =
                 new();
 
-            for (DateTime labelDate = startDate;
-                 labelDate <= endDate;
-                 labelDate = labelDate.AddDays(
-                     value: labelIntervalDays))
+            if (previewDurationDays <= 7)
             {
-                labelDates.Add(
-                    item: labelDate);
+                for (DateTime labelDate = startDate;
+                     labelDate <= endDate;
+                     labelDate = labelDate.AddDays(
+                         value: 1))
+                {
+                    labelDates.Add(
+                        item: labelDate);
+                }
             }
-
-            int minimumFinalLabelSpacingDays =
-                labelIntervalDays / 2;
-
-            if (labelDates.Count == 0)
+            else
             {
-                labelDates.Add(
-                    item: startDate);
-            }
+                int daysUntilMonday =
+                    ((int)DayOfWeek.Monday -
+                     (int)startDate.DayOfWeek + 7) % 7;
 
-            if (labelDates[^1] != endDate &&
-                (endDate - labelDates[^1]).Days >=
-                minimumFinalLabelSpacingDays)
-            {
-                labelDates.Add(
-                    item: endDate);
+                DateTime firstMonday =
+                    startDate.AddDays(
+                        value: daysUntilMonday);
+
+                for (DateTime labelDate = firstMonday;
+                     labelDate <= endDate;
+                     labelDate = labelDate.AddDays(
+                         value: 7))
+                {
+                    labelDates.Add(
+                        item: labelDate);
+                }
             }
 
             const double dateLabelWidth =
@@ -17308,33 +19007,6 @@ namespace GNA_DLRreport
                     element: label);
             }
 
-            TextBlock horizontalTitle =
-                new()
-                {
-                    Text =
-                        "Date",
-
-                    FontSize =
-                        11,
-
-                    Width =
-                        plotWidth,
-
-                    TextAlignment =
-                        TextAlignment.Center
-                };
-
-            Canvas.SetLeft(
-                element: horizontalTitle,
-                length: plotLeft);
-
-            Canvas.SetTop(
-                element: horizontalTitle,
-                length: plotBottom + 72);
-
-            cnvChartPreview.Children.Add(
-                element: horizontalTitle);
-
             #endregion
 
 
@@ -17342,39 +19014,64 @@ namespace GNA_DLRreport
 
             if (chkChartShowLegend.IsChecked == true)
             {
-                string legendText =
-                    _chartSeries.Count > 0
-                        ? string.Join(
-                            separator: "    ",
-                            values:
-                                _chartSeries
-                                    .OrderBy(
-                                        keySelector:
-                                            item => item.DisplayOrder)
-                                    .Select(
-                                        selector:
-                                            item => item.DataElementDisplayName))
-                        : "Legend";
-
-                TextBlock legend =
+                WrapPanel legend =
                     new()
                     {
-                        Text =
-                            legendText,
-
-                        FontSize =
-                            10,
-
-                        Foreground =
-                            Brushes.Black,
-
                         Background =
                             Brushes.White,
-
-                        Padding =
-                            new Thickness(
-                                uniformLength: 3)
+                        Orientation = Orientation.Horizontal,
+                        MaxWidth = plotWidth
                     };
+
+                foreach (ChartPreviewSeries previewSeries
+                    in _chartPreviewSeries)
+                {
+                    legend.Children.Add(
+                        element:
+                            new TextBlock
+                            {
+                                Text =
+                                    $"● {previewSeries.LegendText}",
+                                FontSize = 10,
+                                Foreground = previewSeries.Stroke,
+                                Margin = new Thickness(
+                                    left: 4,
+                                    top: 2,
+                                    right: 10,
+                                    bottom: 2)
+                            });
+                }
+
+                if (_chartPreviewTemperaturePoints.Count > 0)
+                {
+                    legend.Children.Add(
+                        element:
+                            new TextBlock
+                            {
+                                Text = "● Temperature (°C)",
+                                FontSize = 10,
+                                Foreground = Brushes.DarkBlue,
+                                Margin = new Thickness(
+                                    left: 4,
+                                    top: 2,
+                                    right: 10,
+                                    bottom: 2)
+                            });
+                }
+
+                if (legend.Children.Count == 0)
+                {
+                    legend.Children.Add(
+                        element:
+                            new TextBlock
+                            {
+                                Text = "No series",
+                                FontSize = 10,
+                                Foreground = Brushes.Black,
+                                Margin = new Thickness(
+                                    uniformLength: 3)
+                            });
+                }
 
                 string legendPosition =
                     GetSelectedLegendPosition();
@@ -17390,7 +19087,7 @@ namespace GNA_DLRreport
 
                     Canvas.SetTop(
                         element: legend,
-                        length: 34);
+                        length: 44);
                 }
                 else if (string.Equals(
                     a: legendPosition,
@@ -17811,6 +19508,311 @@ namespace GNA_DLRreport
         }
 
 
+        private string CreateRandomChartSeriesColour()
+        {
+            #region Select An Unused Standard Web Colour
+
+            HashSet<string> usedColours =
+                new(
+                    _chartSeries
+                        .Where(
+                            predicate: series => !string.IsNullOrWhiteSpace(
+                                value: series.ColourHex))
+                        .Select(
+                            selector: series => series.ColourHex),
+                    comparer: StringComparer.OrdinalIgnoreCase);
+
+            List<string> availableColours =
+                ChartSeriesColourPalette
+                    .Where(
+                        predicate: colour => !usedColours.Contains(
+                            item: colour))
+                    .ToList();
+
+            IReadOnlyList<string> selectionPool =
+                availableColours.Count > 0
+                    ? availableColours
+                    : ChartSeriesColourPalette;
+
+            int selectedIndex =
+                Random.Shared.Next(
+                    maxValue: selectionPool.Count);
+
+            return selectionPool[selectedIndex];
+
+            #endregion
+        }
+
+
+        private static Brush GetChartSeriesBrush(
+            string colourHex)
+        {
+            #region Convert Stored Colour
+
+            if (!string.IsNullOrWhiteSpace(
+                value: colourHex))
+            {
+                try
+                {
+                    object? convertedBrush =
+                        new BrushConverter().ConvertFromString(
+                            text: colourHex);
+
+                    if (convertedBrush is Brush brush)
+                    {
+                        return brush;
+                    }
+                }
+                catch (FormatException)
+                {
+                    // Invalid legacy colour values fall back to standard Blue.
+                }
+                catch (NotSupportedException)
+                {
+                    // Invalid legacy colour values fall back to standard Blue.
+                }
+            }
+
+            return Brushes.Blue;
+
+            #endregion
+        }
+
+
+        #region Chart Series Axis Aliases
+
+        private void cmbChartDataElement_SelectionChanged(
+            object sender,
+            SelectionChangedEventArgs e)
+        {
+            UpdateChartAxisAliasControlVisibility();
+        }
+
+
+        private void ChartAxisAlias_CheckedChanged(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Apply Display-Only Axis Aliases
+
+            if (!IsInitialized ||
+                _isSynchronisingChartAxisAliases)
+            {
+                return;
+            }
+
+            foreach (ChartSeriesUiItem series in _chartSeries)
+            {
+                series.LegendText =
+                    BuildChartSeriesLegendText(
+                        entityDisplayName: series.EntityDisplayName,
+                        dataElement: series.DataElementDisplayName);
+            }
+
+            dgChartSeries.Items.Refresh();
+
+            #endregion
+        }
+
+
+        private string BuildChartSeriesLegendText(
+            string entityDisplayName,
+            string dataElement)
+        {
+            #region Build Display Legend Without Changing Source Data
+
+            string displayedDataElement =
+                dataElement;
+
+            if (string.Equals(
+                    a: dataElement,
+                    b: "dE",
+                    comparisonType: StringComparison.OrdinalIgnoreCase) &&
+                chkChartEastAsY.IsChecked == true)
+            {
+                displayedDataElement =
+                    "dY";
+            }
+            else if (string.Equals(
+                         a: dataElement,
+                         b: "dN",
+                         comparisonType: StringComparison.OrdinalIgnoreCase) &&
+                     chkChartNorthAsX.IsChecked == true)
+            {
+                displayedDataElement =
+                    "dX";
+            }
+
+            return
+                $"{entityDisplayName} - {displayedDataElement}";
+
+            #endregion
+        }
+
+
+        private void UpdateChartAxisAliasControlVisibility()
+        {
+            #region Show Aliases Only For Relevant Data Elements
+
+            if (chkChartEastAsY is null ||
+                chkChartNorthAsX is null)
+            {
+                return;
+            }
+
+            string selectedDataElement =
+                cmbChartDataElement?.SelectedItem as string
+                ?? string.Empty;
+
+            bool hasEastSeries =
+                _chartSeries.Any(
+                    predicate:
+                        series => string.Equals(
+                            a: series.DataElementDisplayName,
+                            b: "dE",
+                            comparisonType: StringComparison.OrdinalIgnoreCase));
+
+            bool hasNorthSeries =
+                _chartSeries.Any(
+                    predicate:
+                        series => string.Equals(
+                            a: series.DataElementDisplayName,
+                            b: "dN",
+                            comparisonType: StringComparison.OrdinalIgnoreCase));
+
+            bool showEastAlias =
+                hasEastSeries ||
+                string.Equals(
+                    a: selectedDataElement,
+                    b: "dE",
+                    comparisonType: StringComparison.OrdinalIgnoreCase);
+
+            bool showNorthAlias =
+                hasNorthSeries ||
+                string.Equals(
+                    a: selectedDataElement,
+                    b: "dN",
+                    comparisonType: StringComparison.OrdinalIgnoreCase);
+
+            _isSynchronisingChartAxisAliases =
+                true;
+
+            try
+            {
+                chkChartEastAsY.Visibility =
+                    showEastAlias
+                        ? Visibility.Visible
+                        : Visibility.Collapsed;
+
+                chkChartNorthAsX.Visibility =
+                    showNorthAlias
+                        ? Visibility.Visible
+                        : Visibility.Collapsed;
+
+                if (!showEastAlias)
+                {
+                    chkChartEastAsY.IsChecked =
+                        false;
+                }
+
+                if (!showNorthAlias)
+                {
+                    chkChartNorthAsX.IsChecked =
+                        false;
+                }
+            }
+            finally
+            {
+                _isSynchronisingChartAxisAliases =
+                    false;
+            }
+
+            #endregion
+        }
+
+
+        private void RestoreChartAxisAliasControlsFromSeries()
+        {
+            #region Restore Aliases From Persisted Legend Text
+
+            bool eastDisplayedAsY =
+                _chartSeries.Any(
+                    predicate:
+                        series =>
+                            string.Equals(
+                                a: series.DataElementDisplayName,
+                                b: "dE",
+                                comparisonType: StringComparison.OrdinalIgnoreCase) &&
+                            string.Equals(
+                                a: series.LegendText,
+                                b: $"{series.EntityDisplayName} - dY",
+                                comparisonType: StringComparison.OrdinalIgnoreCase));
+
+            bool northDisplayedAsX =
+                _chartSeries.Any(
+                    predicate:
+                        series =>
+                            string.Equals(
+                                a: series.DataElementDisplayName,
+                                b: "dN",
+                                comparisonType: StringComparison.OrdinalIgnoreCase) &&
+                            string.Equals(
+                                a: series.LegendText,
+                                b: $"{series.EntityDisplayName} - dX",
+                                comparisonType: StringComparison.OrdinalIgnoreCase));
+
+            _isSynchronisingChartAxisAliases =
+                true;
+
+            try
+            {
+                chkChartEastAsY.IsChecked =
+                    eastDisplayedAsY;
+
+                chkChartNorthAsX.IsChecked =
+                    northDisplayedAsX;
+            }
+            finally
+            {
+                _isSynchronisingChartAxisAliases =
+                    false;
+            }
+
+            UpdateChartAxisAliasControlVisibility();
+
+            #endregion
+        }
+
+
+        private void ResetChartAxisAliasControls()
+        {
+            #region Reset Display-Only Axis Aliases
+
+            _isSynchronisingChartAxisAliases =
+                true;
+
+            try
+            {
+                chkChartEastAsY.IsChecked =
+                    false;
+
+                chkChartNorthAsX.IsChecked =
+                    false;
+            }
+            finally
+            {
+                _isSynchronisingChartAxisAliases =
+                    false;
+            }
+
+            UpdateChartAxisAliasControlVisibility();
+
+            #endregion
+        }
+
+        #endregion
+
+
         private void btnChartAddSeries_Click(
             object sender,
             RoutedEventArgs e)
@@ -17839,10 +19841,16 @@ namespace GNA_DLRreport
                 selectedEntity.DisplayName;
 
             if (_chartSeries.Any(
-                predicate: series => series.EntityId == selectedEntity.EntityId))
+                predicate:
+                    series =>
+                        series.EntityId == selectedEntity.EntityId &&
+                        string.Equals(
+                            a: series.DataElementDisplayName,
+                            b: dataElement,
+                            comparisonType: StringComparison.OrdinalIgnoreCase)))
             {
                 txtChartStatus.Text =
-                    $"Entity '{entityDisplayName}' already exists in this chart series.";
+                    $"Series '{entityDisplayName} - {dataElement}' already exists in this chart.";
 
                 return;
             }
@@ -17864,10 +19872,12 @@ namespace GNA_DLRreport
                             dataElement,
 
                         LegendText =
-                            $"{entityDisplayName} - {dataElement}",
+                            BuildChartSeriesLegendText(
+                                entityDisplayName: entityDisplayName,
+                                dataElement: dataElement),
 
                         ColourHex =
-                            string.Empty,
+                            CreateRandomChartSeriesColour(),
 
                         LineWidth =
                             ParsePositiveDoubleOrDefault(
@@ -17875,31 +19885,10 @@ namespace GNA_DLRreport
                                 defaultValue: 2.0),
 
                         MarkerSize =
-                            ParseNonNegativeDoubleOrDefault(
-                                text: txtChartDefaultMarkerSize.Text,
-                                defaultValue: 4.0)
+                            GetSelectedChartMarkerSize()
                     });
 
-            if (cmbChartSeriesEntity.ItemsSource
-                is IEnumerable<ChartEntityUiItem> availableEntities)
-            {
-                List<ChartEntityUiItem> remainingEntities =
-                    availableEntities
-                        .Where(
-                            predicate: entity => entity.EntityId != selectedEntity.EntityId)
-                        .OrderBy(
-                            keySelector: entity => entity.DisplayName,
-                            comparer: StringComparer.CurrentCultureIgnoreCase)
-                        .ToList();
-
-                cmbChartSeriesEntity.ItemsSource =
-                    remainingEntities;
-
-                cmbChartSeriesEntity.SelectedIndex =
-                    remainingEntities.Count > 0
-                        ? 0
-                        : -1;
-            }
+            UpdateChartAxisAliasControlVisibility();
 
             txtChartStatus.Text =
                 $"Series for '{entityDisplayName}' added.";
@@ -17923,86 +19912,25 @@ namespace GNA_DLRreport
 
             RenumberChartSeries();
 
-            if (cmbChartSeriesEntity.ItemsSource
-                is IEnumerable<ChartEntityUiItem> availableEntities)
-            {
-                List<ChartEntityUiItem> refreshedEntities =
-                    availableEntities
-                        .Append(
-                            element:
-                                new ChartEntityUiItem
-                                {
-                                    EntityId = selectedSeries.EntityId,
-                                    DisplayName = selectedSeries.EntityDisplayName
-                                })
-                        .GroupBy(
-                            keySelector: entity => entity.EntityId)
-                        .Select(
-                            selector: group => group.First())
-                        .OrderBy(
-                            keySelector: entity => entity.DisplayName,
-                            comparer: StringComparer.CurrentCultureIgnoreCase)
-                        .ToList();
+            UpdateChartAxisAliasControlVisibility();
 
-                cmbChartSeriesEntity.ItemsSource =
-                    refreshedEntities;
-
-                cmbChartSeriesEntity.SelectedIndex =
-                    refreshedEntities.Count > 0
-                        ? 0
-                        : -1;
-            }
         }
 
 
-        private void btnChartSeriesUp_Click(
+        private void btnChartClearSeries_Click(
             object sender,
             RoutedEventArgs e)
         {
-            MoveSelectedChartSeries(
-                direction: -1);
-        }
+            #region Clear Every Configured Series
 
+            _chartSeries.Clear();
 
-        private void btnChartSeriesDown_Click(
-            object sender,
-            RoutedEventArgs e)
-        {
-            MoveSelectedChartSeries(
-                direction: 1);
-        }
+            ResetChartAxisAliasControls();
 
+            txtChartStatus.Text =
+                "All chart series have been cleared.";
 
-        private void MoveSelectedChartSeries(
-            int direction)
-        {
-            if (dgChartSeries.SelectedItem
-                is not ChartSeriesUiItem selectedSeries)
-            {
-                return;
-            }
-
-            int oldIndex =
-                _chartSeries.IndexOf(
-                    item: selectedSeries);
-
-            int newIndex =
-                oldIndex + direction;
-
-            if (newIndex < 0 ||
-                newIndex >= _chartSeries.Count)
-            {
-                return;
-            }
-
-            _chartSeries.Move(
-                oldIndex: oldIndex,
-                newIndex: newIndex);
-
-            RenumberChartSeries();
-
-            dgChartSeries.SelectedItem =
-                selectedSeries;
+            #endregion
         }
 
 
