@@ -1661,8 +1661,28 @@
                                     <TextBlock Grid.Row="2" Grid.Column="3" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Calculated size:"/>
                                     <TextBox x:Name="txtChartCalculatedPixels" Grid.Row="2" Grid.Column="4" Height="28" IsReadOnly="True" VerticalContentAlignment="Center" Text="1772 x 945 px"/>
 
-                                    <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="5" Orientation="Horizontal">
+                                    <StackPanel Grid.Row="4"
+                                                Grid.Column="0"
+                                                Grid.ColumnSpan="6"
+                                                Orientation="Horizontal"
+                                                HorizontalAlignment="Left"
+                                                Width="750">
                                         <TextBlock Margin="0,0,8,0" VerticalAlignment="Center" Text="Font: Arial (fixed)"/>
+                                        <StackPanel Margin="25,0,0,0" VerticalAlignment="Center">
+                                            <TextBlock Text="Data source:"/>
+                                            <StackPanel Margin="0,4,0,0" Orientation="Horizontal">
+                                                <RadioButton x:Name="rbChartEpochData"
+                                                             GroupName="ChartDataInterval"
+                                                             Content="Epoch"
+                                                             IsChecked="True"
+                                                             Checked="ChartDataInterval_Checked"/>
+                                                <RadioButton x:Name="rbChartDayData"
+                                                             Margin="12,0,0,0"
+                                                             GroupName="ChartDataInterval"
+                                                             Content="Day"
+                                                             Checked="ChartDataInterval_Checked"/>
+                                            </StackPanel>
+                                        </StackPanel>
                                         <StackPanel Margin="25,0,0,0" VerticalAlignment="Center">
                                             <CheckBox x:Name="chkChartGridLines" Content="Show major gridlines" IsChecked="True"/>
                                             <CheckBox x:Name="chkChartTemperature" Margin="0,6,0,0" Content="Show temperature"/>
@@ -1687,7 +1707,7 @@
                                             <ComboBoxItem Content="6"/>
                                         </ComboBox>
                                         <TextBlock Margin="20,0,8,0" VerticalAlignment="Center" Text="Marker size:"/>
-                                        <ComboBox x:Name="txtChartDefaultMarkerSize" Width="55" Height="28" SelectedIndex="2" VerticalContentAlignment="Center">
+                                        <ComboBox x:Name="txtChartDefaultMarkerSize" Width="85" Height="28" SelectedIndex="2" VerticalContentAlignment="Center">
                                             <ComboBoxItem Content="None" Tag="0"/>
                                             <ComboBoxItem Content="2"/>
                                             <ComboBoxItem Content="4"/>

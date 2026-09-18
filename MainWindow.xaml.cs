@@ -34,7 +34,13 @@ namespace GNA_DLRreport
         #region Application Footer
 
         private const string ApplicationRevision =
-            "029";
+            "033";
+
+        private const string ChartDataIntervalEpoch =
+            "Epoch";
+
+        private const string ChartDataIntervalDay =
+            "Day";
 
 
         public string CopyrightText
@@ -8251,6 +8257,9 @@ namespace GNA_DLRreport
                             [ChartNumber] int NOT NULL,
                             [ChartName] nvarchar(200) NOT NULL,
                             [ChartType_ID] int NOT NULL,
+                            [DataIntervalMode] nvarchar(10) NOT NULL
+                                CONSTRAINT [DF_ChartDefinition_DataIntervalMode]
+                                DEFAULT (N'Epoch'),
 
                             [AutoTitleTemplate] nvarchar(500) NOT NULL,
                             [TitleOverride] nvarchar(500) NULL,
@@ -8346,6 +8355,9 @@ namespace GNA_DLRreport
 
                             CONSTRAINT [CK_ChartDefinition_ChartOrder]
                                 CHECK ([ChartOrder] > 0),
+
+                            CONSTRAINT [CK_ChartDefinition_DataIntervalMode]
+                                CHECK ([DataIntervalMode] IN (N'Epoch', N'Day')),
 
                             CONSTRAINT [CK_ChartDefinition_PngDimensions]
                                 CHECK
@@ -8572,6 +8584,18 @@ namespace GNA_DLRreport
                             ADD [StartDateMode] nvarchar(20) NOT NULL
                                 CONSTRAINT [DF_ChartDefinition_StartDateMode]
                                 DEFAULT (N'ReportStart');
+                    END;
+
+                    IF COL_LENGTH(N'dbo.ChartDefinition', N'DataIntervalMode') IS NULL
+                    BEGIN
+                        ALTER TABLE [dbo].[ChartDefinition]
+                            ADD [DataIntervalMode] nvarchar(10) NOT NULL
+                                CONSTRAINT [DF_ChartDefinition_DataIntervalMode]
+                                DEFAULT (N'Epoch');
+
+                        ALTER TABLE [dbo].[ChartDefinition]
+                            ADD CONSTRAINT [CK_ChartDefinition_DataIntervalMode]
+                                CHECK ([DataIntervalMode] IN (N'Epoch', N'Day'));
                     END;
 
                     IF COL_LENGTH(N'dbo.ChartDefinition', N'WidthMm') IS NULL
@@ -12347,8 +12371,7 @@ namespace GNA_DLRreport
                 return;
             }
 
-            txtChartDataSource.Text =
-                $"{selectedType.SourceTable} ({selectedType.EntityKind})";
+            UpdateChartDataSourceDisplay();
 
             txtChartUnit.Text =
                 selectedType.Unit;
@@ -12532,6 +12555,89 @@ namespace GNA_DLRreport
         }
 
 
+        #region Chart Data Interval Selection
+
+        private void ChartDataInterval_Checked(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (!IsInitialized)
+            {
+                return;
+            }
+
+            UpdateChartDataSourceDisplay();
+        }
+
+
+        private string GetSelectedChartDataInterval()
+        {
+            return rbChartDayData.IsChecked == true
+                ? ChartDataIntervalDay
+                : ChartDataIntervalEpoch;
+        }
+
+
+        private void SelectChartDataInterval(
+            string dataInterval)
+        {
+            bool selectDay =
+                string.Equals(
+                    a: dataInterval,
+                    b: ChartDataIntervalDay,
+                    comparisonType: StringComparison.OrdinalIgnoreCase);
+
+            rbChartDayData.IsChecked =
+                selectDay;
+
+            rbChartEpochData.IsChecked =
+                !selectDay;
+
+            UpdateChartDataSourceDisplay();
+        }
+
+
+        private string GetSelectedChartSourceTable(
+            ChartTypeUiItem chartType)
+        {
+            if (rbChartDayData.IsChecked != true)
+            {
+                return chartType.SourceTable;
+            }
+
+            const string epochSuffix =
+                "Epochs";
+
+            if (!chartType.SourceTable.EndsWith(
+                value: epochSuffix,
+                comparisonType: StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Chart source '{chartType.SourceTable}' has no defined Daily-table mapping.");
+            }
+
+            return
+                chartType.SourceTable[..^epochSuffix.Length] +
+                "Daily";
+        }
+
+
+        private void UpdateChartDataSourceDisplay()
+        {
+            if (cmbChartType.SelectedItem
+                is not ChartTypeUiItem chartType)
+            {
+                return;
+            }
+
+            txtChartDataSource.Text =
+                $"{GetSelectedChartSourceTable(chartType: chartType)} " +
+                $"({chartType.EntityKind})";
+        }
+
+        #endregion
+
+
         private void btnChartNew_Click(
             object sender,
             RoutedEventArgs e)
@@ -12567,6 +12673,9 @@ namespace GNA_DLRreport
             _chartSeries.Clear();
 
             ResetChartAxisAliasControls();
+
+            SelectChartDataInterval(
+                dataInterval: ChartDataIntervalEpoch);
 
             SelectDefaultChartType();
 
@@ -15145,7 +15254,8 @@ namespace GNA_DLRreport
                     CD.[StartDateMode],
                     CD.[AbsoluteStartUtc],
                     CD.[AbsoluteEndUtc],
-                    CD.[TitleOverride]
+                    CD.[TitleOverride],
+                    CD.[DataIntervalMode]
                 FROM [dbo].[ChartDefinition] AS CD
                 INNER JOIN [dbo].[ChartType] AS CT
                     ON CT.[ChartType_ID] = CD.[ChartType_ID]
@@ -15255,6 +15365,9 @@ namespace GNA_DLRreport
                     ? string.Empty
                     : reader.GetString(19);
 
+            string dataInterval =
+                reader.GetString(20);
+
             await reader.DisposeAsync();
 
             #endregion
@@ -15332,6 +15445,9 @@ namespace GNA_DLRreport
 
             SelectChartStartDateMode(
                 startDateMode: startDateMode);
+
+            SelectChartDataInterval(
+                dataInterval: dataInterval);
 
             UpdateChartPixelDimensions();
 
@@ -15800,6 +15916,7 @@ namespace GNA_DLRreport
                         SET
                             [ChartName] = @ChartName,
                             [ChartType_ID] = @ChartType_ID,
+                            [DataIntervalMode] = @DataIntervalMode,
                             [AutoTitleTemplate] = @AutoTitleTemplate,
                             [TitleOverride] = @TitleOverride,
                             [YAxisTitle] = @YAxisTitle,
@@ -15886,6 +16003,7 @@ namespace GNA_DLRreport
                             [ChartNumber],
                             [ChartName],
                             [ChartType_ID],
+                            [DataIntervalMode],
                             [AutoTitleTemplate],
                             [TitleOverride],
                             [YAxisTitle],
@@ -15921,6 +16039,7 @@ namespace GNA_DLRreport
                             @ChartNumber,
                             @ChartName,
                             @ChartType_ID,
+                            @DataIntervalMode,
                             @AutoTitleTemplate,
                             @TitleOverride,
                             @YAxisTitle,
@@ -16099,6 +16218,13 @@ namespace GNA_DLRreport
                 sqlDbType: System.Data.SqlDbType.Int)
                 .Value =
                     chartTypeId;
+
+            command.Parameters.Add(
+                parameterName: "@DataIntervalMode",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 10)
+                .Value =
+                    GetSelectedChartDataInterval();
 
             command.Parameters.Add(
                 parameterName: "@AutoTitleTemplate",
@@ -16796,7 +16922,7 @@ namespace GNA_DLRreport
 
                 string seriesSql =
                     $"SELECT E.[UTCtime], {valueExpression} AS [PreviewValue] " +
-                    $"FROM [dbo].[{chartType.SourceTable}] AS E {joins}" +
+                    $"FROM [dbo].[{GetSelectedChartSourceTable(chartType: chartType)}] AS E {joins}" +
                     $"WHERE E.[{entityIdColumn}] = @EntityId " +
                     "AND E.[UTCtime] >= @StartUtc AND E.[UTCtime] < @EndUtcExclusive " +
                     "AND E.[IsDeleted] = 0 ORDER BY E.[UTCtime];";
@@ -17248,6 +17374,19 @@ namespace GNA_DLRreport
                     ? "F1"
                     : "F4";
 
+            int legendColumnWidth =
+                _chartPreviewSeries
+                    .Select(
+                        selector: series => series.LegendText.Length)
+                    .Append(
+                        element:
+                            _chartPreviewTemperaturePoints.Count > 0
+                                ? "Temperature".Length
+                                : 0)
+                    .DefaultIfEmpty(
+                        defaultValue: 1)
+                    .Max();
+
             foreach (ChartPreviewSeries previewSeries
                 in _chartPreviewSeries)
             {
@@ -17272,8 +17411,8 @@ namespace GNA_DLRreport
                     output.AppendLine(
                         value:
                             $"{localTime:yyyy.MM.dd HH:mm:ss} | " +
-                            $"{previewSeries.LegendText} | " +
-                            $"{previewPoint.Value.ToString(format: plottedValueFormat, provider: CultureInfo.InvariantCulture)} " +
+                            $"{previewSeries.LegendText.PadRight(totalWidth: legendColumnWidth)} | " +
+                            $"{previewPoint.Value.ToString(format: plottedValueFormat, provider: CultureInfo.InvariantCulture).PadLeft(totalWidth: 12)} " +
                             chartType.Unit);
                 }
 
@@ -17301,8 +17440,9 @@ namespace GNA_DLRreport
 
                     output.AppendLine(
                         value:
-                            $"{localTime:yyyy.MM.dd HH:mm:ss} | Temperature | " +
-                            $"{temperaturePoint.Value.ToString(format: "F1", provider: CultureInfo.InvariantCulture)} °C");
+                            $"{localTime:yyyy.MM.dd HH:mm:ss} | " +
+                            $"{"Temperature".PadRight(totalWidth: legendColumnWidth)} | " +
+                            $"{temperaturePoint.Value.ToString(format: "F1", provider: CultureInfo.InvariantCulture).PadLeft(totalWidth: 12)} °C");
                 }
 
                 output.AppendLine();
@@ -19024,7 +19164,9 @@ namespace GNA_DLRreport
                     };
 
                 foreach (ChartPreviewSeries previewSeries
-                    in _chartPreviewSeries)
+                    in _chartPreviewSeries.OrderBy(
+                        keySelector: series => series.LegendText,
+                        comparer: StringComparer.CurrentCultureIgnoreCase))
                 {
                     legend.Children.Add(
                         element:
