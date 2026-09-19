@@ -328,6 +328,7 @@
                                     Visibility="Collapsed"
                                     IsEnabled="False"
                                     Click="btnViewPrismArray_Click"/>
+
                         </Grid>
 
                         <!-- #endregion -->
@@ -946,6 +947,94 @@
                                         </Grid>
                                     </Grid>
                                 </GroupBox>
+                            </TabItem>
+
+                            <!-- #endregion -->
+
+                            <!-- #region MONITORING SENSORS TAB -->
+
+                            <TabItem x:Name="tabSensors" Header="Sensors" IsEnabled="False">
+                                <Grid Margin="12">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="12"/>
+                                        <RowDefinition Height="*"/>
+                                        <RowDefinition Height="12"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+
+                                    <Grid Grid.Row="0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="135"/>
+                                            <ColumnDefinition Width="230"/>
+                                            <ColumnDefinition Width="25"/>
+                                            <ColumnDefinition Width="235"/>
+                                            <ColumnDefinition Width="180"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="34"/>
+                                            <RowDefinition Height="34"/>
+                                            <RowDefinition Height="34"/>
+                                            <RowDefinition Height="40"/>
+                                        </Grid.RowDefinitions>
+
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="T4D sensor name:" VerticalAlignment="Center"/>
+                                        <TextBox x:Name="txtMonitoringSensorName" Grid.Row="0" Grid.Column="1" Height="28" VerticalContentAlignment="Center"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="3" Text="T4DDBMonitoring.TMCSensor.ID:" VerticalAlignment="Center"/>
+                                        <TextBox x:Name="txtMonitoringExternalSensorId" Grid.Row="0" Grid.Column="4" Height="28" VerticalContentAlignment="Center"/>
+
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Replacement Name:" VerticalAlignment="Center"/>
+                                        <TextBox x:Name="txtMonitoringReplacementName" Grid.Row="1" Grid.Column="1" Height="28" VerticalContentAlignment="Center"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="3" Text="Sensor Type:" VerticalAlignment="Center"/>
+                                        <ComboBox x:Name="cmbMonitoringSensorType" Grid.Row="1" Grid.Column="4" Height="28"
+                                                  VerticalContentAlignment="Center" SelectionChanged="cmbMonitoringSensorType_SelectionChanged"/>
+
+                                        <TextBlock Grid.Row="2" Grid.Column="3" Text="Unit:" VerticalAlignment="Center"/>
+                                        <ComboBox x:Name="cmbMonitoringSensorUnit" Grid.Row="2" Grid.Column="4" Height="28" VerticalContentAlignment="Center"/>
+
+                                        <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="5" Orientation="Horizontal" HorizontalAlignment="Right">
+                                            <Button x:Name="btnAddMonitoringSensor" Width="120" Height="30" Margin="0,0,10,0"
+                                                    Content="Add Sensor" Click="btnAddMonitoringSensor_Click"/>
+                                            <Button x:Name="btnUpdateMonitoringSensor" Width="120" Height="30"
+                                                    Content="Update Sensor" IsEnabled="False" Click="btnUpdateMonitoringSensor_Click"/>
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <DataGrid x:Name="dgMonitoringSensors" Grid.Row="2" AutoGenerateColumns="False"
+                                              CanUserAddRows="False" IsReadOnly="True" SelectionMode="Single"
+                                              SelectionUnit="FullRow" SelectionChanged="dgMonitoringSensors_SelectionChanged">
+                                        <DataGrid.RowStyle>
+                                            <Style TargetType="DataGridRow">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsActive}" Value="False">
+                                                        <Setter Property="Foreground" Value="Gray"/>
+                                                        <Setter Property="Opacity" Value="0.65"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </DataGrid.RowStyle>
+                                        <DataGrid.Columns>
+                                            <DataGridTemplateColumn Header="Active" Width="65">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <CheckBox IsChecked="{Binding IsActive, Mode=OneWay}"
+                                                                  HorizontalAlignment="Center"
+                                                                  VerticalAlignment="Center"
+                                                                  Click="MonitoringSensorActiveCheckBox_Click"/>
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTextColumn Header="T4D sensor name" Width="*" Binding="{Binding SensorName}"/>
+                                            <DataGridTextColumn Header="Replacement Name" Width="*" Binding="{Binding ReplacementName}"/>
+                                            <DataGridTextColumn Header="External ID" Width="90" Binding="{Binding ExternalSensorId}"/>
+                                            <DataGridTextColumn Header="Type" Width="110" Binding="{Binding SensorType}"/>
+                                            <DataGridTextColumn Header="Unit" Width="90" Binding="{Binding Unit}"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+
+                                    <TextBox x:Name="txtMonitoringSensorStatus" Grid.Row="4" Height="36" IsReadOnly="True"
+                                             VerticalContentAlignment="Center" Text="Select an active project."/>
+                                </Grid>
                             </TabItem>
 
                             <!-- #endregion -->

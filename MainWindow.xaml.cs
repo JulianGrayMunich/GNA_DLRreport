@@ -34,7 +34,7 @@ namespace GNA_DLRreport
         #region Application Footer
 
         private const string ApplicationRevision =
-            "033";
+            "038";
 
         private const string ChartDataIntervalEpoch =
             "Epoch";
@@ -533,6 +533,29 @@ namespace GNA_DLRreport
 
         private string _geotechImportProjectName =
             string.Empty;
+
+        #endregion
+
+
+        #region Monitoring Sensor Configuration State
+
+        private readonly ObservableCollection<MonitoringSensorUiItem> _monitoringSensors = new();
+        private int? _selectedMonitoringSensorId;
+        private int? _selectedMonitoringPointNameId;
+        private bool _isInitialisingMonitoringSensorUi;
+
+        private sealed class MonitoringSensorUiItem
+        {
+            public int SensorId { get; init; }
+            public int PointNameId { get; init; }
+            public bool ImportEnabled { get; init; }
+            public bool IsActive { get; init; }
+            public string SensorName { get; init; } = string.Empty;
+            public string ReplacementName { get; init; } = string.Empty;
+            public string SensorType { get; init; } = string.Empty;
+            public string Unit { get; init; } = string.Empty;
+            public int ExternalSensorId { get; init; }
+        }
 
         #endregion
 
@@ -3077,6 +3100,9 @@ namespace GNA_DLRreport
             bool arraysTabActive =
                 tabPrismArrays.IsSelected;
 
+            bool sensorsTabActive =
+                tabSensors.IsSelected;
+
             btnViewPrismArray.Visibility =
                 arraysTabActive
                     ? Visibility.Visible
@@ -3084,6 +3110,19 @@ namespace GNA_DLRreport
 
             btnViewPrismArray.IsEnabled =
                 arraysTabActive;
+
+            if (sensorsTabActive)
+            {
+                try
+                {
+                    await LoadMonitoringSensorsAsync();
+                }
+                catch (Exception ex)
+                {
+                    txtMonitoringSensorStatus.Text =
+                        $"Sensors: Unable to load sensor configurations: {ex.Message}";
+                }
+            }
 
             if (!arraysTabActive)
             {
@@ -4118,6 +4157,13 @@ namespace GNA_DLRreport
             cmbProjectTimeZone.SelectedValue =
                 TimeZoneInfo.Utc.Id;
 
+            dgMonitoringSensors.ItemsSource = _monitoringSensors;
+            _isInitialisingMonitoringSensorUi = true;
+            cmbMonitoringSensorType.ItemsSource = new[] { "Temperature", "Vibration" };
+            cmbMonitoringSensorType.SelectedItem = "Temperature";
+            PopulateMonitoringSensorUnits(sensorType: "Temperature");
+            _isInitialisingMonitoringSensorUi = false;
+
             UpdateConfigurationWorkflowTabAvailability();
 
             #endregion
@@ -4235,6 +4281,8 @@ namespace GNA_DLRreport
 
             tabGeotech.IsEnabled =
                 activeProjectAvailable;
+
+            tabSensors.IsEnabled = activeProjectAvailable;
 
             tabCharts.IsEnabled =
                 activeProjectAvailable;
@@ -6482,6 +6530,12 @@ namespace GNA_DLRreport
                             [ReplacementName] nvarchar(50) NOT NULL,
                             [SensorType] nvarchar(50) NOT NULL,
                             [Project_ID] int NOT NULL,
+                            [PointName_ID] int NULL,
+                            [ExternalSensor_ID] int NULL,
+                            [ImportEnabled] bit NOT NULL CONSTRAINT [DF_GeotecSensors_ImportEnabled] DEFAULT (0),
+                            [Unit] nvarchar(50) NOT NULL CONSTRAINT [DF_GeotecSensors_Unit] DEFAULT (N'Unspecified'),
+                            [CreatedUtc] datetime2(0) NOT NULL CONSTRAINT [DF_GeotecSensors_CreatedUtc] DEFAULT (SYSUTCDATETIME()),
+                            [UpdatedUtc] datetime2(0) NOT NULL CONSTRAINT [DF_GeotecSensors_UpdatedUtc] DEFAULT (SYSUTCDATETIME()),
                             [IsDeleted] bit NOT NULL
                                 CONSTRAINT [DF_GeotecSensors_IsDeleted]
                                 DEFAULT (0),
@@ -6496,6 +6550,12 @@ namespace GNA_DLRreport
                                 FOREIGN KEY ([Project_ID])
                                 REFERENCES [dbo].[Project] ([Project_ID])
                                 ON DELETE NO ACTION
+                                ON UPDATE NO ACTION,
+
+                            CONSTRAINT [FK_GeotecSensors_PointName]
+                                FOREIGN KEY ([PointName_ID])
+                                REFERENCES [dbo].[PointName] ([PointName_ID])
+                                ON DELETE NO ACTION
                                 ON UPDATE NO ACTION
                         );
 
@@ -6503,6 +6563,50 @@ namespace GNA_DLRreport
                             ON [dbo].[GeotecSensors]
                             ([Project_ID], [SensorType]);
 
+                        CREATE UNIQUE INDEX [UX_GeotecSensors_Active_Project_ExternalSensor]
+                            ON [dbo].[GeotecSensors] ([Project_ID], [ExternalSensor_ID])
+                            WHERE [IsDeleted] = 0 AND [ExternalSensor_ID] IS NOT NULL;
+
+                    END;
+
+                    /* =============================================================
+                       TEMPERATURE READINGS
+                       Epoch values are populated by TrackGeometryReport. Daily
+                       values are reserved for the later daily-mean workflow.
+                       ============================================================= */
+
+                    IF OBJECT_ID(N'dbo.TemperatureEpochs', N'U') IS NULL
+                    BEGIN
+                        CREATE TABLE [dbo].[TemperatureEpochs]
+                        (
+                            [TemperatureEpoch_ID] int IDENTITY(1,1) NOT NULL,
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [PointName_ID] int NOT NULL,
+                            [Temperature] decimal(18,4) NULL,
+                            [IsDeleted] bit NOT NULL CONSTRAINT [DF_TemperatureEpochs_IsDeleted] DEFAULT (0),
+                            CONSTRAINT [PK_TemperatureEpochs] PRIMARY KEY CLUSTERED ([TemperatureEpoch_ID]),
+                            CONSTRAINT [FK_TemperatureEpochs_PointName]
+                                FOREIGN KEY ([PointName_ID]) REFERENCES [dbo].[PointName] ([PointName_ID])
+                        );
+                        CREATE INDEX [IX_TemperatureEpochs_PointName_UTCtime]
+                            ON [dbo].[TemperatureEpochs] ([PointName_ID], [UTCtime]);
+                    END;
+
+                    IF OBJECT_ID(N'dbo.TemperatureDaily', N'U') IS NULL
+                    BEGIN
+                        CREATE TABLE [dbo].[TemperatureDaily]
+                        (
+                            [TemperatureDaily_ID] int IDENTITY(1,1) NOT NULL,
+                            [UTCtime] datetime2(0) NOT NULL,
+                            [PointName_ID] int NOT NULL,
+                            [Temperature] decimal(18,4) NULL,
+                            [IsDeleted] bit NOT NULL CONSTRAINT [DF_TemperatureDaily_IsDeleted] DEFAULT (0),
+                            CONSTRAINT [PK_TemperatureDaily] PRIMARY KEY CLUSTERED ([TemperatureDaily_ID]),
+                            CONSTRAINT [FK_TemperatureDaily_PointName]
+                                FOREIGN KEY ([PointName_ID]) REFERENCES [dbo].[PointName] ([PointName_ID])
+                        );
+                        CREATE INDEX [IX_TemperatureDaily_PointName_UTCtime]
+                            ON [dbo].[TemperatureDaily] ([PointName_ID], [UTCtime]);
                     END;
 
                     /* =============================================================
@@ -22670,6 +22774,537 @@ namespace GNA_DLRreport
 
 
         #endregion
+
+        #region Monitoring Sensor Configuration
+
+        private void PopulateMonitoringSensorUnits(string sensorType)
+        {
+            #region Populate Compatible Units
+
+            string[] units = sensorType switch
+            {
+                "Temperature" => ["Celsius"],
+                "Vibration" => ["Hertz"],
+                _ => []
+            };
+
+            cmbMonitoringSensorUnit.ItemsSource = units;
+            cmbMonitoringSensorUnit.SelectedIndex = units.Length > 0 ? 0 : -1;
+
+            #endregion
+        }
+
+
+        private void cmbMonitoringSensorType_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            #region Apply Sensor Type
+
+            string sensorType = cmbMonitoringSensorType.SelectedItem as string ?? string.Empty;
+            PopulateMonitoringSensorUnits(sensorType: sensorType);
+
+            if (!_isInitialisingMonitoringSensorUi &&
+                string.Equals(a: sensorType, b: "Vibration", comparisonType: StringComparison.Ordinal))
+            {
+                MessageBox.Show(
+                    messageBoxText: "Sensors: Vibration sensors are not yet supported.",
+                    caption: "Sensors",
+                    button: MessageBoxButton.OK,
+                    icon: MessageBoxImage.Warning);
+            }
+
+            #endregion
+        }
+
+
+        private async Task LoadMonitoringSensorsAsync()
+        {
+            #region Validate Project
+
+            _monitoringSensors.Clear();
+            if (!_activeProjectId.HasValue)
+            {
+                txtMonitoringSensorStatus.Text = "Sensors: Select an active project.";
+                return;
+            }
+
+            #endregion
+
+            #region Read Persisted Sensors
+
+            const string selectSql = """
+                SELECT GS.[SensorID], GS.[PointName_ID], GS.[ImportEnabled],
+                       PN.[PointName], PN.[ReplacementName], GS.[SensorType],
+                       GS.[Unit], GS.[ExternalSensor_ID], GS.[IsDeleted], PN.[IsDeleted]
+                FROM [dbo].[GeotecSensors] AS GS
+                INNER JOIN [dbo].[PointName] AS PN ON PN.[PointName_ID] = GS.[PointName_ID]
+                WHERE GS.[Project_ID] = @Project_ID
+                  AND GS.[ExternalSensor_ID] IS NOT NULL
+                ORDER BY GS.[IsDeleted], PN.[PointName];
+                """;
+
+            await using SqlConnection databaseConnection = new(connectionString: GetTrackGeometryConnectionString());
+            await databaseConnection.OpenAsync();
+            await using SqlCommand selectCommand = new(cmdText: selectSql, connection: databaseConnection);
+            selectCommand.Parameters.Add(parameterName: "@Project_ID", sqlDbType: System.Data.SqlDbType.Int).Value = _activeProjectId.Value;
+            await using SqlDataReader reader = await selectCommand.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
+            {
+                _monitoringSensors.Add(new MonitoringSensorUiItem
+                {
+                    SensorId = reader.GetInt32(0),
+                    PointNameId = reader.GetInt32(1),
+                    ImportEnabled = reader.GetBoolean(2),
+                    IsActive = !reader.GetBoolean(8) && !reader.GetBoolean(9),
+                    SensorName = reader.GetString(3),
+                    ReplacementName = reader.GetString(4),
+                    SensorType = reader.GetString(5),
+                    Unit = reader.GetString(6),
+                    ExternalSensorId = reader.GetInt32(7)
+                });
+            }
+
+            txtMonitoringSensorStatus.Text = $"Sensors: {_monitoringSensors.Count} sensor configuration(s) loaded.";
+
+            #endregion
+        }
+
+
+        private async void MonitoringSensorActiveCheckBox_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Validate Selected Sensor
+
+            if (sender is not CheckBox activeCheckBox ||
+                activeCheckBox.DataContext is not MonitoringSensorUiItem sensor)
+            {
+                throw new InvalidOperationException(
+                    "Sensors: Unable to identify the selected sensor.");
+            }
+
+            bool restoreSensor =
+                !sensor.IsActive;
+
+            activeCheckBox.IsChecked =
+                sensor.IsActive;
+
+            if (!restoreSensor)
+            {
+                MessageBoxResult confirmation =
+                    MessageBox.Show(
+                        messageBoxText:
+                            $"Delete sensor '{sensor.SensorName}'?\n\n" +
+                            "The sensor and linked PointName will be marked deleted. " +
+                            "Historical temperature data will be preserved.",
+                        caption: "Sensors: Confirm Delete",
+                        button: MessageBoxButton.YesNo,
+                        icon: MessageBoxImage.Warning,
+                        defaultResult: MessageBoxResult.No);
+
+                if (confirmation != MessageBoxResult.Yes)
+                {
+                    return;
+                }
+            }
+
+            #endregion
+
+
+            #region Change Active State Atomically
+
+            try
+            {
+                int projectId =
+                    _activeProjectId
+                    ?? throw new InvalidOperationException(
+                        "Sensors: Select an active project.");
+
+                await using SqlConnection databaseConnection =
+                    new(
+                        connectionString: GetTrackGeometryConnectionString());
+
+                await databaseConnection.OpenAsync();
+
+                using SqlTransaction transaction =
+                    (SqlTransaction)databaseConnection.BeginTransaction(
+                        isolationLevel: System.Data.IsolationLevel.Serializable);
+
+                try
+                {
+                    if (restoreSensor)
+                    {
+                        const string conflictSql = """
+                            SELECT COUNT(*)
+                            FROM [dbo].[GeotecSensors]
+                            WHERE [Project_ID] = @Project_ID
+                              AND [SensorID] <> @SensorID
+                              AND [IsDeleted] = 0
+                              AND
+                              (
+                                  UPPER([SensorName]) = UPPER(@SensorName)
+                                  OR [ExternalSensor_ID] = @ExternalSensor_ID
+                              );
+                            """;
+
+                        await using SqlCommand conflictCommand =
+                            new(
+                                cmdText: conflictSql,
+                                connection: databaseConnection,
+                                transaction: transaction);
+
+                        conflictCommand.Parameters.Add(
+                            parameterName: "@Project_ID",
+                            sqlDbType: System.Data.SqlDbType.Int)
+                            .Value = projectId;
+
+                        conflictCommand.Parameters.Add(
+                            parameterName: "@SensorID",
+                            sqlDbType: System.Data.SqlDbType.Int)
+                            .Value = sensor.SensorId;
+
+                        conflictCommand.Parameters.Add(
+                            parameterName: "@SensorName",
+                            sqlDbType: System.Data.SqlDbType.NVarChar,
+                            size: 50)
+                            .Value = sensor.SensorName;
+
+                        conflictCommand.Parameters.Add(
+                            parameterName: "@ExternalSensor_ID",
+                            sqlDbType: System.Data.SqlDbType.Int)
+                            .Value = sensor.ExternalSensorId;
+
+                        int conflictCount =
+                            Convert.ToInt32(
+                                value: await conflictCommand.ExecuteScalarAsync(),
+                                provider: CultureInfo.InvariantCulture);
+
+                        if (conflictCount > 0)
+                        {
+                            throw new InvalidOperationException(
+                                "Sensors: The sensor cannot be restored because its " +
+                                "name or external sensor ID is already active.");
+                        }
+                    }
+
+                    const string updateSensorSql = """
+                        UPDATE [dbo].[GeotecSensors]
+                        SET [IsDeleted] = @IsDeleted,
+                            [UpdatedUtc] = SYSUTCDATETIME()
+                        WHERE [SensorID] = @SensorID
+                          AND [Project_ID] = @Project_ID;
+                        """;
+
+                    await using SqlCommand updateSensorCommand =
+                        new(
+                            cmdText: updateSensorSql,
+                            connection: databaseConnection,
+                            transaction: transaction);
+
+                    updateSensorCommand.Parameters.Add(
+                        parameterName: "@IsDeleted",
+                        sqlDbType: System.Data.SqlDbType.Bit)
+                        .Value = !restoreSensor;
+
+                    updateSensorCommand.Parameters.Add(
+                        parameterName: "@SensorID",
+                        sqlDbType: System.Data.SqlDbType.Int)
+                        .Value = sensor.SensorId;
+
+                    updateSensorCommand.Parameters.Add(
+                        parameterName: "@Project_ID",
+                        sqlDbType: System.Data.SqlDbType.Int)
+                        .Value = projectId;
+
+                    if (await updateSensorCommand.ExecuteNonQueryAsync() != 1)
+                    {
+                        throw new InvalidOperationException(
+                            "Sensors: The selected sensor was not updated.");
+                    }
+
+                    const string updatePointSql = """
+                        UPDATE [dbo].[PointName]
+                        SET [IsDeleted] = @IsDeleted
+                        WHERE [PointName_ID] = @PointName_ID
+                          AND [Project_ID] = @Project_ID;
+                        """;
+
+                    await using SqlCommand updatePointCommand =
+                        new(
+                            cmdText: updatePointSql,
+                            connection: databaseConnection,
+                            transaction: transaction);
+
+                    updatePointCommand.Parameters.Add(
+                        parameterName: "@IsDeleted",
+                        sqlDbType: System.Data.SqlDbType.Bit)
+                        .Value = !restoreSensor;
+
+                    updatePointCommand.Parameters.Add(
+                        parameterName: "@PointName_ID",
+                        sqlDbType: System.Data.SqlDbType.Int)
+                        .Value = sensor.PointNameId;
+
+                    updatePointCommand.Parameters.Add(
+                        parameterName: "@Project_ID",
+                        sqlDbType: System.Data.SqlDbType.Int)
+                        .Value = projectId;
+
+                    if (await updatePointCommand.ExecuteNonQueryAsync() != 1)
+                    {
+                        throw new InvalidOperationException(
+                            "Sensors: The linked PointName was not updated.");
+                    }
+
+                    transaction.Commit();
+                }
+                catch
+                {
+                    transaction.Rollback();
+                    throw;
+                }
+
+                await LoadMonitoringSensorsAsync();
+
+                ResetMonitoringSensorEditor();
+
+                txtMonitoringSensorStatus.Text =
+                    restoreSensor
+                        ? $"Sensors: '{sensor.SensorName}' restored."
+                        : $"Sensors: '{sensor.SensorName}' deleted. Historical data was preserved.";
+            }
+            catch (Exception ex)
+            {
+                await LoadMonitoringSensorsAsync();
+
+                txtMonitoringSensorStatus.Text =
+                    ex.Message;
+
+                MessageBox.Show(
+                    messageBoxText: ex.Message,
+                    caption: "Sensors",
+                    button: MessageBoxButton.OK,
+                    icon: MessageBoxImage.Error);
+            }
+
+            #endregion
+        }
+
+
+        private void ResetMonitoringSensorEditor()
+        {
+            #region Reset Sensor Editor
+
+            _selectedMonitoringSensorId = null;
+            _selectedMonitoringPointNameId = null;
+            dgMonitoringSensors.SelectedItem = null;
+            txtMonitoringSensorName.Clear();
+            txtMonitoringReplacementName.Clear();
+            txtMonitoringExternalSensorId.Clear();
+            cmbMonitoringSensorType.SelectedItem = "Temperature";
+            btnAddMonitoringSensor.IsEnabled = true;
+            btnUpdateMonitoringSensor.IsEnabled = false;
+            txtMonitoringSensorStatus.Text = "Sensors: Enter the new sensor configuration.";
+            txtMonitoringSensorName.Focus();
+
+            #endregion
+        }
+
+
+        private void dgMonitoringSensors_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            #region Load Selected Sensor
+
+            if (dgMonitoringSensors.SelectedItem is not MonitoringSensorUiItem item)
+            {
+                return;
+            }
+
+            _selectedMonitoringSensorId = item.SensorId;
+            _selectedMonitoringPointNameId = item.PointNameId;
+            txtMonitoringSensorName.Text = item.SensorName;
+            txtMonitoringReplacementName.Text = item.ReplacementName;
+            txtMonitoringExternalSensorId.Text = item.ExternalSensorId.ToString(provider: CultureInfo.InvariantCulture);
+            cmbMonitoringSensorType.SelectedItem = item.SensorType;
+            cmbMonitoringSensorUnit.SelectedItem = item.Unit;
+            btnUpdateMonitoringSensor.IsEnabled = item.IsActive;
+            txtMonitoringSensorStatus.Text = item.IsActive
+                ? $"Sensors: Editing '{item.SensorName}'."
+                : $"Sensors: '{item.SensorName}' is deleted. Tick Active to restore it.";
+
+            #endregion
+        }
+
+
+        private async void btnAddMonitoringSensor_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            await SaveMonitoringSensorAsync(
+                updateExisting: false);
+        }
+
+
+        private async void btnUpdateMonitoringSensor_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            await SaveMonitoringSensorAsync(
+                updateExisting: true);
+        }
+
+
+        private async Task SaveMonitoringSensorAsync(
+            bool updateExisting)
+        {
+            #region Validate Sensor Values
+
+            try
+            {
+                int projectId = _activeProjectId ?? throw new InvalidOperationException("Sensors: Select an active project.");
+                int? sensorIdToUpdate = updateExisting
+                    ? _selectedMonitoringSensorId
+                        ?? throw new InvalidOperationException("Sensors: Select an active sensor to update.")
+                    : null;
+                int? pointNameIdToUpdate = updateExisting
+                    ? _selectedMonitoringPointNameId
+                        ?? throw new InvalidOperationException("Sensors: The selected sensor has no linked PointName.")
+                    : null;
+                string sensorName = txtMonitoringSensorName.Text.Trim();
+                string replacementName = txtMonitoringReplacementName.Text.Trim();
+                string sensorType = cmbMonitoringSensorType.SelectedItem as string ?? string.Empty;
+                string unit = cmbMonitoringSensorUnit.SelectedItem as string ?? string.Empty;
+
+                if (sensorName.Length == 0) throw new InvalidOperationException("Sensors: Sensor Name is required.");
+                if (replacementName.Length == 0) throw new InvalidOperationException("Sensors: Replacement Name is required.");
+                if (!int.TryParse(s: txtMonitoringExternalSensorId.Text.Trim(), style: NumberStyles.None,
+                    provider: CultureInfo.InvariantCulture, result: out int externalSensorId) || externalSensorId <= 0)
+                    throw new InvalidOperationException("Sensors: External Sensor ID must be a positive whole number.");
+                if (sensorType.Length == 0 || unit.Length == 0) throw new InvalidOperationException("Sensors: Sensor Type and Unit are required.");
+
+                #endregion
+
+                #region Persist Point And Sensor Atomically
+
+                btnAddMonitoringSensor.IsEnabled = false;
+                btnUpdateMonitoringSensor.IsEnabled = false;
+                await using SqlConnection databaseConnection = new(connectionString: GetTrackGeometryConnectionString());
+                await databaseConnection.OpenAsync();
+                using SqlTransaction transaction =
+                    (SqlTransaction)databaseConnection.BeginTransaction(
+                        isolationLevel: System.Data.IsolationLevel.Serializable);
+
+                try
+                {
+                    const string duplicateSql = """
+                        SELECT COUNT(*) FROM [dbo].[GeotecSensors]
+                        WHERE [Project_ID] = @Project_ID AND [ExternalSensor_ID] = @ExternalSensor_ID
+                          AND [IsDeleted] = 0 AND [SensorID] <> @SensorID;
+                        """;
+                    await using SqlCommand duplicateCommand = new(cmdText: duplicateSql, connection: databaseConnection, transaction: transaction);
+                    duplicateCommand.Parameters.Add(parameterName: "@Project_ID", sqlDbType: System.Data.SqlDbType.Int).Value = projectId;
+                    duplicateCommand.Parameters.Add(parameterName: "@ExternalSensor_ID", sqlDbType: System.Data.SqlDbType.Int).Value = externalSensorId;
+                    duplicateCommand.Parameters.Add(parameterName: "@SensorID", sqlDbType: System.Data.SqlDbType.Int).Value = sensorIdToUpdate ?? 0;
+                    int duplicateCount = Convert.ToInt32(value: await duplicateCommand.ExecuteScalarAsync(), provider: CultureInfo.InvariantCulture);
+                    if (duplicateCount > 0) throw new InvalidOperationException("Sensors: External Sensor ID already exists for this project.");
+
+                    int pointNameId;
+                    if (pointNameIdToUpdate.HasValue)
+                    {
+                        pointNameId = pointNameIdToUpdate.Value;
+                        const string updatePointSql = """
+                            UPDATE [dbo].[PointName] SET [PointName] = @PointName,
+                                [ReplacementName] = @ReplacementName, [IsDeleted] = 0
+                            WHERE [PointName_ID] = @PointName_ID AND [Project_ID] = @Project_ID;
+                            """;
+                        await using SqlCommand updatePointCommand = new(cmdText: updatePointSql, connection: databaseConnection, transaction: transaction);
+                        AddMonitoringPointParameters(command: updatePointCommand, projectId: projectId, pointNameId: pointNameId,
+                            sensorName: sensorName, replacementName: replacementName);
+                        if (await updatePointCommand.ExecuteNonQueryAsync() != 1) throw new InvalidOperationException("Sensors: The linked PointName record was not updated.");
+                    }
+                    else
+                    {
+                        const string insertPointSql = """
+                            INSERT INTO [dbo].[PointName] ([PointName], [ReplacementName], [Project_ID])
+                            OUTPUT INSERTED.[PointName_ID] VALUES (@PointName, @ReplacementName, @Project_ID);
+                            """;
+                        await using SqlCommand insertPointCommand = new(cmdText: insertPointSql, connection: databaseConnection, transaction: transaction);
+                        AddMonitoringPointParameters(command: insertPointCommand, projectId: projectId, pointNameId: null,
+                            sensorName: sensorName, replacementName: replacementName);
+                        pointNameId = Convert.ToInt32(value: await insertPointCommand.ExecuteScalarAsync(), provider: CultureInfo.InvariantCulture);
+                    }
+
+                    string persistSensorSql = sensorIdToUpdate.HasValue
+                        ? """
+                          UPDATE [dbo].[GeotecSensors] SET [SensorName]=@SensorName, [ReplacementName]=@ReplacementName,
+                            [SensorType]=@SensorType, [PointName_ID]=@PointName_ID, [ExternalSensor_ID]=@ExternalSensor_ID,
+                            [ImportEnabled]=@ImportEnabled, [Unit]=@Unit, [UpdatedUtc]=SYSUTCDATETIME(), [IsDeleted]=0
+                          WHERE [SensorID]=@SensorID AND [Project_ID]=@Project_ID;
+                          """
+                        : """
+                          INSERT INTO [dbo].[GeotecSensors]
+                            ([SensorName],[ReplacementName],[SensorType],[Project_ID],[PointName_ID],[ExternalSensor_ID],[ImportEnabled],[Unit])
+                          VALUES (@SensorName,@ReplacementName,@SensorType,@Project_ID,@PointName_ID,@ExternalSensor_ID,@ImportEnabled,@Unit);
+                          """;
+                    await using SqlCommand persistSensorCommand = new(cmdText: persistSensorSql, connection: databaseConnection, transaction: transaction);
+                    persistSensorCommand.Parameters.Add(parameterName: "@SensorName", sqlDbType: System.Data.SqlDbType.NVarChar, size: 50).Value = sensorName;
+                    persistSensorCommand.Parameters.Add(parameterName: "@ReplacementName", sqlDbType: System.Data.SqlDbType.NVarChar, size: 50).Value = replacementName;
+                    persistSensorCommand.Parameters.Add(parameterName: "@SensorType", sqlDbType: System.Data.SqlDbType.NVarChar, size: 50).Value = sensorType;
+                    persistSensorCommand.Parameters.Add(parameterName: "@Project_ID", sqlDbType: System.Data.SqlDbType.Int).Value = projectId;
+                    persistSensorCommand.Parameters.Add(parameterName: "@PointName_ID", sqlDbType: System.Data.SqlDbType.Int).Value = pointNameId;
+                    persistSensorCommand.Parameters.Add(parameterName: "@ExternalSensor_ID", sqlDbType: System.Data.SqlDbType.Int).Value = externalSensorId;
+                    persistSensorCommand.Parameters.Add(parameterName: "@ImportEnabled", sqlDbType: System.Data.SqlDbType.Bit).Value = true;
+                    persistSensorCommand.Parameters.Add(parameterName: "@Unit", sqlDbType: System.Data.SqlDbType.NVarChar, size: 50).Value = unit;
+                    persistSensorCommand.Parameters.Add(parameterName: "@SensorID", sqlDbType: System.Data.SqlDbType.Int).Value = sensorIdToUpdate ?? 0;
+                    if (await persistSensorCommand.ExecuteNonQueryAsync() != 1) throw new InvalidOperationException("Sensors: The sensor record was not saved.");
+
+                    transaction.Commit();
+                    ResetMonitoringSensorEditor();
+                    await LoadMonitoringSensorsAsync();
+                    txtMonitoringSensorStatus.Text = updateExisting
+                        ? "Sensors: Sensor configuration updated."
+                        : "Sensors: Sensor configuration added.";
+                }
+                catch
+                {
+                    transaction.Rollback();
+                    throw;
+                }
+            }
+            catch (Exception ex)
+            {
+                txtMonitoringSensorStatus.Text = ex.Message;
+                MessageBox.Show(messageBoxText: ex.Message, caption: "Sensors", button: MessageBoxButton.OK, icon: MessageBoxImage.Error);
+            }
+            finally
+            {
+                btnAddMonitoringSensor.IsEnabled = true;
+                btnUpdateMonitoringSensor.IsEnabled =
+                    _selectedMonitoringSensorId.HasValue &&
+                    dgMonitoringSensors.SelectedItem is MonitoringSensorUiItem selectedSensor &&
+                    selectedSensor.IsActive;
+            }
+
+            #endregion
+        }
+
+
+        private static void AddMonitoringPointParameters(SqlCommand command, int projectId, int? pointNameId,
+            string sensorName, string replacementName)
+        {
+            #region Add PointName Parameters
+
+            command.Parameters.Add(parameterName: "@PointName", sqlDbType: System.Data.SqlDbType.NVarChar, size: 50).Value = sensorName;
+            command.Parameters.Add(parameterName: "@ReplacementName", sqlDbType: System.Data.SqlDbType.NVarChar, size: 50).Value = replacementName;
+            command.Parameters.Add(parameterName: "@Project_ID", sqlDbType: System.Data.SqlDbType.Int).Value = projectId;
+            if (pointNameId.HasValue)
+                command.Parameters.Add(parameterName: "@PointName_ID", sqlDbType: System.Data.SqlDbType.Int).Value = pointNameId.Value;
+
+            #endregion
+        }
+
+        #endregion
+
 
         #region Geotechnical Sensor Import
 
