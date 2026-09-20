@@ -13,6 +13,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using Line = System.Windows.Shapes.Line;
 using Rectangle = System.Windows.Shapes.Rectangle;
 using IOPath = System.IO.Path;
@@ -34,7 +35,7 @@ namespace GNA_DLRreport
         #region Application Footer
 
         private const string ApplicationRevision =
-            "038";
+            "046";
 
         private const string ChartDataIntervalEpoch =
             "Epoch";
@@ -222,6 +223,9 @@ namespace GNA_DLRreport
         private const int DefaultChartRecentDays =
             14;
 
+        private const string DefaultDataChartFontFamily =
+            "Arial Narrow";
+
         // Fixed report colours. These are intentionally not exposed in the UI.
         private const string ChartGreenBandColourHex =
             "#DFF2D8";
@@ -353,7 +357,7 @@ namespace GNA_DLRreport
                 string.Empty;
 
             public string DisplayText =>
-                $"Chart_{ChartNumber:0000} - {ChartName}";
+                $"Chart_{ChartNumber:000} - {ChartName}";
         }
 
         private sealed class ChartTypeUiItem
@@ -468,6 +472,24 @@ namespace GNA_DLRreport
         private double _chartPreviewDragStartHorizontalOffset;
 
         private double _chartPreviewDragStartVerticalOffset;
+
+        private sealed record ChartDataTableRecord(
+            DateTime LocalTime,
+            string SeriesLabel,
+            string DisplayValue);
+
+        private readonly List<BitmapSource> _chartDataTablePreviewPages =
+            new();
+
+        private int _chartDataTablePreviewPageIndex;
+
+        private bool _isDraggingChartDataTablePreview;
+
+        private Point _chartDataTablePreviewDragStartScreen;
+
+        private double _chartDataTablePreviewDragStartHorizontalOffset;
+
+        private double _chartDataTablePreviewDragStartVerticalOffset;
 
         #endregion
 
@@ -4255,6 +4277,8 @@ namespace GNA_DLRreport
 
         private void UpdateConfigurationWorkflowTabAvailability()
         {
+            InvalidateReportSelections();
+
             #region Resolve Active Project State
 
             bool activeProjectAvailable =
@@ -5424,6 +5448,8 @@ namespace GNA_DLRreport
 
             UpdateConfigurationWorkflowTabAvailability();
 
+            await RefreshReportSelectionsAsync();
+
             try
             {
                 await LoadActiveProjectStartDateIntoReportAsync();
@@ -6403,6 +6429,7 @@ namespace GNA_DLRreport
                                 DEFAULT (CONVERT(date, GETDATE())),
                             [TimeZoneId] nvarchar(200) NULL,
                             [DefaultReportOutputPath] nvarchar(1000) NULL,
+                            [ReportTemplatePath] nvarchar(1000) NULL,
                             [IsDeleted] bit NOT NULL
                                 CONSTRAINT [DF_Project_IsDeleted]
                                 DEFAULT (0),
@@ -6420,6 +6447,12 @@ namespace GNA_DLRreport
                     BEGIN
                         ALTER TABLE [dbo].[Project]
                             ADD [TimeZoneId] nvarchar(200) NULL;
+                    END;
+
+                    IF COL_LENGTH(N'dbo.Project', N'ReportTemplatePath') IS NULL
+                    BEGIN
+                        ALTER TABLE [dbo].[Project]
+                            ADD [ReportTemplatePath] nvarchar(1000) NULL;
                     END;
 
                     IF COL_LENGTH(N'dbo.Project', N'DefaultReportOutputPath') IS NULL
@@ -8399,6 +8432,19 @@ namespace GNA_DLRreport
                                 CONSTRAINT [DF_ChartDefinition_PngHeight]
                                 DEFAULT (600),
 
+                            [IncludeDataChart] bit NOT NULL
+                                CONSTRAINT [DF_ChartDefinition_IncludeDataChart]
+                                DEFAULT (0),
+                            [DataChartOrientation] nvarchar(10) NOT NULL
+                                CONSTRAINT [DF_ChartDefinition_DataChartOrientation]
+                                DEFAULT (N'Portrait'),
+                            [DataChartFontSize] decimal(6,2) NOT NULL
+                                CONSTRAINT [DF_ChartDefinition_DataChartFontSize]
+                                DEFAULT (6.0),
+                            [DataChartColourScheme] nvarchar(20) NOT NULL
+                                CONSTRAINT [DF_ChartDefinition_DataChartColourScheme]
+                                DEFAULT (N'LightBlue'),
+
                             [ChartTimeWindowMode] nvarchar(20) NOT NULL,
                             [AbsoluteStartUtc] datetime2(3) NULL,
                             [AbsoluteEndUtc] datetime2(3) NULL,
@@ -8462,6 +8508,15 @@ namespace GNA_DLRreport
 
                             CONSTRAINT [CK_ChartDefinition_DataIntervalMode]
                                 CHECK ([DataIntervalMode] IN (N'Epoch', N'Day')),
+
+                            CONSTRAINT [CK_ChartDefinition_DataChartOrientation]
+                                CHECK ([DataChartOrientation] IN (N'Portrait', N'Landscape')),
+
+                            CONSTRAINT [CK_ChartDefinition_DataChartFontSize]
+                                CHECK ([DataChartFontSize] > 0),
+
+                            CONSTRAINT [CK_ChartDefinition_DataChartColourScheme]
+                                CHECK ([DataChartColourScheme] IN (N'LightGreen', N'LightGrey', N'LightBlue', N'None')),
 
                             CONSTRAINT [CK_ChartDefinition_PngDimensions]
                                 CHECK
@@ -8711,7 +8766,7 @@ namespace GNA_DLRreport
                                     CONSTRAINT [DF_ChartDefinition_HeightMm] DEFAULT (80),
                                 [ResolutionDpi] smallint NOT NULL
                                     CONSTRAINT [DF_ChartDefinition_ResolutionDpi] DEFAULT (300),
-                                [ChartFontFamily] nvarchar(100) NOT NULL
+                            [ChartFontFamily] nvarchar(100) NOT NULL
                                     CONSTRAINT [DF_ChartDefinition_ChartFontFamily] DEFAULT (N'Arial');
                     END;
 
@@ -9570,6 +9625,8 @@ namespace GNA_DLRreport
         private async Task LoadSelectedProjectSettingsAsync(
             int projectId)
         {
+            int outputChangeVersion = _reportOutputChangeVersion;
+
             const string sql = """
                 SELECT [TimeZoneId], [DefaultReportOutputPath]
                 FROM [dbo].[Project]
@@ -9606,10 +9663,21 @@ namespace GNA_DLRreport
                     ? string.Empty
                     : reader.GetString(0);
 
-            txtProjectOutputPath.Text =
-                reader.IsDBNull(1)
-                    ? string.Empty
-                    : reader.GetString(1);
+            if (dgProjects.SelectedItem is not ProjectConfigurationItem currentProject ||
+                currentProject.Project_ID != projectId)
+            {
+                return;
+            }
+
+            // A pending read must not replace a newer folder saved on the report tab.
+            if (outputChangeVersion == _reportOutputChangeVersion ||
+                _reportSelectionProjectId != projectId)
+            {
+                txtProjectOutputPath.Text =
+                    reader.IsDBNull(1)
+                        ? string.Empty
+                        : reader.GetString(1);
+            }
 
             cmbProjectTimeZone.SelectedValue =
                 timeZoneId;
@@ -9703,6 +9771,11 @@ namespace GNA_DLRreport
 
                 txtProjectManagementStatus.Text =
                     "Project time zone and default report output path saved.";
+
+                if (_activeProjectId == selectedProject.Project_ID)
+                {
+                    await RefreshReportSelectionsAsync();
+                }
             }
             catch (Exception ex)
             {
@@ -10218,6 +10291,7 @@ namespace GNA_DLRreport
                     }
 
                     await LoadProjectsAsync();
+                    await RefreshReportSelectionsAsync();
                 }
 
                 #endregion
@@ -10803,6 +10877,8 @@ namespace GNA_DLRreport
                     databaseProjectName;
 
                 UpdateConfigurationWorkflowTabAvailability();
+
+                await RefreshReportSelectionsAsync();
 
                 try
                 {
@@ -12742,7 +12818,7 @@ namespace GNA_DLRreport
         #endregion
 
 
-        private void btnChartNew_Click(
+        private async void btnChartNew_Click(
             object sender,
             RoutedEventArgs e)
         {
@@ -12751,8 +12827,18 @@ namespace GNA_DLRreport
             _loadedChartDefinitionId =
                 null;
 
-            _loadedChartNumber =
-                null;
+            try
+            {
+                _loadedChartNumber =
+                    await GetNextChartNumberAsync();
+            }
+            catch (Exception ex)
+            {
+                txtChartStatus.Text =
+                    $"Unable to allocate the next chart number: {ex.Message}";
+
+                return;
+            }
 
             _chartCopyBaseName =
                 string.Empty;
@@ -12770,7 +12856,7 @@ namespace GNA_DLRreport
                 null;
 
             txtChartNumber.Text =
-                "New";
+                $"Chart_{_loadedChartNumber.Value:000}";
 
             txtChartName.Clear();
 
@@ -12831,12 +12917,72 @@ namespace GNA_DLRreport
             chkChartGridLines.IsChecked =
                 true;
 
+            chkChartIncludeDataTable.IsChecked =
+                false;
+
+            rbChartDataTablePortrait.IsChecked =
+                true;
+
+            txtChartDataTableFontSize.Text =
+                "6";
+
+            cmbChartDataTableColours.SelectedIndex =
+                2;
+
             ResetChartAxisAliasControls();
 
             txtChartStatus.Text =
                 "New chart canvas ready with default values.";
 
             txtChartName.Focus();
+
+            #endregion
+        }
+
+
+        private async Task<int> GetNextChartNumberAsync()
+        {
+            #region Resolve Next Project Chart Number
+
+            int projectId =
+                _activeProjectId
+                ?? throw new InvalidOperationException(
+                    "Select an active project.");
+
+            const string sql = """
+                SELECT ISNULL(MAX([ChartNumber]), 0) + 1
+                FROM [dbo].[ChartDefinition]
+                WHERE [Project_ID] = @Project_ID;
+                """;
+
+            await using SqlConnection databaseConnection =
+                new(
+                    connectionString: GetTrackGeometryConnectionString());
+
+            await databaseConnection.OpenAsync();
+
+            await using SqlCommand command =
+                new(
+                    cmdText: sql,
+                    connection: databaseConnection);
+
+            command.Parameters.Add(
+                parameterName: "@Project_ID",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value = projectId;
+
+            int nextChartNumber =
+                Convert.ToInt32(
+                    value: await command.ExecuteScalarAsync(),
+                    provider: CultureInfo.InvariantCulture);
+
+            if (nextChartNumber > 999)
+            {
+                throw new InvalidOperationException(
+                    "The project has reached the limit of 999 charts.");
+            }
+
+            return nextChartNumber;
 
             #endregion
         }
@@ -12864,10 +13010,15 @@ namespace GNA_DLRreport
 
                 btnChartPreviewChart.IsEnabled =
                     true;
+
+                UpdateChartDataTablePreviewAvailability();
             }
             catch (Exception ex)
             {
                 btnChartPreviewChart.IsEnabled =
+                    false;
+
+                btnChartPreviewDataTable.IsEnabled =
                     false;
 
                 txtChartStatus.Text =
@@ -12912,6 +13063,9 @@ namespace GNA_DLRreport
             #region Update Preview Chart Availability
 
             btnChartPreviewChart.IsEnabled =
+                false;
+
+            btnChartPreviewDataTable.IsEnabled =
                 false;
 
             #endregion
@@ -12994,7 +13148,7 @@ namespace GNA_DLRreport
                     copyResult.ChartNumber;
 
                 txtChartNumber.Text =
-                    $"Chart_{copyResult.ChartNumber:0000}";
+                    $"Chart_{copyResult.ChartNumber:000}";
 
                 await RefreshExistingChartsAsync(
                     selectedChartDefinitionId:
@@ -13207,11 +13361,13 @@ namespace GNA_DLRreport
                     commitResult.ChartNumber;
 
                 txtChartNumber.Text =
-                    $"Chart_{commitResult.ChartNumber:0000}";
+                    $"Chart_{commitResult.ChartNumber:000}";
 
                 await RefreshExistingChartsAsync(
                     selectedChartDefinitionId:
                         commitResult.ChartDefinitionId);
+
+                UpdateChartDataTablePreviewAvailability();
 
                 txtChartStatus.Text =
                     $"Chart '{chartName}' saved.";
@@ -14692,13 +14848,16 @@ namespace GNA_DLRreport
                 null;
 
             _loadedChartNumber =
-                null;
+                _existingCharts.Count == 0
+                    ? 1
+                    : _existingCharts.Max(
+                        selector: chart => chart.ChartNumber) + 1;
 
             cmbExistingChart.SelectedItem =
                 null;
 
             txtChartNumber.Text =
-                "New";
+                $"Chart_{Math.Min(_loadedChartNumber.Value, 999):000}";
 
             txtChartName.Text =
                 templateName;
@@ -15359,7 +15518,11 @@ namespace GNA_DLRreport
                     CD.[AbsoluteStartUtc],
                     CD.[AbsoluteEndUtc],
                     CD.[TitleOverride],
-                    CD.[DataIntervalMode]
+                    CD.[DataIntervalMode],
+                    CD.[IncludeDataChart],
+                    CD.[DataChartOrientation],
+                    CD.[DataChartFontSize],
+                    CD.[DataChartColourScheme]
                 FROM [dbo].[ChartDefinition] AS CD
                 INNER JOIN [dbo].[ChartType] AS CT
                     ON CT.[ChartType_ID] = CD.[ChartType_ID]
@@ -15472,6 +15635,18 @@ namespace GNA_DLRreport
             string dataInterval =
                 reader.GetString(20);
 
+            bool includeDataChart =
+                reader.GetBoolean(21);
+
+            string dataChartOrientation =
+                reader.GetString(22);
+
+            decimal dataChartFontSize =
+                reader.GetDecimal(23);
+
+            string dataChartColourScheme =
+                reader.GetString(24);
+
             await reader.DisposeAsync();
 
             #endregion
@@ -15486,7 +15661,7 @@ namespace GNA_DLRreport
                 chartNumber;
 
             txtChartNumber.Text =
-                $"Chart_{chartNumber:0000}";
+                $"Chart_{chartNumber:000}";
 
             txtChartName.Text =
                 chartName;
@@ -15552,6 +15727,28 @@ namespace GNA_DLRreport
 
             SelectChartDataInterval(
                 dataInterval: dataInterval);
+
+            chkChartIncludeDataTable.IsChecked =
+                includeDataChart;
+
+            rbChartDataTableLandscape.IsChecked =
+                string.Equals(
+                    a: dataChartOrientation,
+                    b: "Landscape",
+                    comparisonType: StringComparison.OrdinalIgnoreCase);
+
+            rbChartDataTablePortrait.IsChecked =
+                rbChartDataTableLandscape.IsChecked != true;
+
+            txtChartDataTableFontSize.Text =
+                dataChartFontSize.ToString(
+                    format: "0.##",
+                    provider: CultureInfo.InvariantCulture);
+
+            SelectChartDataTableColourScheme(
+                colourScheme: dataChartColourScheme);
+
+            UpdateChartDataTablePreviewAvailability();
 
             UpdateChartPixelDimensions();
 
@@ -15972,11 +16169,16 @@ namespace GNA_DLRreport
 
                 int resolvedChartNumber;
 
-                if (chartDefinitionId.HasValue &&
-                    chartNumber.HasValue)
+                if (chartNumber.HasValue)
                 {
                     resolvedChartNumber =
                         chartNumber.Value;
+
+                    if (resolvedChartNumber is < 1 or > 999)
+                    {
+                        throw new InvalidOperationException(
+                            "Chart number must be between 001 and 999.");
+                    }
                 }
                 else
                 {
@@ -16004,6 +16206,12 @@ namespace GNA_DLRreport
                                 await numberCommand.ExecuteScalarAsync(),
                             provider:
                                 CultureInfo.InvariantCulture);
+
+                    if (resolvedChartNumber > 999)
+                    {
+                        throw new InvalidOperationException(
+                            "The project has reached the limit of 999 charts.");
+                    }
                 }
 
                 #endregion
@@ -16039,6 +16247,10 @@ namespace GNA_DLRreport
                             [HeightMm] = @HeightMm,
                             [ResolutionDpi] = @ResolutionDpi,
                             [ChartFontFamily] = N'Arial',
+                            [IncludeDataChart] = @IncludeDataChart,
+                            [DataChartOrientation] = @DataChartOrientation,
+                            [DataChartFontSize] = @DataChartFontSize,
+                            [DataChartColourScheme] = @DataChartColourScheme,
                             [StartDateMode] = @StartDateMode,
                             [ChartTimeWindowMode] = N'Absolute',
                             [AbsoluteStartUtc] = @AbsoluteStartUtc,
@@ -16126,6 +16338,10 @@ namespace GNA_DLRreport
                             [HeightMm],
                             [ResolutionDpi],
                             [ChartFontFamily],
+                            [IncludeDataChart],
+                            [DataChartOrientation],
+                            [DataChartFontSize],
+                            [DataChartColourScheme],
                             [StartDateMode],
                             [ChartTimeWindowMode],
                             [AbsoluteStartUtc],
@@ -16162,6 +16378,10 @@ namespace GNA_DLRreport
                             @HeightMm,
                             @ResolutionDpi,
                             N'Arial',
+                            @IncludeDataChart,
+                            @DataChartOrientation,
+                            @DataChartFontSize,
+                            @DataChartColourScheme,
                             @StartDateMode,
                             N'Absolute',
                             @AbsoluteStartUtc,
@@ -16444,6 +16664,43 @@ namespace GNA_DLRreport
                 sqlDbType: System.Data.SqlDbType.SmallInt)
                 .Value =
                     GetSelectedChartResolutionDpi();
+
+            command.Parameters.Add(
+                parameterName: "@IncludeDataChart",
+                sqlDbType: System.Data.SqlDbType.Bit)
+                .Value =
+                    chkChartIncludeDataTable.IsChecked == true;
+
+            command.Parameters.Add(
+                parameterName: "@DataChartOrientation",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 10)
+                .Value =
+                    rbChartDataTableLandscape.IsChecked == true
+                        ? "Landscape"
+                        : "Portrait";
+
+            command.Parameters.Add(
+                parameterName: "@DataChartFontSize",
+                sqlDbType: System.Data.SqlDbType.Decimal)
+                .Value =
+                    decimal.Parse(
+                        s: txtChartDataTableFontSize.Text,
+                        style: NumberStyles.Float,
+                        provider: CultureInfo.InvariantCulture);
+
+            command.Parameters["@DataChartFontSize"].Precision =
+                6;
+
+            command.Parameters["@DataChartFontSize"].Scale =
+                2;
+
+            command.Parameters.Add(
+                parameterName: "@DataChartColourScheme",
+                sqlDbType: System.Data.SqlDbType.NVarChar,
+                size: 20)
+                .Value =
+                    GetSelectedChartDataTableColourScheme();
 
             command.Parameters.Add(
                 parameterName: "@StartDateMode",
@@ -17335,6 +17592,650 @@ namespace GNA_DLRreport
         }
 
 
+        private void ChartDataTableSettings_Changed(
+            object sender,
+            RoutedEventArgs e)
+        {
+            if (!IsInitialized)
+            {
+                return;
+            }
+
+            UpdateChartDataTablePreviewAvailability();
+        }
+
+
+        private string GetSelectedChartDataTableColourScheme()
+        {
+            #region Read Data Chart Colour Scheme
+
+            ComboBoxItem selectedItem =
+                cmbChartDataTableColours.SelectedItem as ComboBoxItem
+                ?? throw new InvalidOperationException(
+                    "Appearance: Select a Data chart colour scheme.");
+
+            return selectedItem.Tag?.ToString()?.Trim()
+                ?? throw new InvalidOperationException(
+                    "Appearance: The selected Data chart colour scheme is invalid.");
+
+            #endregion
+        }
+
+
+        private void SelectChartDataTableColourScheme(
+            string colourScheme)
+        {
+            #region Select Stored Data Chart Colour Scheme
+
+            foreach (object item in cmbChartDataTableColours.Items)
+            {
+                if (item is ComboBoxItem comboBoxItem &&
+                    string.Equals(
+                        a: comboBoxItem.Tag?.ToString(),
+                        b: colourScheme,
+                        comparisonType: StringComparison.OrdinalIgnoreCase))
+                {
+                    cmbChartDataTableColours.SelectedItem =
+                        comboBoxItem;
+
+                    return;
+                }
+            }
+
+            cmbChartDataTableColours.SelectedIndex =
+                2;
+
+            #endregion
+        }
+
+
+        private void UpdateChartDataTablePreviewAvailability()
+        {
+            btnChartPreviewDataTable.IsEnabled =
+                _loadedChartDefinitionId.HasValue &&
+                chkChartIncludeDataTable.IsChecked == true;
+        }
+
+
+        private async void btnChartPreviewDataTable_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            #region Validate Data Table Preview
+
+            if (!_loadedChartDefinitionId.HasValue)
+            {
+                txtChartStatus.Text =
+                    "Load an existing chart before previewing its data table.";
+
+                return;
+            }
+
+            if (chkChartIncludeDataTable.IsChecked != true)
+            {
+                txtChartStatus.Text =
+                    "Appearance: Select Create data chart before previewing the data table.";
+
+                return;
+            }
+
+            if (!double.TryParse(
+                    s: txtChartDataTableFontSize.Text,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture,
+                    result: out double fontSizePoints) ||
+                fontSizePoints <= 0)
+            {
+                txtChartStatus.Text =
+                    "Appearance: Data chart font size must be greater than zero.";
+
+                return;
+            }
+
+            #endregion
+
+
+            #region Load Plotted Data And Build Images
+
+            try
+            {
+                ApplyChartAppearanceToSeries();
+
+                await LoadChartPreviewDataAsync(
+                    includeSeriesData: true);
+
+                BuildChartDataTablePreviewPages(
+                    fontSizePoints: fontSizePoints);
+
+                _chartDataTablePreviewPageIndex =
+                    0;
+
+                DisplayChartDataTablePreviewPage();
+
+                popChartDataTablePreview.IsOpen =
+                    true;
+
+                popChartDataTablePreview.Child.UpdateLayout();
+
+                FrameworkElement previewContent =
+                    popChartDataTablePreview.Child as FrameworkElement
+                    ?? throw new InvalidOperationException(
+                        "The data-table preview content must be a FrameworkElement.");
+
+                Rect workArea =
+                    SystemParameters.WorkArea;
+
+                popChartDataTablePreview.HorizontalOffset =
+                    workArea.Left +
+                    Math.Max(
+                        val1: 0,
+                        val2: (workArea.Width - previewContent.ActualWidth) / 2.0);
+
+                popChartDataTablePreview.VerticalOffset =
+                    workArea.Top +
+                    Math.Max(
+                        val1: 0,
+                        val2: (workArea.Height - previewContent.ActualHeight) / 2.0);
+
+                txtChartStatus.Text =
+                    $"Data table preview generated: {_chartDataTablePreviewPages.Count} image(s).";
+            }
+            catch (Exception ex)
+            {
+                txtChartStatus.Text =
+                    $"Unable to generate data table preview: {ex.Message}";
+            }
+
+            #endregion
+        }
+
+
+        private void BuildChartDataTablePreviewPages(
+            double fontSizePoints)
+        {
+            #region Resolve Output Geometry
+
+            if (cmbChartType.SelectedItem is not ChartTypeUiItem chartType)
+            {
+                throw new InvalidOperationException(
+                    "Definition: Select a chart type.");
+            }
+
+            bool landscape =
+                rbChartDataTableLandscape.IsChecked == true;
+
+            int widthMm =
+                landscape
+                    ? 250
+                    : 150;
+
+            int heightMm =
+                landscape
+                    ? 150
+                    : 250;
+
+            int setCount =
+                landscape
+                    ? 4
+                    : 2;
+
+            int resolutionDpi =
+                GetSelectedChartResolutionDpi();
+
+            int pixelWidth =
+                (int)Math.Round(
+                    d: widthMm * resolutionDpi / 25.4m,
+                    mode: MidpointRounding.AwayFromZero);
+
+            int pixelHeight =
+                (int)Math.Round(
+                    d: heightMm * resolutionDpi / 25.4m,
+                    mode: MidpointRounding.AwayFromZero);
+
+            double pageWidthDips =
+                widthMm * 96.0 / 25.4;
+
+            double pageHeightDips =
+                heightMm * 96.0 / 25.4;
+
+            double fontSizeDips =
+                fontSizePoints * 96.0 / 72.0;
+
+            double margin =
+                96.0 * 8.0 / 25.4;
+
+            double titleHeight =
+                fontSizeDips * 2.2;
+
+            double rowHeight =
+                fontSizeDips * 1.65;
+
+            int rowsPerSet =
+                Math.Max(
+                    val1: 1,
+                    val2:
+                        (int)Math.Floor(
+                            d:
+                                (pageHeightDips - (margin * 2.0) - titleHeight - rowHeight) /
+                                rowHeight));
+
+            #endregion
+
+
+            #region Flatten Plotted Records
+
+            List<ChartDataTableRecord> records =
+                new();
+
+            string valueFormat =
+                string.Equals(
+                    a: chartType.Unit,
+                    b: "mm",
+                    comparisonType: StringComparison.OrdinalIgnoreCase)
+                    ? "F1"
+                    : "F4";
+
+            foreach (ChartPreviewSeries previewSeries in _chartPreviewSeries)
+            {
+                foreach (ChartPreviewPoint previewPoint in previewSeries.Points)
+                {
+                    DateTime utcTime =
+                        DateTime.SpecifyKind(
+                            value: previewPoint.UtcTime,
+                            kind: DateTimeKind.Utc);
+
+                    records.Add(
+                        item:
+                            new ChartDataTableRecord(
+                                LocalTime:
+                                    TimeZoneInfo.ConvertTimeFromUtc(
+                                        dateTime: utcTime,
+                                        destinationTimeZone: _chartPreviewTimeZone),
+                                SeriesLabel: previewSeries.LegendText,
+                                DisplayValue:
+                                    $"{previewPoint.Value.ToString(format: valueFormat, provider: CultureInfo.InvariantCulture)} {chartType.Unit}"));
+                }
+            }
+
+            if (records.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "No plotted values were returned for the selected report dates.");
+            }
+
+            #endregion
+
+
+            #region Render Overflow Pages
+
+            _chartDataTablePreviewPages.Clear();
+
+            int recordsPerPage =
+                rowsPerSet * setCount;
+
+            int pageCount =
+                (int)Math.Ceiling(
+                    a: records.Count / (double)recordsPerPage);
+
+            for (int pageIndex = 0;
+                 pageIndex < pageCount;
+                 pageIndex++)
+            {
+                _chartDataTablePreviewPages.Add(
+                    item:
+                        RenderChartDataTablePage(
+                            records: records,
+                            pageIndex: pageIndex,
+                            pageCount: pageCount,
+                            recordsPerPage: recordsPerPage,
+                            rowsPerSet: rowsPerSet,
+                            setCount: setCount,
+                            pixelWidth: pixelWidth,
+                            pixelHeight: pixelHeight,
+                            pageWidthDips: pageWidthDips,
+                            pageHeightDips: pageHeightDips,
+                            resolutionDpi: resolutionDpi,
+                            fontSizeDips: fontSizeDips,
+                            margin: margin,
+                            titleHeight: titleHeight,
+                            rowHeight: rowHeight));
+            }
+
+            #endregion
+        }
+
+
+        private BitmapSource RenderChartDataTablePage(
+            IReadOnlyList<ChartDataTableRecord> records,
+            int pageIndex,
+            int pageCount,
+            int recordsPerPage,
+            int rowsPerSet,
+            int setCount,
+            int pixelWidth,
+            int pixelHeight,
+            double pageWidthDips,
+            double pageHeightDips,
+            int resolutionDpi,
+            double fontSizeDips,
+            double margin,
+            double titleHeight,
+            double rowHeight)
+        {
+            #region Draw Table Page
+
+            DrawingVisual visual =
+                new();
+
+            DrawingContext drawingContext =
+                visual.RenderOpen();
+
+            drawingContext.DrawRectangle(
+                brush: Brushes.White,
+                pen: null,
+                rectangle: new Rect(x: 0, y: 0, width: pageWidthDips, height: pageHeightDips));
+
+            Typeface typeface =
+                new(typefaceName: DefaultDataChartFontFamily);
+
+            string baseName =
+                $"{txtChartNumber.Text}_data";
+
+            string pageName =
+                pageCount == 1
+                    ? baseName
+                    : $"{baseName}_{pageIndex + 1:00}";
+
+            DrawChartDataTableText(
+                drawingContext: drawingContext,
+                text: pageName,
+                typeface: typeface,
+                fontSizePixels: fontSizeDips * 1.25,
+                fontWeight: FontWeights.Bold,
+                foreground: Brushes.Black,
+                rectangle:
+                    new Rect(
+                        x: margin,
+                        y: margin,
+                        width: pageWidthDips - (margin * 2.0),
+                        height: titleHeight),
+                textAlignment: TextAlignment.Center);
+
+            double tableTop =
+                margin + titleHeight;
+
+            double setWidth =
+                (pageWidthDips - (margin * 2.0)) / setCount;
+
+            Brush headerBrush =
+                new SolidColorBrush(
+                    color: Color.FromRgb(r: 223, g: 242, b: 216));
+
+            Brush oddRowBrush =
+                GetSelectedChartDataTableColourScheme() switch
+                {
+                    "LightGrey" =>
+                        new SolidColorBrush(
+                            color: Color.FromRgb(r: 245, g: 245, b: 245)),
+
+                    "LightBlue" =>
+                        new SolidColorBrush(
+                            color: Color.FromRgb(r: 239, g: 247, b: 255)),
+
+                    "None" =>
+                        Brushes.White,
+
+                    _ =>
+                        new SolidColorBrush(
+                            color: Color.FromRgb(r: 243, g: 250, b: 240))
+                };
+
+            Brush evenRowBrush =
+                GetSelectedChartDataTableColourScheme() switch
+                {
+                    "LightGrey" =>
+                        new SolidColorBrush(
+                            color: Color.FromRgb(r: 225, g: 225, b: 225)),
+
+                    "LightBlue" =>
+                        new SolidColorBrush(
+                            color: Color.FromRgb(r: 218, g: 236, b: 252)),
+
+                    "None" =>
+                        Brushes.White,
+
+                    _ =>
+                        new SolidColorBrush(
+                            color: Color.FromRgb(r: 228, g: 243, b: 222))
+                };
+
+            Pen borderPen =
+                new(
+                    brush: Brushes.Gray,
+                    thickness: Math.Max(1.0, resolutionDpi / 300.0));
+
+            string[] headings =
+                ["Time Stamp", "Point Name", "Value"];
+
+            double[] columnFractions =
+                [0.38, 0.40, 0.22];
+
+            int pageStartIndex =
+                pageIndex * recordsPerPage;
+
+            for (int setIndex = 0;
+                 setIndex < setCount;
+                 setIndex++)
+            {
+                int setStartRecordIndex =
+                    pageStartIndex +
+                    (setIndex * rowsPerSet);
+
+                if (setStartRecordIndex >= records.Count ||
+                    setStartRecordIndex >= pageStartIndex + recordsPerPage)
+                {
+                    continue;
+                }
+
+                double setLeft =
+                    margin + (setIndex * setWidth);
+
+                double columnLeft =
+                    setLeft;
+
+                for (int columnIndex = 0;
+                     columnIndex < headings.Length;
+                     columnIndex++)
+                {
+                    double columnWidth =
+                        setWidth * columnFractions[columnIndex];
+
+                    Rect headerRectangle =
+                        new(
+                            x: columnLeft,
+                            y: tableTop,
+                            width: columnWidth,
+                            height: rowHeight);
+
+                    drawingContext.DrawRectangle(
+                        brush: headerBrush,
+                        pen: borderPen,
+                        rectangle: headerRectangle);
+
+                    DrawChartDataTableText(
+                        drawingContext: drawingContext,
+                        text: headings[columnIndex],
+                        typeface: typeface,
+                        fontSizePixels: fontSizeDips,
+                        fontWeight: FontWeights.Bold,
+                        foreground: Brushes.Black,
+                        rectangle: headerRectangle,
+                        textAlignment:
+                            columnIndex == 2
+                                ? TextAlignment.Right
+                                : TextAlignment.Center);
+
+                    columnLeft +=
+                        columnWidth;
+                }
+
+                for (int rowIndex = 0;
+                     rowIndex < rowsPerSet;
+                     rowIndex++)
+                {
+                    int recordIndex =
+                        pageStartIndex +
+                        (setIndex * rowsPerSet) +
+                        rowIndex;
+
+                    if (recordIndex >= records.Count ||
+                        recordIndex >= pageStartIndex + recordsPerPage)
+                    {
+                        break;
+                    }
+
+                    ChartDataTableRecord record =
+                        records[recordIndex];
+
+                    string[] values =
+                    [
+                        record.LocalTime.ToString(
+                            format: "yyyy.MM.dd HH:mm:ss",
+                            provider: CultureInfo.InvariantCulture),
+                        record.SeriesLabel,
+                        record.DisplayValue
+                    ];
+
+                    double rowTop =
+                        tableTop + rowHeight + (rowIndex * rowHeight);
+
+                    columnLeft =
+                        setLeft;
+
+                    for (int columnIndex = 0;
+                         columnIndex < values.Length;
+                         columnIndex++)
+                    {
+                        double columnWidth =
+                            setWidth * columnFractions[columnIndex];
+
+                        Rect cellRectangle =
+                            new(
+                                x: columnLeft,
+                                y: rowTop,
+                                width: columnWidth,
+                                height: rowHeight);
+
+                        drawingContext.DrawRectangle(
+                            brush:
+                                recordIndex % 2 == 0
+                                    ? oddRowBrush
+                                    : evenRowBrush,
+                            pen: borderPen,
+                            rectangle: cellRectangle);
+
+                        DrawChartDataTableText(
+                            drawingContext: drawingContext,
+                            text: values[columnIndex],
+                            typeface: typeface,
+                            fontSizePixels: fontSizeDips,
+                            fontWeight: FontWeights.Normal,
+                            foreground: Brushes.Black,
+                            rectangle: cellRectangle,
+                            textAlignment:
+                                columnIndex == 2
+                                    ? TextAlignment.Right
+                                    : TextAlignment.Center);
+
+                        columnLeft +=
+                            columnWidth;
+                    }
+                }
+            }
+
+            // A DrawingVisual does not receive the completed drawing until its
+            // DrawingContext is closed. Rendering before this point produces a
+            // blank bitmap even though all drawing commands have executed.
+            drawingContext.Close();
+
+            RenderTargetBitmap bitmap =
+                new(
+                    pixelWidth: pixelWidth,
+                    pixelHeight: pixelHeight,
+                    dpiX: resolutionDpi,
+                    dpiY: resolutionDpi,
+                    pixelFormat: PixelFormats.Pbgra32);
+
+            bitmap.Render(
+                visual: visual);
+
+            bitmap.Freeze();
+
+            return bitmap;
+
+            #endregion
+        }
+
+
+        private static void DrawChartDataTableText(
+            DrawingContext drawingContext,
+            string text,
+            Typeface typeface,
+            double fontSizePixels,
+            FontWeight fontWeight,
+            Brush foreground,
+            Rect rectangle,
+            TextAlignment textAlignment)
+        {
+            #region Draw Clipped Cell Text
+
+            Typeface weightedTypeface =
+                new(
+                    fontFamily: typeface.FontFamily,
+                    style: FontStyles.Normal,
+                    weight: fontWeight,
+                    stretch: FontStretches.Normal);
+
+            FormattedText formattedText =
+                new(
+                    textToFormat: text,
+                    culture: CultureInfo.InvariantCulture,
+                    flowDirection: FlowDirection.LeftToRight,
+                    typeface: weightedTypeface,
+                    emSize: fontSizePixels,
+                    foreground: foreground,
+                    pixelsPerDip: 1.0)
+                {
+                    MaxTextWidth = Math.Max(1.0, rectangle.Width - (fontSizePixels * 0.7)),
+                    MaxTextHeight = rectangle.Height,
+                    Trimming = TextTrimming.CharacterEllipsis,
+                    TextAlignment = textAlignment
+                };
+
+            double left =
+                textAlignment == TextAlignment.Right
+                    ? rectangle.Right - formattedText.MaxTextWidth - (fontSizePixels * 0.35)
+                    : rectangle.Left + (fontSizePixels * 0.35);
+
+            double top =
+                rectangle.Top +
+                Math.Max(
+                    val1: 0,
+                    val2: (rectangle.Height - formattedText.Height) / 2.0);
+
+            drawingContext.PushClip(
+                clipGeometry: new RectangleGeometry(rect: rectangle));
+
+            drawingContext.DrawText(
+                formattedText: formattedText,
+                origin: new Point(x: left, y: top));
+
+            drawingContext.Pop();
+
+            #endregion
+        }
+
+
         private async Task GenerateChartPreviewAsync(
             bool includeSeriesData,
             string previewDescription)
@@ -17454,6 +18355,191 @@ namespace GNA_DLRreport
         }
 
 
+        private void DisplayChartDataTablePreviewPage()
+        {
+            #region Display Selected Data Table Image
+
+            if (_chartDataTablePreviewPages.Count == 0)
+            {
+                return;
+            }
+
+            _chartDataTablePreviewPageIndex =
+                Math.Clamp(
+                    value: _chartDataTablePreviewPageIndex,
+                    min: 0,
+                    max: _chartDataTablePreviewPages.Count - 1);
+
+            imgChartDataTablePreview.Source =
+                _chartDataTablePreviewPages[_chartDataTablePreviewPageIndex];
+
+            Rect workArea =
+                SystemParameters.WorkArea;
+
+            BitmapSource page =
+                _chartDataTablePreviewPages[_chartDataTablePreviewPageIndex];
+
+            double naturalWidth =
+                page.PixelWidth * 96.0 / page.DpiX;
+
+            double naturalHeight =
+                page.PixelHeight * 96.0 / page.DpiY;
+
+            bool portrait =
+                rbChartDataTablePortrait.IsChecked == true;
+
+            double requestedPreviewScale =
+                portrait
+                    ? 1.875
+                    : 1.0;
+
+            double maximumWidthFraction =
+                portrait
+                    ? 0.90
+                    : 0.80;
+
+            double maximumHeightFraction =
+                portrait
+                    ? 0.90
+                    : 0.72;
+
+            double scale =
+                Math.Min(
+                    val1: requestedPreviewScale,
+                    val2:
+                        Math.Min(
+                            val1: (workArea.Width * maximumWidthFraction) / naturalWidth,
+                            val2: (workArea.Height * maximumHeightFraction) / naturalHeight));
+
+            imgChartDataTablePreview.Width =
+                naturalWidth * scale;
+
+            imgChartDataTablePreview.Height =
+                naturalHeight * scale;
+
+            string baseName =
+                $"{txtChartNumber.Text}_data";
+
+            string pageName =
+                _chartDataTablePreviewPages.Count == 1
+                    ? baseName
+                    : $"{baseName}_{_chartDataTablePreviewPageIndex + 1:00}";
+
+            txtChartDataTablePreviewTitle.Text =
+                $"Data Table Preview — {pageName}";
+
+            txtChartDataTablePage.Text =
+                $"Page {_chartDataTablePreviewPageIndex + 1} of {_chartDataTablePreviewPages.Count}";
+
+            btnChartDataTablePrevious.IsEnabled =
+                _chartDataTablePreviewPageIndex > 0;
+
+            btnChartDataTableNext.IsEnabled =
+                _chartDataTablePreviewPageIndex <
+                _chartDataTablePreviewPages.Count - 1;
+
+            #endregion
+        }
+
+
+        private void btnChartDataTablePrevious_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            _chartDataTablePreviewPageIndex--;
+            DisplayChartDataTablePreviewPage();
+        }
+
+
+        private void btnChartDataTableNext_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            _chartDataTablePreviewPageIndex++;
+            DisplayChartDataTablePreviewPage();
+        }
+
+
+        private void btnCloseChartDataTablePreview_Click(
+            object sender,
+            RoutedEventArgs e)
+        {
+            popChartDataTablePreview.IsOpen =
+                false;
+        }
+
+
+        private void pnlChartDataTablePreviewDragHeader_MouseLeftButtonDown(
+            object sender,
+            MouseButtonEventArgs e)
+        {
+            if (e.OriginalSource is Button)
+            {
+                return;
+            }
+
+            _isDraggingChartDataTablePreview =
+                true;
+
+            _chartDataTablePreviewDragStartScreen =
+                GetPreviewPointerScreenPosition(
+                    referenceElement: pnlChartDataTablePreviewDragHeader,
+                    mouseEventArgs: e);
+
+            _chartDataTablePreviewDragStartHorizontalOffset =
+                popChartDataTablePreview.HorizontalOffset;
+
+            _chartDataTablePreviewDragStartVerticalOffset =
+                popChartDataTablePreview.VerticalOffset;
+
+            pnlChartDataTablePreviewDragHeader.CaptureMouse();
+
+            e.Handled =
+                true;
+        }
+
+
+        private void pnlChartDataTablePreviewDragHeader_MouseMove(
+            object sender,
+            MouseEventArgs e)
+        {
+            if (!_isDraggingChartDataTablePreview ||
+                e.LeftButton != MouseButtonState.Pressed)
+            {
+                return;
+            }
+
+            Point currentScreenPosition =
+                GetPreviewPointerScreenPosition(
+                    referenceElement: pnlChartDataTablePreviewDragHeader,
+                    mouseEventArgs: e);
+
+            popChartDataTablePreview.HorizontalOffset =
+                _chartDataTablePreviewDragStartHorizontalOffset +
+                currentScreenPosition.X -
+                _chartDataTablePreviewDragStartScreen.X;
+
+            popChartDataTablePreview.VerticalOffset =
+                _chartDataTablePreviewDragStartVerticalOffset +
+                currentScreenPosition.Y -
+                _chartDataTablePreviewDragStartScreen.Y;
+        }
+
+
+        private void pnlChartDataTablePreviewDragHeader_MouseLeftButtonUp(
+            object sender,
+            MouseButtonEventArgs e)
+        {
+            _isDraggingChartDataTablePreview =
+                false;
+
+            pnlChartDataTablePreviewDragHeader.ReleaseMouseCapture();
+
+            e.Handled =
+                true;
+        }
+
+
         private void PopulateChartPreviewDiagnosticText()
         {
             #region Build Temporary Preview Data Listing
@@ -17482,11 +18568,6 @@ namespace GNA_DLRreport
                 _chartPreviewSeries
                     .Select(
                         selector: series => series.LegendText.Length)
-                    .Append(
-                        element:
-                            _chartPreviewTemperaturePoints.Count > 0
-                                ? "Temperature".Length
-                                : 0)
                     .DefaultIfEmpty(
                         defaultValue: 1)
                     .Max();
@@ -17518,35 +18599,6 @@ namespace GNA_DLRreport
                             $"{previewSeries.LegendText.PadRight(totalWidth: legendColumnWidth)} | " +
                             $"{previewPoint.Value.ToString(format: plottedValueFormat, provider: CultureInfo.InvariantCulture).PadLeft(totalWidth: 12)} " +
                             chartType.Unit);
-                }
-
-                output.AppendLine();
-            }
-
-            if (_chartPreviewTemperaturePoints.Count > 0)
-            {
-                output.AppendLine(
-                    value:
-                        $"Series: Temperature [°C] - {_chartPreviewTemperaturePoints.Count} value(s)");
-
-                foreach (ChartPreviewPoint temperaturePoint
-                    in _chartPreviewTemperaturePoints)
-                {
-                    DateTime utcTime =
-                        DateTime.SpecifyKind(
-                            value: temperaturePoint.UtcTime,
-                            kind: DateTimeKind.Utc);
-
-                    DateTime localTime =
-                        TimeZoneInfo.ConvertTimeFromUtc(
-                            dateTime: utcTime,
-                            destinationTimeZone: _chartPreviewTimeZone);
-
-                    output.AppendLine(
-                        value:
-                            $"{localTime:yyyy.MM.dd HH:mm:ss} | " +
-                            $"{"Temperature".PadRight(totalWidth: legendColumnWidth)} | " +
-                            $"{temperaturePoint.Value.ToString(format: "F1", provider: CultureInfo.InvariantCulture).PadLeft(totalWidth: 12)} °C");
                 }
 
                 output.AppendLine();
@@ -18011,6 +19063,20 @@ namespace GNA_DLRreport
             {
                 validationMessage =
                     "Appearance: Marker size cannot be negative.";
+
+                return false;
+            }
+
+            if (chkChartIncludeDataTable.IsChecked == true &&
+                (!decimal.TryParse(
+                    s: txtChartDataTableFontSize.Text,
+                    style: NumberStyles.Float,
+                    provider: CultureInfo.InvariantCulture,
+                    result: out decimal dataTableFontSize) ||
+                 dataTableFontSize <= 0m))
+            {
+                validationMessage =
+                    "Appearance: Data chart font size must be greater than zero.";
 
                 return false;
             }
