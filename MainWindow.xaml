@@ -46,6 +46,14 @@
                         <StackPanel Width="800"
                                     HorizontalAlignment="Center"
                                     VerticalAlignment="Center">
+                            <TextBlock x:Name="txtReportActiveProject"
+                                       Width="430"
+                                       Margin="0,0,0,16"
+                                       HorizontalAlignment="Center"
+                                       Text="Project: —"
+                                       TextAlignment="Center"
+                                       FontSize="18"
+                                       FontWeight="Bold"/>
                             <Grid Margin="0,0,0,10" Width="430" HorizontalAlignment="Center">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="130"/>
@@ -160,15 +168,54 @@
                                         Click="btnSelectReportOutputFolder_Click"/>
                             </Grid>
 
-                            <TextBlock x:Name="txtReportFileNamePreview" Margin="150,0,0,12"
-                                       TextWrapping="Wrap"/>
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="150"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="95"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Margin="0,0,10,0"
+                                           HorizontalAlignment="Right" VerticalAlignment="Center"
+                                           Text="Report Name"/>
+                                <TextBox x:Name="txtReportName" Grid.Column="1"
+                                         Height="28" MaxLength="200"
+                                         VerticalContentAlignment="Center"
+                                         TextChanged="txtReportName_TextChanged"
+                                         LostFocus="txtReportName_LostFocus"/>
+                            </Grid>
 
                             <!-- #endregion -->
 
                             <Button x:Name="btnReportGeneration"
                                     Width="430"
                                     Height="35"
-                                    Content="Report Generation"/>
+                                    Content="Report Generation"
+                                    IsEnabled="False"
+                                    Click="btnReportGeneration_Click"/>
+                            <ProgressBar x:Name="barReportGeneration"
+                                         Margin="0,10,0,0" Width="430" Height="16"
+                                         Foreground="LightGray"
+                                         Background="#FFF3F3F3"
+                                         Minimum="0" Maximum="100"
+                                         Visibility="Collapsed">
+                                <ProgressBar.Template>
+                                    <ControlTemplate TargetType="ProgressBar">
+                                        <Border BorderBrush="#FFB0B0B0" BorderThickness="1">
+                                            <Grid x:Name="PART_Track"
+                                                  Background="{TemplateBinding Background}">
+                                                <Border x:Name="PART_Indicator"
+                                                        HorizontalAlignment="Left"
+                                                        Background="{TemplateBinding Foreground}"/>
+                                            </Grid>
+                                        </Border>
+                                    </ControlTemplate>
+                                </ProgressBar.Template>
+                            </ProgressBar>
+                            <TextBlock x:Name="txtReportTaskComplete"
+                                       Margin="0,10,0,0" Width="430"
+                                       Text="Task complete"
+                                       TextAlignment="Center"
+                                       Visibility="Collapsed"/>
                             <TextBlock x:Name="txtReportGenerationStatus"
                                        Margin="0,10,0,0"
                                        TextAlignment="Center"
@@ -1790,10 +1837,10 @@
                                     </Grid.ColumnDefinitions>
 
                                     <TextBlock Grid.Row="0" Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Width (mm):"/>
-                                    <TextBox x:Name="txtChartWidthMm" Grid.Row="0" Grid.Column="1" Height="28" Tag="PositiveInteger" PreviewTextInput="NumericTextBox_PreviewTextInput" DataObject.Pasting="NumericTextBox_Pasting" VerticalContentAlignment="Center" Text="150" TextChanged="ChartPhysicalSize_Changed"/>
+                                    <TextBox x:Name="txtChartWidthMm" Grid.Row="0" Grid.Column="1" Height="28" Tag="PositiveInteger" PreviewTextInput="NumericTextBox_PreviewTextInput" DataObject.Pasting="NumericTextBox_Pasting" VerticalContentAlignment="Center" Text="250" TextChanged="ChartPhysicalSize_Changed"/>
 
                                     <TextBlock Grid.Row="0" Grid.Column="3" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Height (mm):"/>
-                                    <TextBox x:Name="txtChartHeightMm" Grid.Row="0" Grid.Column="4" Height="28" Tag="PositiveInteger" PreviewTextInput="NumericTextBox_PreviewTextInput" DataObject.Pasting="NumericTextBox_Pasting" VerticalContentAlignment="Center" Text="80" TextChanged="ChartPhysicalSize_Changed"/>
+                                    <TextBox x:Name="txtChartHeightMm" Grid.Row="0" Grid.Column="4" Height="28" Tag="PositiveInteger" PreviewTextInput="NumericTextBox_PreviewTextInput" DataObject.Pasting="NumericTextBox_Pasting" VerticalContentAlignment="Center" Text="75" TextChanged="ChartPhysicalSize_Changed"/>
 
                                     <TextBlock Grid.Row="2" Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Resolution:"/>
                                     <ComboBox x:Name="cmbChartResolutionDpi" Grid.Row="2" Grid.Column="1" Height="28" SelectionChanged="ChartPhysicalSize_Changed">
@@ -1848,14 +1895,14 @@
                                                      Content="Day"
                                                      Checked="ChartDataInterval_Checked"/>
                                         <TextBlock Margin="25,0,8,0" VerticalAlignment="Center" Text="Line width:"/>
-                                        <ComboBox x:Name="txtChartDefaultLineWidth" Width="55" Height="28" SelectedIndex="1" VerticalContentAlignment="Center">
+                                        <ComboBox x:Name="txtChartDefaultLineWidth" Width="55" Height="28" SelectedIndex="0" VerticalContentAlignment="Center">
                                             <ComboBoxItem Content="1"/>
                                             <ComboBoxItem Content="2"/>
                                             <ComboBoxItem Content="4"/>
                                             <ComboBoxItem Content="6"/>
                                         </ComboBox>
                                         <TextBlock Margin="20,0,8,0" VerticalAlignment="Center" Text="Marker size:"/>
-                                        <ComboBox x:Name="txtChartDefaultMarkerSize" Width="85" Height="28" SelectedIndex="2" VerticalContentAlignment="Center">
+                                        <ComboBox x:Name="txtChartDefaultMarkerSize" Width="85" Height="28" SelectedIndex="1" VerticalContentAlignment="Center">
                                             <ComboBoxItem Content="None" Tag="0"/>
                                             <ComboBoxItem Content="2"/>
                                             <ComboBoxItem Content="4"/>
@@ -1868,7 +1915,7 @@
                                               Grid.ColumnSpan="6"
                                               HorizontalAlignment="Center"
                                               HorizontalContentAlignment="Center"
-                                              Width="750"
+                                              Width="850"
                                               Header="Data chart"
                                               Padding="6">
                                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
@@ -1890,6 +1937,15 @@
                                                          GroupName="ChartDataTableOrientation"
                                                          Content="Landscape"
                                                          Checked="ChartDataTableSettings_Changed"/>
+                                            <TextBlock Margin="15,0,8,0" VerticalAlignment="Center" Text="Height (mm):"/>
+                                            <TextBox x:Name="txtChartDataTableHeightMm"
+                                                     Width="55"
+                                                     Height="28"
+                                                     Tag="PositiveInteger"
+                                                     Text="200"
+                                                     PreviewTextInput="NumericTextBox_PreviewTextInput"
+                                                     DataObject.Pasting="NumericTextBox_Pasting"
+                                                     VerticalContentAlignment="Center"/>
                                             <TextBlock Margin="25,0,8,0" VerticalAlignment="Center" Text="Font size (pt):"/>
                                             <TextBox x:Name="txtChartDataTableFontSize"
                                                      Width="45"
@@ -2036,7 +2092,7 @@
                 <!-- #region TEMPORARY DATA INSERT TAB -->
 
                 <TabItem x:Name="tabDataInsert"
-                         Header="Data Insert">
+                         Header="Test data">
                     <Grid Margin="20">
                         <StackPanel Width="420"
                                     HorizontalAlignment="Center"

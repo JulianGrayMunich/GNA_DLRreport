@@ -35,7 +35,7 @@ namespace GNA_DLRreport
         #region Application Footer
 
         private const string ApplicationRevision =
-            "046";
+            "061";
 
         private const string ChartDataIntervalEpoch =
             "Epoch";
@@ -51,12 +51,8 @@ namespace GNA_DLRreport
                 DateTime buildDate =
                     GetBuildDate();
 
-                int year =
-                    buildDate.Year;
-
                 return
-                    $"© {year} GNA Software — Built {buildDate:yyyy-MM-dd} — " +
-                    $"Revision {ApplicationRevision}";
+                    $"© GNA Software {buildDate:yyyyMMdd} Revision {ApplicationRevision}";
             }
         }
 
@@ -285,9 +281,9 @@ namespace GNA_DLRreport
         private readonly ObservableCollection<ChartTemplateUiItem> _chartTemplates =
             new();
 
-        private const int DefaultChartWidthMm = 150;
+        private const int DefaultChartWidthMm = 250;
 
-        private const int DefaultChartHeightMm = 80;
+        private const int DefaultChartHeightMm = 75;
 
         private const int DefaultChartResolutionDpi = 300;
 
@@ -4359,6 +4355,8 @@ namespace GNA_DLRreport
 
             UpdateChartReportDateInformation();
 
+            UpdateReportGenerationAvailability();
+
             #endregion
         }
 
@@ -4671,6 +4669,8 @@ namespace GNA_DLRreport
 
             UpdateChartReportDateInformation();
 
+            UpdateReportGenerationAvailability();
+
             #endregion
         }
 
@@ -4733,6 +4733,8 @@ namespace GNA_DLRreport
             WarnIfReportStartPrecedesProjectStart();
 
             UpdateChartReportDateInformation();
+
+            UpdateReportGenerationAvailability();
 
             #endregion
         }
@@ -4808,6 +4810,8 @@ namespace GNA_DLRreport
             WarnIfReportStartPrecedesProjectStart();
 
             UpdateChartReportDateInformation();
+
+            UpdateReportGenerationAvailability();
 
             #endregion
         }
@@ -6430,6 +6434,7 @@ namespace GNA_DLRreport
                             [TimeZoneId] nvarchar(200) NULL,
                             [DefaultReportOutputPath] nvarchar(1000) NULL,
                             [ReportTemplatePath] nvarchar(1000) NULL,
+                            [ReportName] nvarchar(200) NULL,
                             [IsDeleted] bit NOT NULL
                                 CONSTRAINT [DF_Project_IsDeleted]
                                 DEFAULT (0),
@@ -6459,6 +6464,12 @@ namespace GNA_DLRreport
                     BEGIN
                         ALTER TABLE [dbo].[Project]
                             ADD [DefaultReportOutputPath] nvarchar(1000) NULL;
+                    END;
+
+                    IF COL_LENGTH(N'dbo.Project', N'ReportName') IS NULL
+                    BEGIN
+                        ALTER TABLE [dbo].[Project]
+                            ADD [ReportName] nvarchar(200) NULL;
                     END;
 
                     /* =============================================================
@@ -8438,6 +8449,7 @@ namespace GNA_DLRreport
                             [DataChartOrientation] nvarchar(10) NOT NULL
                                 CONSTRAINT [DF_ChartDefinition_DataChartOrientation]
                                 DEFAULT (N'Portrait'),
+                            [DataChartHeightMm] int NULL,
                             [DataChartFontSize] decimal(6,2) NOT NULL
                                 CONSTRAINT [DF_ChartDefinition_DataChartFontSize]
                                 DEFAULT (6.0),
@@ -8511,6 +8523,9 @@ namespace GNA_DLRreport
 
                             CONSTRAINT [CK_ChartDefinition_DataChartOrientation]
                                 CHECK ([DataChartOrientation] IN (N'Portrait', N'Landscape')),
+
+                            CONSTRAINT [CK_ChartDefinition_DataChartHeightMm]
+                                CHECK ([DataChartHeightMm] IS NULL OR [DataChartHeightMm] > 10),
 
                             CONSTRAINT [CK_ChartDefinition_DataChartFontSize]
                                 CHECK ([DataChartFontSize] > 0),
@@ -8755,6 +8770,24 @@ namespace GNA_DLRreport
                         ALTER TABLE [dbo].[ChartDefinition]
                             ADD CONSTRAINT [CK_ChartDefinition_DataIntervalMode]
                                 CHECK ([DataIntervalMode] IN (N'Epoch', N'Day'));
+                    END;
+
+                    IF COL_LENGTH(N'dbo.ChartDefinition', N'DataChartHeightMm') IS NULL
+                    BEGIN
+                        ALTER TABLE [dbo].[ChartDefinition]
+                            ADD [DataChartHeightMm] int NULL;
+                    END;
+
+                    IF NOT EXISTS
+                    (
+                        SELECT 1 FROM sys.check_constraints
+                        WHERE [parent_object_id] = OBJECT_ID(N'dbo.ChartDefinition')
+                          AND [name] = N'CK_ChartDefinition_DataChartHeightMm'
+                    )
+                    BEGIN
+                        ALTER TABLE [dbo].[ChartDefinition] WITH CHECK
+                            ADD CONSTRAINT [CK_ChartDefinition_DataChartHeightMm]
+                            CHECK ([DataChartHeightMm] IS NULL OR [DataChartHeightMm] > 10);
                     END;
 
                     IF COL_LENGTH(N'dbo.ChartDefinition', N'WidthMm') IS NULL
@@ -12425,10 +12458,10 @@ namespace GNA_DLRreport
             UpdateChartPixelDimensions();
 
             txtChartDefaultLineWidth.Text =
-                "2";
+                "1";
 
             txtChartDefaultMarkerSize.Text =
-                "4";
+                "2";
 
             chkChartGridLines.IsChecked =
                 true;
@@ -12525,6 +12558,23 @@ namespace GNA_DLRreport
             SelectionChangedEventArgs e)
         {
             #region Apply Selected Chart Type
+
+            if (e.RemovedItems.Count > 0 &&
+                e.RemovedItems[0] is ChartTypeUiItem previousType &&
+                cmbChartType.SelectedItem is ChartTypeUiItem newType &&
+                !string.Equals(
+                    a: previousType.Key,
+                    b: newType.Key,
+                    comparisonType: StringComparison.OrdinalIgnoreCase))
+            {
+                #region Clear Series From The Previous Chart Type
+
+                _chartSeries.Clear();
+
+                ResetChartAxisAliasControls();
+
+                #endregion
+            }
 
             if (cmbChartType.SelectedItem
                 is not ChartTypeUiItem selectedType)
@@ -12909,10 +12959,10 @@ namespace GNA_DLRreport
                 "1000";
 
             txtChartDefaultLineWidth.Text =
-                "2";
+                "1";
 
             txtChartDefaultMarkerSize.Text =
-                "4";
+                "2";
 
             chkChartGridLines.IsChecked =
                 true;
@@ -12922,6 +12972,9 @@ namespace GNA_DLRreport
 
             rbChartDataTablePortrait.IsChecked =
                 true;
+
+            txtChartDataTableHeightMm.Text =
+                "200";
 
             txtChartDataTableFontSize.Text =
                 "6";
@@ -13254,6 +13307,19 @@ namespace GNA_DLRreport
             object sender,
             RoutedEventArgs e)
         {
+            #region Require Explicit Load Before Editing An Existing Chart
+
+            if (cmbExistingChart.SelectedItem is ExistingChartUiItem selectedChart &&
+                _loadedChartDefinitionId != selectedChart.ChartDefinitionId)
+            {
+                txtChartStatus.Text =
+                    "Select Load Chart before editing or renaming an existing chart.";
+
+                return;
+            }
+
+            #endregion
+
             #region Validate Chart Definition For Save
 
             if (!TryValidateChartConfiguration(
@@ -15288,6 +15354,11 @@ namespace GNA_DLRreport
                     as ExistingChartUiItem)
                     ?.ChartDefinitionId;
 
+            bool restoreLoadedPreview =
+                btnChartPreviewChart.IsEnabled &&
+                _loadedChartDefinitionId.HasValue &&
+                chartDefinitionIdToRestore == _loadedChartDefinitionId;
+
             _existingCharts.Clear();
 
             if (!_activeProjectId.HasValue)
@@ -15385,7 +15456,9 @@ namespace GNA_DLRreport
             }
 
             btnChartPreviewChart.IsEnabled =
-                false;
+                restoreLoadedPreview &&
+                (cmbExistingChart.SelectedItem as ExistingChartUiItem)
+                    ?.ChartDefinitionId == _loadedChartDefinitionId;
 
             #endregion
         }
@@ -15491,6 +15564,61 @@ namespace GNA_DLRreport
         }
 
 
+        #region Data Chart Height Schema
+
+        private static async Task EnsureDataChartHeightSchemaAsync(
+            SqlConnection connection)
+        {
+            const string sql = """
+                SET XACT_ABORT ON;
+                BEGIN TRY
+                    BEGIN TRANSACTION;
+                    DECLARE @LockResult int;
+                    EXEC @LockResult = sys.sp_getapplock
+                        @Resource = N'GNA_DLRreport:DataChartHeightSchema',
+                        @LockMode = N'Exclusive',
+                        @LockOwner = N'Transaction',
+                        @LockTimeout = 10000;
+                    IF @LockResult < 0
+                        THROW 51040, 'Unable to lock the data-chart schema.', 1;
+                    IF OBJECT_ID(N'dbo.ChartDefinition', N'U') IS NULL
+                        THROW 51040, 'The ChartDefinition table is unavailable.', 1;
+                    IF COL_LENGTH(N'dbo.ChartDefinition', N'DataChartHeightMm') IS NULL
+                        ALTER TABLE [dbo].[ChartDefinition]
+                            ADD [DataChartHeightMm] int NULL;
+                    IF EXISTS
+                    (
+                        SELECT 1 FROM sys.columns
+                        WHERE [object_id] = OBJECT_ID(N'dbo.ChartDefinition')
+                          AND [name] = N'DataChartHeightMm'
+                          AND ([system_type_id] <> TYPE_ID(N'int') OR [is_computed] = 1)
+                    )
+                        THROW 51040, 'DataChartHeightMm must be an int column.', 1;
+                    IF NOT EXISTS
+                    (
+                        SELECT 1 FROM sys.check_constraints
+                        WHERE [parent_object_id] = OBJECT_ID(N'dbo.ChartDefinition')
+                          AND [name] = N'CK_ChartDefinition_DataChartHeightMm'
+                    )
+                        ALTER TABLE [dbo].[ChartDefinition] WITH CHECK
+                            ADD CONSTRAINT [CK_ChartDefinition_DataChartHeightMm]
+                            CHECK ([DataChartHeightMm] IS NULL OR [DataChartHeightMm] > 10);
+                    COMMIT TRANSACTION;
+                END TRY
+                BEGIN CATCH
+                    IF XACT_STATE() <> 0 ROLLBACK TRANSACTION;
+                    THROW;
+                END CATCH;
+                """;
+
+            await using SqlCommand command = new(
+                cmdText: sql,
+                connection: connection);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        #endregion
+
         private async Task LoadChartDefinitionIntoEditorAsync(
             int chartDefinitionId)
         {
@@ -15522,7 +15650,10 @@ namespace GNA_DLRreport
                     CD.[IncludeDataChart],
                     CD.[DataChartOrientation],
                     CD.[DataChartFontSize],
-                    CD.[DataChartColourScheme]
+                    CD.[DataChartColourScheme],
+                    COALESCE(CD.[DataChartHeightMm],
+                        CASE WHEN CD.[DataChartOrientation] = N'Landscape'
+                            THEN 150 ELSE 250 END) AS [DataChartHeightMm]
                 FROM [dbo].[ChartDefinition] AS CD
                 INNER JOIN [dbo].[ChartType] AS CT
                     ON CT.[ChartType_ID] = CD.[ChartType_ID]
@@ -15543,6 +15674,9 @@ namespace GNA_DLRreport
                         GetTrackGeometryConnectionString());
 
             await databaseConnection.OpenAsync();
+
+            await EnsureDataChartHeightSchemaAsync(
+                connection: databaseConnection);
 
             await using SqlCommand chartCommand =
                 new(
@@ -15647,6 +15781,9 @@ namespace GNA_DLRreport
             string dataChartColourScheme =
                 reader.GetString(24);
 
+            int dataChartHeightMm =
+                reader.GetInt32(25);
+
             await reader.DisposeAsync();
 
             #endregion
@@ -15739,6 +15876,10 @@ namespace GNA_DLRreport
 
             rbChartDataTablePortrait.IsChecked =
                 rbChartDataTableLandscape.IsChecked != true;
+
+            txtChartDataTableHeightMm.Text =
+                dataChartHeightMm.ToString(
+                    provider: CultureInfo.InvariantCulture);
 
             txtChartDataTableFontSize.Text =
                 dataChartFontSize.ToString(
@@ -16116,6 +16257,9 @@ namespace GNA_DLRreport
 
             await databaseConnection.OpenAsync();
 
+            await EnsureDataChartHeightSchemaAsync(
+                connection: databaseConnection);
+
             using SqlTransaction transaction =
                 databaseConnection.BeginTransaction(
                     iso:
@@ -16249,6 +16393,7 @@ namespace GNA_DLRreport
                             [ChartFontFamily] = N'Arial',
                             [IncludeDataChart] = @IncludeDataChart,
                             [DataChartOrientation] = @DataChartOrientation,
+                            [DataChartHeightMm] = @DataChartHeightMm,
                             [DataChartFontSize] = @DataChartFontSize,
                             [DataChartColourScheme] = @DataChartColourScheme,
                             [StartDateMode] = @StartDateMode,
@@ -16340,6 +16485,7 @@ namespace GNA_DLRreport
                             [ChartFontFamily],
                             [IncludeDataChart],
                             [DataChartOrientation],
+                            [DataChartHeightMm],
                             [DataChartFontSize],
                             [DataChartColourScheme],
                             [StartDateMode],
@@ -16380,6 +16526,7 @@ namespace GNA_DLRreport
                             N'Arial',
                             @IncludeDataChart,
                             @DataChartOrientation,
+                            @DataChartHeightMm,
                             @DataChartFontSize,
                             @DataChartColourScheme,
                             @StartDateMode,
@@ -16679,6 +16826,12 @@ namespace GNA_DLRreport
                     rbChartDataTableLandscape.IsChecked == true
                         ? "Landscape"
                         : "Portrait";
+
+            command.Parameters.Add(
+                parameterName: "@DataChartHeightMm",
+                sqlDbType: System.Data.SqlDbType.Int)
+                .Value =
+                    GetSelectedDataChartHeightMm();
 
             command.Parameters.Add(
                 parameterName: "@DataChartFontSize",
@@ -17601,7 +17754,34 @@ namespace GNA_DLRreport
                 return;
             }
 
+            if (ReferenceEquals(objA: sender, objB: rbChartDataTablePortrait) &&
+                rbChartDataTablePortrait.IsChecked == true)
+            {
+                txtChartDataTableHeightMm.Text = "200";
+            }
+            else if (ReferenceEquals(objA: sender, objB: rbChartDataTableLandscape) &&
+                rbChartDataTableLandscape.IsChecked == true)
+            {
+                txtChartDataTableHeightMm.Text = "65";
+            }
+
             UpdateChartDataTablePreviewAvailability();
+        }
+
+        private int GetSelectedDataChartHeightMm()
+        {
+            if (!int.TryParse(
+                    s: txtChartDataTableHeightMm.Text,
+                    style: NumberStyles.None,
+                    provider: CultureInfo.InvariantCulture,
+                    result: out int heightMm) ||
+                heightMm <= 10)
+            {
+                throw new InvalidOperationException(
+                    "Appearance: Data chart height must be a whole number greater than 10 mm.");
+            }
+
+            return heightMm;
         }
 
 
@@ -17770,9 +17950,7 @@ namespace GNA_DLRreport
                     : 150;
 
             int heightMm =
-                landscape
-                    ? 150
-                    : 250;
+                GetSelectedDataChartHeightMm();
 
             int setCount =
                 landscape
@@ -17857,12 +18035,6 @@ namespace GNA_DLRreport
                 }
             }
 
-            if (records.Count == 0)
-            {
-                throw new InvalidOperationException(
-                    "No plotted values were returned for the selected report dates.");
-            }
-
             #endregion
 
 
@@ -17874,8 +18046,10 @@ namespace GNA_DLRreport
                 rowsPerSet * setCount;
 
             int pageCount =
-                (int)Math.Ceiling(
-                    a: records.Count / (double)recordsPerPage);
+                Math.Max(
+                    val1: 1,
+                    val2: (int)Math.Ceiling(
+                        a: records.Count / (double)recordsPerPage));
 
             for (int pageIndex = 0;
                  pageIndex < pageCount;
@@ -17963,6 +18137,23 @@ namespace GNA_DLRreport
 
             double tableTop =
                 margin + titleHeight;
+
+            if (records.Count == 0)
+            {
+                DrawChartDataTableText(
+                    drawingContext: drawingContext,
+                    text: "No data",
+                    typeface: typeface,
+                    fontSizePixels: fontSizeDips * 1.5,
+                    fontWeight: FontWeights.Normal,
+                    foreground: Brushes.Gray,
+                    rectangle: new Rect(
+                        x: margin,
+                        y: pageHeightDips / 2.0,
+                        width: pageWidthDips - (margin * 2.0),
+                        height: titleHeight * 2.0),
+                    textAlignment: TextAlignment.Center);
+            }
 
             double setWidth =
                 (pageWidthDips - (margin * 2.0)) / setCount;
@@ -19362,10 +19553,11 @@ namespace GNA_DLRreport
         #endregion
 
 
-        private void RenderBlankChartCanvas()
+        private void RenderBlankChartCanvas(Canvas? targetCanvas = null)
         {
             #region Resolve Canvas Size
 
+            Canvas cnvChartPreview = targetCanvas ?? this.cnvChartPreview;
             cnvChartPreview.Children.Clear();
 
             double canvasWidth =
@@ -20613,6 +20805,19 @@ namespace GNA_DLRreport
                 return false;
             }
 
+            if (!int.TryParse(
+                s: txtChartDataTableHeightMm.Text,
+                style: NumberStyles.None,
+                provider: CultureInfo.InvariantCulture,
+                result: out int dataChartHeightMm) ||
+                dataChartHeightMm <= 10)
+            {
+                validationMessage =
+                    "Appearance: Data chart height must be a whole number greater than 10 mm.";
+
+                return false;
+            }
+
             UpdateChartPixelDimensions();
 
             #endregion
@@ -21235,9 +21440,29 @@ namespace GNA_DLRreport
         {
             #region Clear Every Configured Series
 
+            ChartEntityUiItem? selectedEntity =
+                cmbChartSeriesEntity.SelectedItem as ChartEntityUiItem;
+
             _chartSeries.Clear();
 
-            ResetChartAxisAliasControls();
+            RenumberChartSeries();
+
+            UpdateChartAxisAliasControlVisibility();
+
+            // Clearing plotted rows must not remove available entities.
+            if (_allChartSeriesEntities.Count > 0)
+            {
+                cmbChartSeriesEntity.ItemsSource =
+                    _allChartSeriesEntities;
+
+                if (selectedEntity is not null &&
+                    _allChartSeriesEntities.Contains(
+                        item: selectedEntity))
+                {
+                    cmbChartSeriesEntity.SelectedItem =
+                        selectedEntity;
+                }
+            }
 
             txtChartStatus.Text =
                 "All chart series have been cleared.";
@@ -21933,6 +22158,11 @@ namespace GNA_DLRreport
                 {
                     importItem.Easting =
                         easting;
+
+                    importItem.EastingText =
+                        easting.ToString(
+                            format: "F3",
+                            provider: CultureInfo.InvariantCulture);
                 }
                 else
                 {
@@ -21955,6 +22185,11 @@ namespace GNA_DLRreport
                 {
                     importItem.Northing =
                         northing;
+
+                    importItem.NorthingText =
+                        northing.ToString(
+                            format: "F3",
+                            provider: CultureInfo.InvariantCulture);
                 }
                 else
                 {
@@ -21977,6 +22212,11 @@ namespace GNA_DLRreport
                 {
                     importItem.Height =
                         height;
+
+                    importItem.HeightText =
+                        height.ToString(
+                            format: "F3",
+                            provider: CultureInfo.InvariantCulture);
                 }
                 else
                 {
