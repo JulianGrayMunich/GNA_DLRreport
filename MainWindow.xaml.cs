@@ -29,14 +29,13 @@ namespace GNA_DLRreport
     /// <summary>
     /// Interaction logic for MainWindow.xaml.
     /// </summary>
-    /// 
     public partial class MainWindow : Window
     {
 
         #region Application Footer
 
         private const string ApplicationRevision =
-            "061";
+            "062";
 
         private const string ChartDataIntervalEpoch =
             "Epoch";
@@ -130,6 +129,9 @@ namespace GNA_DLRreport
         private bool _isSynchronisingReportDates;
 
         private bool _isUpdatingReportProjectStart;
+
+        private bool _applyInitialProjectStartClamp =
+            true;
 
         private DateTime _reportStartDate =
             DateTime.Today.AddDays(
@@ -4444,6 +4446,45 @@ namespace GNA_DLRreport
             {
                 _isUpdatingReportProjectStart =
                     false;
+            }
+
+            if (_applyInitialProjectStartClamp)
+            {
+                _applyInitialProjectStartClamp =
+                    false;
+
+                if (_reportStartDate.Date < projectStartDate.Date)
+                {
+                    _reportStartDate =
+                        projectStartDate.Date;
+
+                    _reportDayOffset =
+                        Math.Max(
+                            val1: 0,
+                            val2: (int)(_reportEndDate.Date - _reportStartDate).TotalDays);
+
+                    _isSynchronisingReportDates =
+                        true;
+
+                    try
+                    {
+                        dpReportStartDate.SelectedDate =
+                            _reportStartDate;
+
+                        txtReportDayOffset.Text =
+                            _reportDayOffset.ToString(
+                                provider: CultureInfo.InvariantCulture);
+                    }
+                    finally
+                    {
+                        _isSynchronisingReportDates =
+                            false;
+                    }
+
+                    UpdateChartReportDateInformation();
+
+                    UpdateReportGenerationAvailability();
+                }
             }
 
             #endregion
@@ -19221,11 +19262,10 @@ namespace GNA_DLRreport
             int resolutionDpi =
                 GetSelectedChartResolutionDpi();
 
-            if (resolutionDpi != 300 &&
-                resolutionDpi != 600)
+            if (resolutionDpi != DefaultChartResolutionDpi)
             {
                 validationMessage =
-                    "Appearance: Chart resolution must be 300 or 600 DPI.";
+                    "Appearance: Chart resolution must be 300 DPI.";
 
                 return false;
             }
@@ -19467,41 +19507,15 @@ namespace GNA_DLRreport
 
         private int GetSelectedChartResolutionDpi()
         {
-            string? value =
-                (cmbChartResolutionDpi.SelectedItem as ComboBoxItem)?.Tag?.ToString();
-
-            return int.TryParse(
-                s: value,
-                style: NumberStyles.Integer,
-                provider: CultureInfo.InvariantCulture,
-                result: out int resolutionDpi)
-                ? resolutionDpi
-                : DefaultChartResolutionDpi;
+            return DefaultChartResolutionDpi;
         }
 
 
         private void SelectChartResolutionDpi(
             int resolutionDpi)
         {
-            foreach (object item in cmbChartResolutionDpi.Items)
-            {
-                if (item is ComboBoxItem comboBoxItem &&
-                    int.TryParse(
-                        s: comboBoxItem.Tag?.ToString(),
-                        style: NumberStyles.Integer,
-                        provider: CultureInfo.InvariantCulture,
-                        result: out int itemDpi) &&
-                    itemDpi == resolutionDpi)
-                {
-                    cmbChartResolutionDpi.SelectedItem =
-                        comboBoxItem;
-
-                    return;
-                }
-            }
-
-            cmbChartResolutionDpi.SelectedIndex =
-                0;
+            // Resolution remains persisted for backward compatibility, but the
+            // current chart workflow is deliberately fixed at 300 DPI.
         }
 
 
@@ -21119,6 +21133,20 @@ namespace GNA_DLRreport
                 return;
             }
 
+            _isSynchronisingChartAxisAliases =
+                true;
+
+            try
+            {
+                chkChartNorthAsX.IsChecked =
+                    chkChartEastAsY.IsChecked;
+            }
+            finally
+            {
+                _isSynchronisingChartAxisAliases =
+                    false;
+            }
+
             foreach (ChartSeriesUiItem series in _chartSeries)
             {
                 series.LegendText =
@@ -21198,15 +21226,13 @@ namespace GNA_DLRreport
                             b: "dN",
                             comparisonType: StringComparison.OrdinalIgnoreCase));
 
-            bool showEastAlias =
+            bool showAxisAliases =
                 hasEastSeries ||
+                hasNorthSeries ||
                 string.Equals(
                     a: selectedDataElement,
                     b: "dE",
-                    comparisonType: StringComparison.OrdinalIgnoreCase);
-
-            bool showNorthAlias =
-                hasNorthSeries ||
+                    comparisonType: StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(
                     a: selectedDataElement,
                     b: "dN",
@@ -21218,23 +21244,18 @@ namespace GNA_DLRreport
             try
             {
                 chkChartEastAsY.Visibility =
-                    showEastAlias
+                    showAxisAliases
                         ? Visibility.Visible
                         : Visibility.Collapsed;
 
                 chkChartNorthAsX.Visibility =
-                    showNorthAlias
-                        ? Visibility.Visible
-                        : Visibility.Collapsed;
+                    Visibility.Collapsed;
 
-                if (!showEastAlias)
+                if (!showAxisAliases)
                 {
                     chkChartEastAsY.IsChecked =
                         false;
-                }
 
-                if (!showNorthAlias)
-                {
                     chkChartNorthAsX.IsChecked =
                         false;
                 }
@@ -21285,10 +21306,10 @@ namespace GNA_DLRreport
             try
             {
                 chkChartEastAsY.IsChecked =
-                    eastDisplayedAsY;
+                    eastDisplayedAsY || northDisplayedAsX;
 
                 chkChartNorthAsX.IsChecked =
-                    northDisplayedAsX;
+                    eastDisplayedAsY || northDisplayedAsX;
             }
             finally
             {

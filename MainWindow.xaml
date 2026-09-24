@@ -321,12 +321,14 @@
                                 <TextBlock Grid.Row="2"
                                            Grid.Column="0"
                                            VerticalAlignment="Center"
+                                           Visibility="Collapsed"
                                            Text="Clear latest reading:"/>
                                 <ComboBox x:Name="cmbClearLatestReading"
                                           Grid.Row="2"
                                           Grid.Column="1"
                                           Height="28"
                                           SelectedIndex="0"
+                                          Visibility="Collapsed"
                                           VerticalContentAlignment="Center">
                                     <ComboBoxItem Content="Select table..."/>
                                     <ComboBoxItem Content="CoordinatesDaily"/>
@@ -350,6 +352,7 @@
                                         Grid.Row="2"
                                         Grid.Column="3"
                                         Height="30"
+                                        Visibility="Collapsed"
                                         Content="Clear Latest Reading"/>
                             </Grid>
                         </GroupBox>
@@ -1842,11 +1845,12 @@
                                     <TextBlock Grid.Row="0" Grid.Column="3" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Height (mm):"/>
                                     <TextBox x:Name="txtChartHeightMm" Grid.Row="0" Grid.Column="4" Height="28" Tag="PositiveInteger" PreviewTextInput="NumericTextBox_PreviewTextInput" DataObject.Pasting="NumericTextBox_Pasting" VerticalContentAlignment="Center" Text="75" TextChanged="ChartPhysicalSize_Changed"/>
 
-                                    <TextBlock Grid.Row="2" Grid.Column="0" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Resolution:"/>
-                                    <ComboBox x:Name="cmbChartResolutionDpi" Grid.Row="2" Grid.Column="1" Height="28" SelectionChanged="ChartPhysicalSize_Changed">
-                                        <ComboBoxItem Content="Standard - 300 DPI" Tag="300" IsSelected="True"/>
-                                        <ComboBoxItem Content="High - 600 DPI" Tag="600"/>
-                                    </ComboBox>
+                                    <TextBlock Grid.Row="2"
+                                               Grid.Column="0"
+                                               Grid.ColumnSpan="2"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"
+                                               Text="Resolution: 300 dpi"/>
 
                                     <TextBlock Grid.Row="2" Grid.Column="3" Margin="0,0,8,0" HorizontalAlignment="Right" VerticalAlignment="Center" Text="Calculated size:"/>
                                     <TextBox x:Name="txtChartCalculatedPixels" Grid.Row="2" Grid.Column="4" Height="28" IsReadOnly="True" VerticalContentAlignment="Center" Text="1772 x 945 px"/>
@@ -1862,7 +1866,7 @@
                                         <CheckBox x:Name="chkChartEastAsY"
                                                   Margin="25,0,0,0"
                                                   VerticalAlignment="Center"
-                                                  Content="dE = dY"
+                                                  Content="dE = dY / dN = dX"
                                                   Visibility="Collapsed"
                                                   Checked="ChartAxisAlias_CheckedChanged"
                                                   Unchecked="ChartAxisAlias_CheckedChanged"/>
@@ -1871,8 +1875,7 @@
                                                   VerticalAlignment="Center"
                                                   Content="dN = dX"
                                                   Visibility="Collapsed"
-                                                  Checked="ChartAxisAlias_CheckedChanged"
-                                                  Unchecked="ChartAxisAlias_CheckedChanged"/>
+                                                  IsHitTestVisible="False"/>
                                     </StackPanel>
 
                                     <StackPanel Grid.Row="6"
@@ -2092,7 +2095,8 @@
                 <!-- #region TEMPORARY DATA INSERT TAB -->
 
                 <TabItem x:Name="tabDataInsert"
-                         Header="Test data">
+                         Header="Test data"
+                         Visibility="Collapsed">
                     <Grid Margin="20">
                         <StackPanel Width="420"
                                     HorizontalAlignment="Center"
