@@ -6,9 +6,20 @@ namespace GNA_DLRreport
     {
         #region Constructor
 
-        public ConfirmDatabaseRecreationWindow()
+        public ConfirmDatabaseRecreationWindow(string databaseName = "DBTrackGeometry")
         {
             InitializeComponent();
+
+            if (databaseName != "DBTrackGeometry" && databaseName != "DBTrackScan")
+            {
+                throw new System.ArgumentException(
+                    message: "The recreation warning requires a supported database name.",
+                    paramName: nameof(databaseName));
+            }
+
+            txtRecreationWarning.Text =
+                $"Proceeding will permanently delete {databaseName} and all data contained within it. " +
+                "The database and empty table structure will then be recreated.";
         }
 
         #endregion

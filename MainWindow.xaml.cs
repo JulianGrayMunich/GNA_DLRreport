@@ -1,4 +1,4 @@
-#region System Preparation
+﻿#region System Preparation
 
 using System;
 using System.Collections.Generic;
@@ -35,7 +35,7 @@ namespace GNA_DLRreport
         #region Application Footer
 
         private const string ApplicationRevision =
-            "062";
+            "089";
 
         private const string ChartDataIntervalEpoch =
             "Epoch";
@@ -4161,6 +4161,7 @@ namespace GNA_DLRreport
             #region Initialise Window Components
 
             InitializeComponent();
+            InitialiseScanPreparation();
 
             _chartPreviewRenderer =
                 new WpfCanvasChartPreviewRenderer(
@@ -4276,6 +4277,7 @@ namespace GNA_DLRreport
 
         private void UpdateConfigurationWorkflowTabAvailability()
         {
+            InvalidateScanProjectContext();
             InvalidateReportSelections();
 
             #region Resolve Active Project State
@@ -6172,54 +6174,12 @@ namespace GNA_DLRreport
 
                 if (databaseExists)
                 {
-                    #region First Recreation Warning
-
-                    MessageBoxResult confirmation =
-                        MessageBox.Show(
-                            messageBoxText:
-                                $"Database '{TrackGeometryDatabaseName}' already exists.\n\n" +
-                                "Recreating the database will permanently delete ALL " +
-                                "existing data and completely recreate the database and " +
-                                "all table structures.\n\n" +
-                                "THIS OPERATION CANNOT BE UNDONE.\n\n" +
-                                "Do you want to permanently delete and recreate the database?",
-                            caption: "Recreate Database Warning",
-                            button: MessageBoxButton.YesNo,
-                            icon: MessageBoxImage.Warning,
-                            defaultResult: MessageBoxResult.No);
-
-                    if (confirmation != MessageBoxResult.Yes)
+                    if (!ConfirmDatabaseRecreation(databaseName: TrackGeometryDatabaseName))
                     {
                         txtDbConnectionStatus.Text =
                             $"Database '{TrackGeometryDatabaseName}' was not changed.";
-
                         return;
                     }
-
-                    #endregion
-
-
-                    #region Final Recreation Warning
-
-                    ConfirmDatabaseRecreationWindow finalConfirmation =
-                        new()
-                        {
-                            Owner = this
-                        };
-
-                    bool? proceedWithRecreation =
-                        finalConfirmation.ShowDialog();
-
-                    if (proceedWithRecreation != true)
-                    {
-                        txtDbConnectionStatus.Text =
-                            $"Database '{TrackGeometryDatabaseName}' recreation was aborted.";
-
-                        return;
-                    }
-
-                    #endregion
-
 
                     #region Set Recreation Mode
 
@@ -6764,7 +6724,7 @@ namespace GNA_DLRreport
                     END;
 
                     /* =============================================================
-                       TOP-OF-RAIL REFERENCE
+                       RAILHEAD REFERENCE
                        Reference ToR from Survey worksheet column G.
                        One active row per point. Value stored in metres.
                        ============================================================= */
@@ -6840,7 +6800,7 @@ namespace GNA_DLRreport
                     END;
 
                     /* =============================================================
-                       TOP-OF-RAIL CURRENT
+                       RAILHEAD CURRENT
                        Time-stamped ToR history read from recalculated Reference
                        worksheet column P. Do not recalculate as H + ToRoffset.
                        Missing values are SQL NULL. Value stored in metres.
@@ -7478,7 +7438,7 @@ namespace GNA_DLRreport
                     END;
 
                     /* =============================================================
-                       TOP-OF-RAIL DAILY
+                       RAILHEAD DAILY
                        UTC calendar-day arithmetic mean of non-NULL ToREpochs.
                        Daily row timestamp is 12:00:00 UTC. If all epoch values are
                        NULL, retain a Daily row with ToR = NULL.

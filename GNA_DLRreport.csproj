@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -28,4 +28,9 @@
   </Content>
 </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="DBTrackScan.sql" />
+    <EmbeddedResource Include="DBTrackScan.Upgrade.sql" />
+    <EmbeddedResource Include="DBTrackScan.Computation.sql" />
+  </ItemGroup>
 </Project>
