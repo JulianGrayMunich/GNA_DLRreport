@@ -105,7 +105,7 @@ public partial class MainWindow
 
     private void btnProcessingBrowse_Click(object sender, RoutedEventArgs e)
     {
-        OpenFileDialog dialog = new() { Title = "Select LAS scan", Filter = "LAS scan (*.las)|*.las", CheckFileExists = true, Multiselect = false };
+        OpenFileDialog dialog = new() { Title = "Select LAS scan", Filter = "LAS scan (*.las)|*.las", CheckFileExists = true, Multiselect = chkProcessingCalculateOffset.IsChecked == true };
         if (!string.IsNullOrWhiteSpace(value: txtProcessingFile.Text))
         {
             string? directory = Path.GetDirectoryName(path: txtProcessingFile.Text);
@@ -113,6 +113,7 @@ public partial class MainWindow
             if (File.Exists(path: txtProcessingFile.Text)) dialog.FileName = txtProcessingFile.Text;
         }
         if (dialog.ShowDialog(owner: this) != true) return;
+        if (chkProcessingCalculateOffset.IsChecked == true) AddCalibrationFiles(paths: dialog.FileNames);
         txtProcessingFile.Text = dialog.FileName;
         gridProcessingResults.ItemsSource = null;
         try
@@ -156,6 +157,7 @@ public partial class MainWindow
             if (track.TrackId == previousTrack) cmbProcessingTracks.SelectedItem = track;
         if (cmbProcessingTracks.SelectedIndex < 0 && tracks.Count > 0) cmbProcessingTracks.SelectedIndex = 0;
         _processingTimeZoneId = await repository.LoadProcessingTimeZoneAsync();
+        PresentCalibrationFileTimes();
         PresentProcessingTimestamp();
         if (clearResults) gridProcessingResults.ItemsSource = null;
         UpdateScanAvailability();
@@ -212,18 +214,19 @@ public partial class MainWindow
     private void UpdateProcessingAvailability(bool ready)
     {
         if (btnProcessScan is null) return;
+        UpdateCalibrationFileAvailability();
         btnSelectProcessingLas.IsEnabled = !_scanBusy;
         chkProcessingCalculateOffset.IsEnabled = !_scanBusy;
         btnCancelProcessing.Visibility = _processingCancellation is null ? Visibility.Collapsed : Visibility.Visible;
         chkProcessingAll.IsEnabled = ready && !_scanBusy && cmbProcessingTracks.Items.Count > 0;
-        btnProcessScan.IsEnabled = ready && !_scanBusy && SelectedProcessingTrackIds().Count > 0 && File.Exists(path: txtProcessingFile.Text);
+        btnProcessScan.IsEnabled = ready && !_scanBusy && SelectedProcessingTrackIds().Count > 0 && (chkProcessingCalculateOffset.IsChecked == true ? _calibrationFiles.Count > 0 && _calibrationFiles.All(predicate: file => File.Exists(path: file.Path)) : File.Exists(path: txtProcessingFile.Text));
         cmbProcessingTracks.IsEnabled = ready && !_scanBusy && chkProcessingAll.IsChecked != true && cmbProcessingTracks.Items.Count > 0;
         txtProcessingTimestampSource.Visibility = tabScanProcessing.IsSelected ? Visibility.Visible : Visibility.Collapsed;
         if (tabScanProcessing.IsSelected)
-            txtScanGuidance.Text = "Scan points are first filtered by each rail corridor, then by its railhead polygons. The LAS file is read once for all selected tracks. Results shown during processing are provisional until saved. " +
+            txtScanGuidance.Text = "Scan points are first filtered by each rail corridor, then by its railhead polygons. Rejection Count is the minimum number of elements in a height group: it applies to initial 1 mm bands and again to final 1 mm subset bands. Groups with fewer elements are rejected. The LAS file is read once for all selected tracks. Results shown during processing are provisional until saved. " +
                 "Filename time (YYYYMMDD_HHmmss) uses the project time zone and is stored in UTC. " +
                 "With no filename timestamp, Process uses current UTC rounded to the nearest second. " +
-                "Calculate Offset stores new offsets; unchecked retains and applies existing offsets. " +
+                "Calculate Offset processes the selected file list, then reviews independent observations and adopts approved mean offsets. Unticked applies the adopted offsets to a single monitoring scan. " +
                 "New polygons require calibration. No accepted points means no new offset or height.";
     }
 
@@ -242,6 +245,8 @@ public partial class MainWindow
         if (selection.Count == 0) return;
         string path = txtProcessingFile.Text;
         bool calculateOffsets = chkProcessingCalculateOffset.IsChecked == true;
+        bool debugHistograms = chkDebugging.IsChecked == true;
+        int rejectionCount = int.Parse(s: ((System.Windows.Controls.ComboBoxItem)(cmbProcessingRejectionCount.SelectedItem ?? throw new InvalidOperationException(message: "Select a rejection count."))).Content.ToString()!, provider: CultureInfo.InvariantCulture);
         using CancellationTokenSource cancellation = new();
         _processingCancellation = cancellation;
         try
@@ -258,13 +263,29 @@ public partial class MainWindow
                 IReadOnlyList<ScanProcessingRail> available = await repository.LoadProcessingRailsAsync(expected: expected);
                 List<ScanProcessingRail> rails = ResolveProcessingRails(available: available, selectedTracks: selection);
                 if (!ConfirmProcessingOffsets(rails: rails, calculateOffsets: calculateOffsets)) return;
+                if (calculateOffsets)
+                {
+                    await ProcessCalibrationFilesAsync(repository: repository, expected: expected, rails: rails,
+                        cancellation: cancellation, debugHistograms: debugHistograms, rejectionCount: rejectionCount);
+                    return;
+                }
                 var pending = new System.Collections.ObjectModel.ObservableCollection<ScanEpochReading>();
                 gridProcessingResults.ItemsSource = pending;
                 txtScanStatus.Text = "Filtering rail corridors, then railhead polygons, Primary before Secondary...";
                 Progress<ScanEpochReading> readingProgress = new(handler: reading => pending.Add(item: reading));
                 Progress<string> progress = new(handler: text => txtScanStatus.Text = text);
-                ScanProcessingResult result = await Task.Run(function: () => TrackScan.ProcessLas(path: path, utcTimestamp: epoch, rails: rails, progress: progress, calculateOffsets: calculateOffsets, readingProgress: readingProgress, cancellationToken: cancellation.Token));
+                ScanProcessingResult result = await Task.Run(function: () => TrackScan.ProcessLas(path: path, utcTimestamp: epoch, rails: rails, progress: progress, calculateOffsets: calculateOffsets, readingProgress: readingProgress, cancellationToken: cancellation.Token, collectDebugHistograms: debugHistograms, rejectionCount: rejectionCount));
                 result = result with { TimeZoneId = _processingTimeZoneId, TimestampSource = stamp.Source };
+                cancellation.Token.ThrowIfCancellationRequested();
+                foreach (ScanHeightHistogram histogram in result.DebugHistograms)
+                {
+                    cancellation.Token.ThrowIfCancellationRequested();
+                    if (new ScanHeightHistogramWindow(histogram: histogram) { Owner = this }.ShowDialog() != true)
+                    {
+                        cancellation.Cancel();
+                        cancellation.Token.ThrowIfCancellationRequested();
+                    }
+                }
                 cancellation.Token.ThrowIfCancellationRequested();
                 btnCancelProcessing.IsEnabled = false;
                 txtScanStatus.Text = "Saving scan epoch readings...";
@@ -275,6 +296,13 @@ public partial class MainWindow
                     $"{empty:N0} readings have no accepted scan points. LAS points examined: {result.LasPointCount:N0}.";
                 foreach (ScanCorridorSelection corridor in result.CorridorSelections)
                     txtScanStatus.Text += Environment.NewLine + $"{corridor.TrackName} — {(corridor.Rail == "R" ? "Primary" : "Secondary")}: {corridor.ScanPointCount:N0} scan points inside corridor.";
+                if (result.Warnings.Count > 0)
+                {
+                    string warning = $"{result.Warnings.Count:N0} railhead polygons did not yield a clear surface. No new height or offset was calculated for those polygons; existing offsets were retained.";
+                    foreach (string detail in result.Warnings) txtScanStatus.Text += Environment.NewLine + detail;
+                    MessageBox.Show(owner: this, messageBoxText: warning + Environment.NewLine + string.Join(separator: Environment.NewLine, values: result.Warnings.Take(count: 8)),
+                        caption: "Railhead surface verification", button: MessageBoxButton.OK, icon: MessageBoxImage.Warning);
+                }
                 if (calculateOffsets) new ScanOffsetReviewWindow(result: result) { Owner = this }.ShowDialog();
             });
         }
@@ -285,5 +313,18 @@ public partial class MainWindow
         finally { _restoringProcessingTab = false; }
     }
     #endregion
+    #region Processing Result Column Layout
+    private void ProcessingResults_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.DataGrid grid || grid.Columns.Count == 0) return;
+        // Previously PointID occupied all space remaining after the five fixed-width columns.
+        const double PreviousFixedColumnsWidth = 145d + 90d + 80d + 90d + 75d;
+        const double GridBorderWidth = 2d;
+        double originalWidth = Math.Max(val1: 0d, val2: grid.ActualWidth - PreviousFixedColumnsWidth - GridBorderWidth);
+        grid.Columns[0].Width = new System.Windows.Controls.DataGridLength(value: Math.Max(val1: 20d, val2: originalWidth / 2d), type: System.Windows.Controls.DataGridLengthUnitType.Pixel);
+    }
+    #endregion
+
 }
 #endregion
+

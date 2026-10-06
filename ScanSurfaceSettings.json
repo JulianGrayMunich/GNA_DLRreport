@@ -1,0 +1,7 @@
+{
+  "MinimumClusterPoints": 10,
+  "MinimumAcceptedPoints": 5,
+  "MinimumClusterFraction": 0.05,
+  "MaximumClusterWidthInTolerances": 4.0,
+  "MaximumIterations": 25
+}

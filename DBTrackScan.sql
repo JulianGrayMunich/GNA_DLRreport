@@ -1,4 +1,4 @@
--- Revision 065: provisional preparation schema only. Execute inside the repository's schema transaction.
+﻿-- Revision 065: provisional preparation schema only. Execute inside the repository's schema transaction.
 IF OBJECT_ID(N'dbo.ScanSchemaVersion', N'U') IS NOT NULL
 BEGIN
     IF (SELECT COUNT(*) FROM dbo.ScanSchemaVersion WHERE VersionNumber = 2) <> 1
@@ -61,7 +61,7 @@ CREATE TABLE dbo.ScanTrack
     ScanProjectId int NOT NULL CONSTRAINT FK_ScanTrackProject REFERENCES dbo.ScanProject(ScanProjectId),
     TrackSlot tinyint NOT NULL,
     TrackName nvarchar(200) COLLATE Latin1_General_100_CI_AS NOT NULL,
-    GaugeMillimetres int NOT NULL CONSTRAINT DF_ScanTrackGauge DEFAULT 1435,
+    GaugeMillimetres int NOT NULL CONSTRAINT DF_ScanTrackGauge DEFAULT 1600,
     LeftStartE decimal(24,4) NOT NULL,
     LeftStartN decimal(24,4) NOT NULL,
     RightStartE decimal(24,4) NOT NULL,

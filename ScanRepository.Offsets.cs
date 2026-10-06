@@ -1,4 +1,4 @@
-#region Polygon Offset Persistence
+﻿#region Polygon Offset Persistence
 using System.Data;
 using Microsoft.Data.SqlClient;
 namespace GNA_DLRreport;
@@ -18,6 +18,8 @@ internal sealed partial class ScanRepository
                     CalibrationUtc datetime2(0) NOT NULL, SourceSha256 char(64) NOT NULL,
                     OffsetVersion bigint NOT NULL,
                     CONSTRAINT CK_ScanOffsetCounts CHECK(ScanPointCount>0 AND RejectedPointCount>=0));');
+            IF COL_LENGTH(N'DBTrackGeometry.dbo.ScanRailheadOffset',N'CalibrationId') IS NULL
+                EXEC(N'ALTER TABLE DBTrackGeometry.dbo.ScanRailheadOffset ADD CalibrationId uniqueidentifier NULL;');
             """);
         await command.ExecuteNonQueryAsync();
     }
@@ -75,7 +77,7 @@ internal sealed partial class ScanRepository
             using SqlCommand command = Command(connection: connection, transaction: transaction, sql: """
                 UPDATE DBTrackGeometry.dbo.ScanRailheadOffset
                 SET ScanOffset=@offset,RawMean=@mean,ReferenceHeight=@reference,ScanPointCount=@count,SE=@se,
-                    RejectedPointCount=@rejected,CalibrationUtc=@epoch,SourceSha256=@hash,OffsetVersion=OffsetVersion+1
+                    RejectedPointCount=@rejected,CalibrationUtc=@epoch,SourceSha256=@hash,OffsetVersion=OffsetVersion+1,CalibrationId=NULL
                 WHERE PolygonId=@polygon;
                 IF @@ROWCOUNT=0 INSERT DBTrackGeometry.dbo.ScanRailheadOffset
                     (PolygonId,ScanOffset,RawMean,ReferenceHeight,ScanPointCount,SE,RejectedPointCount,CalibrationUtc,SourceSha256,OffsetVersion)

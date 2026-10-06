@@ -1,0 +1,97 @@
+GNA DLR Report - Revision 104 - 6 October 2026
+Windows Task Scheduler replaces the Revision 103 Windows service.
+
+1. DELIVERY AND BUILD
+   Replace/add every supplied source file, including GNA_DLRreport.csproj,
+   App.xaml.cs and ScanSchedulerService.cs. This package includes the cumulative
+   scheduler changes since Revision 102; Revision 103 need not be installed first.
+   ScanSchedulerService.cs is now a setup/migration helper, not a service host.
+   Rebuild Release and publish to a Folder. Copy the complete published output
+   to a permanent location. Framework-dependent deployment needs the .NET 10
+   Windows Desktop Runtime. Keep all DLLs and runtime subfolders together.
+   If Revision 103's service is running, stop it before replacing its binaries.
+
+2. SETUP
+   Open the published executable using the Windows account that will run scans.
+   Validate the SQL connection and select the active project. Check its time zone,
+   current rail polygons and adopted offsets. Open Scanning / Scan Scheduler.
+   Update Railhead Names adds missing names to DBTrackGeometry; inspect Comments
+   for any conflicts. Both current rail polygons and every adopted offset are
+   required for a track to be eligible.
+
+3. SCHEDULE
+   Select incoming LAS folder, processed folder and system log file. Specify the
+   start date/time in the PROJECT time zone, interval in minutes and rejection
+   count. Save settings saves a disabled schedule. Start registers/enables the
+   Windows task and asks for elevation and your Windows PASSWORD, not a PIN.
+   Use the same account for elevation; the worker uses that account's SQL and
+   folder permissions. The Windows password is passed to Windows Task Scheduler,
+   not stored in the application's configuration. Use UNC paths for network data.
+   Task name: GNA_DLRScanScheduler, in the Task Scheduler Library root.
+
+4. OPERATION
+   The task runs while signed out and does not require DLR Report to remain open.
+   Start performs one immediate check if the specified start time has passed;
+   subsequent checks retain the configured interval anchor. Windows is instructed
+   to run missed checks when available; Windows controls the catch-up delay.
+   It does not wake a sleeping computer. A running task prevents another instance.
+   Long processing may therefore skip interval triggers rather than overlap.
+   Stop disables future runs; a running scan finishes naturally. Wait for it to
+   finish before changing settings or starting again. The countdown reads the
+   next execution time from Windows, and displays queued/running/stopped states.
+
+5. PROCESSING
+   Only the selected incoming folder is searched, never subfolders. Existing
+   polygon filtering and adopted offsets are retained. Adjusted heights are
+   written to ScanRailheadEpoch and ToREpochs in one transaction; missing readings
+   are NULL in both. No existing geometry epoch is overwritten. Files move after
+   commit, with a SHA256 suffix in the processed filename. Interrupted archive/log
+   steps recover without duplicate epoch inserts. Failures remain for retry and
+   are logged. Each file's outcome is in the system log; task result 0 means the
+   search completed, and individual failed files can still be listed in the log.
+   Deliver completed LAS files, preferably by renaming into the incoming folder.
+   The stability/read-lock checks cannot prove that a paused transfer is complete.
+   Existing filename timestamp/time-zone/fallback rules remain unchanged.
+
+6. MIGRATION FROM REVISION 103
+   Existing settings remain in ProgramData\GNA Software\DLR Scan Scheduler.
+   Save/Start/Stop retires a recognized old GNA_DLRScanScheduler service by stopping
+   and disabling it. It is not deleted. An unexpected service executable is rejected
+   for manual review. Task registration refuses to overwrite a task owned by a
+   different application or Windows account. Configuration permissions now grant
+   the scheduled account access to progress/lock files and private configuration.
+   No database recreation is needed. Existing offsets and scan epochs are retained.
+
+7. COMPARISON WITH WORKING GNA_DBDayReductions
+   Matched: WinExe, net10.0-windows, WPF; required configuration copied to build
+   and publish; password logon; highest privileges; absolute executable path and
+   working directory; manual triggering; IgnoreNew overlap prevention; no idle or
+   battery restriction; no forced wake; task ownership checks; positional COM
+   Run(null) call (the named-argument correction in the working application).
+   Deliberate scan differences: interval repetition rather than daily scheduling;
+   missed checks allowed; no 15-minute execution cutoff because LAS processing
+   may take longer. Configuration is machine-encrypted in a private ProgramData
+   folder, retaining compatibility with Revision 103. The daily-reduction app
+   instead uses a per-user profile. Task Scheduler uses the operator account,
+   replacing the LocalService identity used in Revision 103.
+   The csproj explicitly publishes TrackGeometryImportProfiles.json, matching the
+   working project's copy/publish rule for appsettings.json. No appsettings.json
+   is required by this application. The ServiceController package is retained only
+   for retirement of the old service; the new scheduler itself uses Windows COM.
+
+8. VERIFICATION AND ACCEPTANCE
+   Release build/publish verified. Four existing nullable-warning entries remain.
+   23 scheduler-definition/account/time checks passed, including Windows
+   TASK_VALIDATE_ONLY acceptance of 1-, 5- and 10080-minute definitions.
+   22 SQL/processing/recovery checks passed against disposable LocalDB databases.
+   Seven WPF countdown/state/summary checks and two headless-startup checks passed.
+   No live task/service was installed or changed and no production DB was modified.
+   After installation, Start with your password, inspect the countdown, close
+   DLR Report and verify a completed LAS run in the log, both tables and processed
+   folder. Then verify signed-out/reboot operation and network/SQL permissions.
+   Windows cannot process scans while the computer is switched off or asleep.
+   If Windows cannot launch the application, inspect Task Scheduler Last Run Result.
+
+Microsoft references checked during the review:
+https://learn.microsoft.com/en-us/windows/win32/taskschd/taskfolder-registertask
+https://learn.microsoft.com/en-us/windows/win32/taskschd/repeating-a-task

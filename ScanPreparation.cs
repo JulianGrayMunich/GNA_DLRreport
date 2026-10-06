@@ -15,7 +15,7 @@ public sealed record ScanSurveyPoint(long Record, string PointName, decimal East
 public sealed record ScanTrack(int TrackId, int Slot, string Name,
     decimal LeftStartE, decimal LeftStartN, decimal RightStartE, decimal RightStartN,
     decimal LeftEndE, decimal LeftEndN, decimal RightEndE, decimal RightEndN,
-    int GaugeMillimetres = TrackScan.StandardGaugeMillimetres, decimal PointSpacing = 3m);
+    int GaugeMillimetres = TrackScan.BroadGaugeMillimetres, decimal PointSpacing = 3m);
 public sealed record ScanProjectState(int ScanProjectId, long Revision, string ProjectName,
     string SurveyDescription, IReadOnlyList<ScanTrack> Tracks)
 {

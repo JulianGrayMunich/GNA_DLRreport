@@ -105,7 +105,7 @@ internal sealed partial class ScanRepository
             ALTER TABLE dbo.ScanRailheadEpoch ADD TimeZoneId nvarchar(200) NULL;
         """;
 
-    public async Task SaveScanEpochAsync(ScanProjectState expected, ScanProcessingResult result)
+    public async Task SaveScanEpochAsync(ScanProjectState expected, ScanProcessingResult result, ScheduledScanCommit? scheduled = null)
     {
         if (result.Readings.Count == 0 || result.Rails.Count == 0) throw new InvalidOperationException(message: "No scan readings to save.");
         DateTime epoch = result.Readings[0].UtcTimestamp;
@@ -119,38 +119,7 @@ internal sealed partial class ScanRepository
         await using SqlConnection connection = Connection(database: DatabaseName);
         await connection.OpenAsync();
         using SqlTransaction transaction = connection.BeginTransaction(iso: IsolationLevel.Serializable);
-        var project = await ResolveProjectAsync(connection: connection, transaction: transaction);
-        VerifyRevision(expected: expected, projectId: project.Id, revision: project.Revision, databaseIdentity: project.DatabaseIdentity);
-        foreach (ScanProcessingRail rail in result.Rails)
-        {
-            using SqlCommand check = Command(connection: connection, transaction: transaction, sql: """
-                SELECT COUNT(*) FROM DBTrackGeometry.dbo.ScanCurrentPolygonDefinition d
-                JOIN DBTrackGeometry.dbo.ScanPolygonBatch b ON b.BatchId=d.BatchId
-                WHERE b.ScanProjectId=@project AND b.GeometryProjectId=@geometry AND d.BatchId=@batch
-                    AND d.SourceRunId=@run AND d.TrackId=@track AND d.Rail=@rail
-                    AND (d.Kind=N'Railhead' OR (@corridor=1 AND d.Kind=N'Corridor'));
-                """);
-            Add(command: check, name: "@project", type: SqlDbType.Int, value: project.Id);
-            Add(command: check, name: "@geometry", type: SqlDbType.Int, value: _geometryProjectId);
-            Add(command: check, name: "@batch", type: SqlDbType.BigInt, value: rail.BatchId);
-            Add(command: check, name: "@run", type: SqlDbType.BigInt, value: rail.RunId);
-            Add(command: check, name: "@track", type: SqlDbType.Int, value: rail.TrackId);
-            Add(command: check, name: "@rail", type: SqlDbType.Char, value: rail.Rail, size: 1);
-            Add(command: check, name: "@corridor", type: SqlDbType.Bit, value: rail.Corridor is not null);
-            if ((int)(await check.ExecuteScalarAsync() ?? 0) != rail.Heads.Count + (rail.Corridor is null ? 0 : 1))
-                throw new InvalidOperationException(message: "Railhead points or polygons changed during processing. Refresh and process again. No readings saved.");
-        }
-        string zone = await ReadProcessingTimeZoneAsync(connection: connection, transaction: transaction);
-        if (zone != result.TimeZoneId) throw new InvalidOperationException(message: "The project time zone changed during processing. No readings saved.");
-        if (result.TimestampSource == TrackScan.FilenameTimestampSource)
-        {
-            if (TrackScan.ScanEpochFromFilename(path: result.SourcePath, timeZoneId: zone) != epoch)
-                throw new InvalidOperationException(message: "The epoch does not match the filename in the project time zone.");
-        }
-        else if (result.TimestampSource != TrackScan.FallbackTimestampSource)
-            throw new InvalidOperationException(message: "Unsupported scan timestamp source.");
-        await EnsureOffsetSchemaAsync(connection: connection, transaction: transaction);
-        await VerifyOffsetVersionsAsync(connection: connection, transaction: transaction, result: result);
+        await ValidateProcessingSnapshotAsync(expected: expected, result: result, connection: connection, transaction: transaction);
         await SaveOffsetsAsync(connection: connection, transaction: transaction, result: result, epoch: epoch);
         await LockAsync(connection: connection, transaction: transaction, resource: "GNA:ScanEpochSchema");
         using (SqlCommand schema = Command(connection: connection, transaction: transaction, sql: EpochSchema)) await schema.ExecuteNonQueryAsync();
@@ -184,7 +153,48 @@ internal sealed partial class ScanRepository
             Add(command: insert, name: "@lasCount", type: SqlDbType.BigInt, value: result.LasPointCount);
             await insert.ExecuteNonQueryAsync();
         }
+        if (scheduled is not null)
+            await SaveScheduledGeometryAsync(connection: connection, transaction: transaction, result: result, scheduled: scheduled, scanProjectId: expected.ScanProjectId);
         await transaction.CommitAsync();
+    }
+    private async Task ValidateProcessingSnapshotAsync(ScanProjectState expected, ScanProcessingResult result, SqlConnection connection, SqlTransaction transaction)
+    {
+        if (result.Readings.Count == 0) throw new InvalidOperationException(message: "No scan readings.");
+        DateTime epoch = result.Readings[0].UtcTimestamp;
+        if (epoch.Kind != DateTimeKind.Utc || epoch != TrackScan.RoundScanSecond(utc: epoch))
+            throw new InvalidOperationException(message: "Calibration timestamps must be whole UTC seconds.");
+        var project = await ResolveProjectAsync(connection: connection, transaction: transaction);
+        VerifyRevision(expected: expected, projectId: project.Id, revision: project.Revision, databaseIdentity: project.DatabaseIdentity);
+        foreach (ScanProcessingRail rail in result.Rails)
+        {
+            using SqlCommand check = Command(connection: connection, transaction: transaction, sql: """
+                SELECT COUNT(*) FROM DBTrackGeometry.dbo.ScanCurrentPolygonDefinition d
+                JOIN DBTrackGeometry.dbo.ScanPolygonBatch b ON b.BatchId=d.BatchId
+                WHERE b.ScanProjectId=@project AND b.GeometryProjectId=@geometry AND d.BatchId=@batch
+                    AND d.SourceRunId=@run AND d.TrackId=@track AND d.Rail=@rail
+                    AND (d.Kind=N'Railhead' OR (@corridor=1 AND d.Kind=N'Corridor'));
+                """);
+            Add(command: check, name: "@project", type: SqlDbType.Int, value: project.Id);
+            Add(command: check, name: "@geometry", type: SqlDbType.Int, value: _geometryProjectId);
+            Add(command: check, name: "@batch", type: SqlDbType.BigInt, value: rail.BatchId);
+            Add(command: check, name: "@run", type: SqlDbType.BigInt, value: rail.RunId);
+            Add(command: check, name: "@track", type: SqlDbType.Int, value: rail.TrackId);
+            Add(command: check, name: "@rail", type: SqlDbType.Char, value: rail.Rail, size: 1);
+            Add(command: check, name: "@corridor", type: SqlDbType.Bit, value: rail.Corridor is not null);
+            if ((int)(await check.ExecuteScalarAsync() ?? 0) != rail.Heads.Count + (rail.Corridor is null ? 0 : 1))
+                throw new InvalidOperationException(message: "Railhead points or polygons changed during processing. Refresh and process again. No readings saved.");
+        }
+        string zone = await ReadProcessingTimeZoneAsync(connection: connection, transaction: transaction);
+        if (zone != result.TimeZoneId) throw new InvalidOperationException(message: "The project time zone changed during processing. No readings saved.");
+        if (result.TimestampSource == TrackScan.FilenameTimestampSource)
+        {
+            if (TrackScan.ScanEpochFromFilename(path: result.SourcePath, timeZoneId: zone) != epoch)
+                throw new InvalidOperationException(message: "The epoch does not match the filename in the project time zone.");
+        }
+        else if (result.TimestampSource != TrackScan.FallbackTimestampSource)
+            throw new InvalidOperationException(message: "Unsupported scan timestamp source.");
+        await EnsureOffsetSchemaAsync(connection: connection, transaction: transaction);
+        await VerifyOffsetVersionsAsync(connection: connection, transaction: transaction, result: result);
     }
     #endregion
 }

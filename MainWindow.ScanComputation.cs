@@ -1,4 +1,4 @@
-﻿#region System Preparation
+#region System Preparation
 using System.IO;
 using System.Windows;
 using Microsoft.Win32;
@@ -14,7 +14,7 @@ public partial class MainWindow
         if (_scanEditingTrack is null || _scanState is null) return;
         if (_scanEditorDirty)
         {
-            MessageBox.Show(owner: this, messageBoxText: "Save the track name, gauge, spacing and coordinates before computing track points.",
+            MessageBox.Show(owner: this, messageBoxText: "Save the track name, gauge and coordinates before computing track points.",
                 caption: "Compute Railhead Points", button: MessageBoxButton.OK, icon: MessageBoxImage.Warning);
             return;
         }
@@ -42,10 +42,15 @@ public partial class MainWindow
                 return;
             }
             ScanComputationResult result = outcome.Result ?? throw new InvalidOperationException(message: "The successful computation returned no points.");
+            if (chkRailheadToRComparison.IsChecked == true)
+            {
+                var comparisons = await Task.Run(function: () => ScanRailheadComparison.Create(points: result.Points, survey: input.Survey));
+                new ScanRailheadComparisonWindow(trackName: result.Track.Name, rows: comparisons) { Owner = this }.ShowDialog();
+            }
             ScanPointReviewWindow review = new(result: result, exportCsv: DebugCsvEnabled) { Owner = this };
             if (review.ShowDialog() != true)
             {
-                txtScanStatus.Text = "Review cancelled. No computed points or CSV have been saved.";
+                txtScanStatus.Text = "Review cancelled. No computed points have been saved to the database.";
                 return;
             }
             SaveFileDialog dialog = new()
@@ -55,7 +60,7 @@ public partial class MainWindow
             };
             if (DebugCsvEnabled && dialog.ShowDialog(owner: this) != true)
             {
-                txtScanStatus.Text = "Computation completed, but saving was cancelled. No new points or CSV have been saved.";
+                txtScanStatus.Text = "Computation completed, but saving was cancelled. No new points have been saved to the database.";
                 return;
             }
             txtScanStatus.Text = "Saving the completed reference points...";

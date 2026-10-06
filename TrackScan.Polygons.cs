@@ -4,15 +4,15 @@ namespace GNA_DLRreport;
 public sealed record ScanPolygonOptions(decimal CorridorWidth, decimal CollinearityLimit,
     decimal RailheadWidth, decimal RailheadLength, int HeightFilterMillimetres)
 {
-    public static ScanPolygonOptions Default => new(CorridorWidth: 0.30m, CollinearityLimit: 0m,
-        RailheadWidth: 0.04m, RailheadLength: 0.50m, HeightFilterMillimetres: 3);
+    public static ScanPolygonOptions Default => new(CorridorWidth: 0.75m, CollinearityLimit: 0m,
+        RailheadWidth: 0.25m, RailheadLength: 0.50m, HeightFilterMillimetres: 3);
     public void Validate()
     {
-        if (!new[] { 0.30m, 0.50m }.Contains(value: CorridorWidth) ||
+        if (!new[] { 0.30m, 0.50m, 0.75m, 1.00m }.Contains(value: CorridorWidth) ||
             !new[] { 0m, 0.01m, 0.05m, 0.10m }.Contains(value: CollinearityLimit) ||
-            !new[] { 0.02m, 0.03m, 0.04m, 0.05m, 0.06m, 0.075m }.Contains(value: RailheadWidth) ||
+            !new[] { 0.02m, 0.03m, 0.04m, 0.05m, 0.06m, 0.075m, 0.10m, 0.20m, 0.25m, 0.50m, 0.75m }.Contains(value: RailheadWidth) ||
             !new[] { 0.40m, 0.50m, 0.60m }.Contains(value: RailheadLength) ||
-            !new[] { 2, 3, 4, 5, 10 }.Contains(value: HeightFilterMillimetres))
+            !new[] { 2, 3, 4, 5, 6, 7, 8, 9, 10 }.Contains(value: HeightFilterMillimetres))
             throw new ArgumentException(message: "Select polygon parameters from the provided lists.");
     }
 }

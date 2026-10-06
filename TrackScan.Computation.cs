@@ -250,80 +250,24 @@ public static partial class TrackScan
 
     public static ScanComputationOutcome TryComputeTrackPoints(ScanTrack track, IReadOnlyList<ScanSurveyPoint> survey)
     {
+        ArgumentNullException.ThrowIfNull(argument: track);
+        track = track with { PointSpacing = FixedRailheadSpacingMetres };
         ScanCoordinates.ValidateTrack(track: track, roundedCoordinates: true);
         ArgumentNullException.ThrowIfNull(argument: survey);
-        if (survey.Count == 0) throw new InvalidOperationException(message: "Import a Railhead survey before computing track points.");
-        decimal spacing = track.PointSpacing;
-        decimal width = (track.GaugeMillimetres + RailHeadWidthMillimetres) / MillimetresPerMetre;
-        RailCoordinate start = new(Easting: track.RightStartE, Northing: track.RightStartN);
-        RailCoordinate end = new(Easting: track.RightEndE, Northing: track.RightEndN);
-        // Saved endpoints are fixed. Only the first primary step determines
-        // direction from the saved across-track bearing, with one reverse retry.
+        if (survey.Count == 0) throw new InvalidOperationException(message: "Import a Railhead survey before computing railhead points.");
+        RailCoordinate primaryStart = new(Easting: track.RightStartE, Northing: track.RightStartN);
         RailCoordinate secondaryStart = new(Easting: track.LeftStartE, Northing: track.LeftStartN);
-        Vector across = Unit(value: Between(from: start, to: secondaryStart));
-        Vector direction = new(E: across.N, N: -across.E);
-        Vector endDirection = Unit(value: Between(from: start, to: end));
-        SurveyIndex index = new(survey: survey, cellWidth: spacing / 2m);
-        RailCoordinate firstApproximate = Project(origin: start, direction: direction, distance: spacing);
-        ScanSurveyPoint? firstSurveyPoint = index.NearestInDirection(centre: firstApproximate, origin: start,
-            direction: direction, radius: EndpointSearchRadiusMetres, limitDegrees: EndpointSearchLimitDegrees);
-        if (firstSurveyPoint is null)
-        {
-            direction = new(E: -direction.E, N: -direction.N);
-            firstApproximate = Project(origin: start, direction: direction, distance: spacing);
-            firstSurveyPoint = index.NearestInDirection(centre: firstApproximate, origin: start,
-                direction: direction, radius: EndpointSearchRadiusMetres, limitDegrees: EndpointSearchLimitDegrees);
-        }
-        if (firstSurveyPoint is null)
-            return new ScanComputationOutcome(Result: null,
-                Warning: "Primary point 02 could not be established: neither direction has a survey point within 0.500 m and +/-10 degrees. Computation halted; no points have been saved.");
-        List<WorkingPoint> right = new();
-        AddPoint(points: right, coordinate: start, survey: index);
-        HashSet<RailCoordinate> visited = new() { start };
-        while (true)
-        {
-            if (right.Count >= MaximumRailPoints)
-                throw new InvalidOperationException(message: "The rail computation exceeded the one-million-point safety limit. Check the survey and endpoints. No new points have been saved.");
-            RailCoordinate current = right[^1].Coordinate;
-            RailCoordinate approximate = Project(origin: current, direction: direction, distance: spacing);
-            // The terminal plane passes through Primary End and is perpendicular to
-            // Primary Start -> Primary End. No supplied Secondary coordinate affects stopping.
-            if (Dot(a: Between(from: end, to: approximate), b: endDirection) > GeometryToleranceMetres) break;
-            // Subsequent steps retain the existing curve-following search; the
-            // reverse retry above is used only when establishing point 02.
-            ScanSurveyPoint? nearest = right.Count == 1 ? firstSurveyPoint : index.Nearest(centre: approximate);
-            if (nearest is not null)
-                direction = Unit(value: Between(from: current, to: new(Easting: nearest.Easting, Northing: nearest.Northing)));
-            RailCoordinate computed = Project(origin: current, direction: direction, distance: spacing);
-            if (Dot(a: Between(from: end, to: computed), b: endDirection) > GeometryToleranceMetres) break;
-            RailCoordinate key = new(Easting: RoundCoordinate(value: computed.Easting), Northing: RoundCoordinate(value: computed.Northing));
-            if (!visited.Add(item: key)) throw new InvalidOperationException(message: "The rail path returned to an earlier point. Computation halted; check the survey and endpoints.");
-            AddPoint(points: right, coordinate: computed, survey: index);
-            if (Length(value: Between(from: computed, to: end)) <= GeometryToleranceMetres) break;
-        }
-        decimal finalDistance = Length(value: Between(from: right[^1].Coordinate, to: end));
-        if (finalDistance > spacing + StoredEndpointToleranceMetres)
-            throw new InvalidOperationException(message: "The computed rail reaches the end cross-section too far from the supplied endpoint. Check the survey and endpoint coordinates. No new points have been saved.");
-        if (right.Count > 1 && finalDistance <= StoredEndpointToleranceMetres)
-            right.RemoveAt(index: right.Count - 1);
-        AddPoint(points: right, coordinate: end, survey: index);
-        if (right.Count < 2) throw new InvalidOperationException(message: "The track is shorter than the selected spacing. No reference points were saved.");
-        List<WorkingPoint> left = new();
-        Vector firstForward = Unit(value: Between(from: right[0].Coordinate, to: right[1].Coordinate));
-        bool secondaryUsesLeftNormal = Dot(a: LeftFromForward(forward: firstForward), b: across) >= 0m;
-        AddPoint(points: left, coordinate: secondaryStart, survey: index);
-        for (int point = 1; point < right.Count - 1; point++)
-        {
-            Vector incoming = Unit(value: Between(from: right[point - 1].Coordinate, to: right[point].Coordinate));
-            Vector outgoing = Unit(value: Between(from: right[point].Coordinate, to: right[point + 1].Coordinate));
-            Vector mean = Unit(value: new Vector(E: incoming.E + outgoing.E, N: incoming.N + outgoing.N));
-            Vector offset = LeftFromForward(forward: mean);
-            if (!secondaryUsesLeftNormal) offset = new(E: -offset.E, N: -offset.N);
-            RailCoordinate coordinate = Project(origin: right[point].Coordinate, direction: offset, distance: width);
-            AddPoint(points: left, coordinate: coordinate, survey: index);
-        }
-        RailCoordinate secondaryEnd = new(Easting: track.LeftEndE, Northing: track.LeftEndN);
-        AddPoint(points: left, coordinate: secondaryEnd, survey: index);
+        Vector across = Unit(value: Between(from: primaryStart, to: secondaryStart));
+        Vector initialDirection = new(E: across.N, N: -across.E);
+        SurveyIndex index = new(survey: survey, cellWidth: FixedRailheadSpacingMetres / 2m);
+        var primary = FollowIndependentRail(start: primaryStart, end: new(Easting: track.RightEndE, Northing: track.RightEndN),
+            initialDirection: initialDirection, survey: index, railName: "Primary");
+        if (primary.Warning is not null) return new(Result: null, Warning: primary.Warning);
+        var secondary = FollowIndependentRail(start: secondaryStart, end: new(Easting: track.LeftEndE, Northing: track.LeftEndN),
+            initialDirection: initialDirection, survey: index, railName: "Secondary");
+        if (secondary.Warning is not null) return new(Result: null, Warning: secondary.Warning);
+        List<WorkingPoint> right = primary.Points;
+        List<WorkingPoint> left = secondary.Points;
         string? rightWarning = MissingEndpointHeightWarning(points: right, rail: "Primary", trackName: track.Name, radius: HeightSearchRadiusMetres);
         string? leftWarning = MissingEndpointHeightWarning(points: left, rail: "Secondary", trackName: track.Name, radius: HeightSearchRadiusMetres);
         if (rightWarning is not null || leftWarning is not null)
@@ -335,7 +279,7 @@ public static partial class TrackScan
         }
         InterpolateHeights(points: right);
         InterpolateHeights(points: left);
-        List<ScanComputedPoint> result = new(capacity: right.Count * 2);
+        List<ScanComputedPoint> result = new(capacity: right.Count + left.Count);
         AppendResult(result: result, points: right, name: track.Name, rail: "R");
         AppendResult(result: result, points: left, name: track.Name, rail: "L");
         return new ScanComputationOutcome(Result: new ScanComputationResult(Track: track, Points: result.AsReadOnly()), Warning: null);

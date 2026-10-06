@@ -6,7 +6,7 @@ namespace GNA_DLRreport;
 
 public partial class MainWindow
 {
-    #region Endpoint Computation And Review Before Saving
+    #region Preserve Supplied Endpoints And Review Before Saving
     private async void btnScanSaveTrack_Click(object sender, RoutedEventArgs e)
     {
         ScanTrack original;
@@ -26,37 +26,8 @@ public partial class MainWindow
         {
             ScanRepository repository = CurrentScanRepository();
             ScanProjectState expected = _scanState ?? throw new InvalidOperationException(message: "Refresh Scanning first.");
-            txtScanStatus.Text = "Loading the current Railhead survey for the endpoint checks...";
-            IReadOnlyList<ScanSurveyPoint> survey = await repository.LoadStartPointSurveyAsync(expected: expected);
-            ScanStartPointCheck start = await Task.Run(function: () => TrackScan.CheckStartLeftPoint(
-                rightStart: new(Easting: original.RightStartE, Northing: original.RightStartN),
-                primaryEnd: new(Easting: original.RightEndE, Northing: original.RightEndN),
-                suppliedLeftStart: new(Easting: original.LeftStartE, Northing: original.LeftStartN),
-                pointSpacing: original.PointSpacing, gaugeMillimetres: original.GaugeMillimetres, survey: survey));
-            txtScanStatus.Clear();
-            if (!start.Succeeded)
-            {
-                MessageBox.Show(owner: this, messageBoxText: start.Warning, caption: "Endpoint computation stopped", button: MessageBoxButton.OK, icon: MessageBoxImage.Warning);
-                return;
-            }
-            ScanEndPointCheck end = await Task.Run(function: () => TrackScan.CheckSecondaryEndPoint(
-                primaryEnd: new(Easting: original.RightEndE, Northing: original.RightEndN),
-                primaryStart: new(Easting: original.RightStartE, Northing: original.RightStartN),
-                suppliedSecondaryEnd: new(Easting: original.LeftEndE, Northing: original.LeftEndN),
-                pointSpacing: original.PointSpacing, gaugeMillimetres: original.GaugeMillimetres, survey: survey));
-            txtScanStatus.Clear();
-            if (!end.Succeeded)
-            {
-                MessageBox.Show(owner: this, messageBoxText: end.Warning, caption: "Endpoint computation stopped", button: MessageBoxButton.OK, icon: MessageBoxImage.Warning);
-                return;
-            }
-            TrackScan.RailCoordinate secondaryStart = start.LeftStart ?? throw new InvalidOperationException(message: "Missing checked secondary start.");
-            TrackScan.RailCoordinate secondaryEnd = end.SecondaryEnd ?? throw new InvalidOperationException(message: "Missing checked secondary end.");
-            ScanTrack reviewed = TrackScan.RoundTrackCoordinates(track: original with
-            {
-                LeftStartE = secondaryStart.Easting, LeftStartN = secondaryStart.Northing,
-                LeftEndE = secondaryEnd.Easting, LeftEndN = secondaryEnd.Northing
-            });
+            // Endpoint positions are supplied observations, not gauge-derived positions.
+            ScanTrack reviewed = TrackScan.RoundTrackCoordinates(track: original);
             ScanCoordinates.ValidateTrack(track: reviewed, roundedCoordinates: true);
             ScanEndpointReviewWindow review = new(original: original, proposed: reviewed) { Owner = this };
             if (review.ShowDialog() != true)

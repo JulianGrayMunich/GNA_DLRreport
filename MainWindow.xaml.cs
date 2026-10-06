@@ -1,4 +1,4 @@
-﻿#region System Preparation
+#region System Preparation
 
 using System;
 using System.Collections.Generic;
@@ -35,7 +35,7 @@ namespace GNA_DLRreport
         #region Application Footer
 
         private const string ApplicationRevision =
-            "089";
+            "105";
 
         private const string ChartDataIntervalEpoch =
             "Epoch";
@@ -29802,3 +29802,5 @@ namespace GNA_DLRreport
     #endregion
 
 }
+
+

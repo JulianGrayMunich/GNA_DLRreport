@@ -380,9 +380,8 @@ public partial class MainWindow
             _scanEditingTrack = track;
             _scanLastSelection = track;
             txtScanTrackName.Text = track?.Name ?? string.Empty;
-            cmbScanSpacing.SelectedIndex = track?.PointSpacing == 1m ? 0 : 1;
-            rbScanGauge1435.IsChecked = track is null || track.GaugeMillimetres == TrackScan.StandardGaugeMillimetres;
-            rbScanGauge1600.IsChecked = track?.GaugeMillimetres == TrackScan.BroadGaugeMillimetres;
+            rbScanGauge1435.IsChecked = track?.GaugeMillimetres == TrackScan.StandardGaugeMillimetres;
+            rbScanGauge1600.IsChecked = track is null || track.GaugeMillimetres == TrackScan.BroadGaugeMillimetres;
             TextBox[] boxes = { txtScanLeftStartE, txtScanLeftStartN, txtScanRightStartE, txtScanRightStartN,
                 txtScanLeftEndE, txtScanLeftEndN, txtScanRightEndE, txtScanRightEndN };
             decimal[] values = track is null ? Array.Empty<decimal>() : new[] { track.LeftStartE, track.LeftStartN, track.RightStartE, track.RightStartN,
@@ -406,11 +405,6 @@ public partial class MainWindow
     }
 
     private void ScanGauge_Checked(object sender, RoutedEventArgs e)
-    {
-        if (!_scanFillingEditor && IsLoaded) _scanEditorDirty = true;
-    }
-
-    private void ScanSpacing_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!_scanFillingEditor && IsLoaded) _scanEditorDirty = true;
     }
@@ -476,7 +470,7 @@ public partial class MainWindow
             RightEndE: ReadScanCoordinate(box: txtScanRightEndE, label: "Primary end Easting"),
             RightEndN: ReadScanCoordinate(box: txtScanRightEndN, label: "Primary end Northing"),
             GaugeMillimetres: rbScanGauge1600.IsChecked == true ? TrackScan.BroadGaugeMillimetres : TrackScan.StandardGaugeMillimetres,
-            PointSpacing: cmbScanSpacing.SelectedIndex == 0 ? 1m : 3m);
+            PointSpacing: TrackScan.FixedRailheadSpacingMetres);
     }
 
     private async void btnScanDeleteTrack_Click(object sender, RoutedEventArgs e)

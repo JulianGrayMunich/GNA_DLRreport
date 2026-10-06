@@ -234,7 +234,7 @@ internal sealed partial class ScanRepository
     {
         if (!delete)
         {
-            track = reviewedEndpoints ? TrackScan.RoundTrackCoordinates(track: track) : TrackScan.AdjustTrackToPrimaryRail(track: track);
+            track = TrackScan.RoundTrackCoordinates(track: track with { PointSpacing = TrackScan.FixedRailheadSpacingMetres });
             ScanCoordinates.ValidateTrack(track: track, roundedCoordinates: true);
         }
         await using SqlConnection connection = Connection(database: DatabaseName);

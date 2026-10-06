@@ -27,7 +27,7 @@ internal sealed partial class ScanRepository
             if (candidate.TrackId == trackId) { track = candidate; break; }
         ScanTrack selected = track ?? throw new InvalidOperationException(message: "Select a saved track before computing points.");
         var snapshot = await LoadCurrentSurveySnapshotAsync(expected: expected);
-        return new ScanComputationInput(SurveyId: snapshot.SurveyId, Track: selected, Survey: snapshot.Survey);
+        return new ScanComputationInput(SurveyId: snapshot.SurveyId, Track: selected with { PointSpacing = TrackScan.FixedRailheadSpacingMetres }, Survey: snapshot.Survey);
     }
 
     public async Task<IReadOnlyList<ScanSurveyPoint>> LoadStartPointSurveyAsync(ScanProjectState expected)

@@ -23,12 +23,21 @@ public sealed record ScanEpochReading(long RunId, string Rail, int Sequence, str
 public sealed record ScanOffsetReading(long PolygonId, string PointId, decimal ReferenceHeight, double? ScanOffset,
     long ScanPointCount, double? StandardError, double? RawMean, long RejectedPointCount)
 {
-    public string Status => ScanPointCount > 0 ? "Offset stored" : ScanOffset.HasValue ? "No accepted points; earlier offset retained" : "No accepted points; no stored offset";
+    public double? MaximumHeight { get; init; }
+    public double? MinimumHeight { get; init; }
+    public long ReferenceRejectedPointCount { get; init; }
+    public string? Warning { get; init; }
+    public string Status => Warning is not null ? Warning + (ScanOffset.HasValue ? " Earlier offset retained." : " No stored offset.")
+        : ScanPointCount > 0 ? "Offset stored" + (ReferenceRejectedPointCount > 0 ? $"; {ReferenceRejectedPointCount:N0} points outside 1 m rejected" : string.Empty)
+        : ScanOffset.HasValue ? "No accepted points; earlier offset retained" : "No accepted points; no stored offset";
 }
 public sealed record ScanCorridorSelection(string TrackName, string Rail, long ScanPointCount);
 public sealed record ScanProcessingResult(string SourcePath, string Sha256, long FileBytes, long LasPointCount,
     IReadOnlyList<ScanProcessingRail> Rails, IReadOnlyList<ScanEpochReading> Readings)
 {
+    public IReadOnlyList<ScanHeightHistogram> DebugHistograms { get; init; } = Array.Empty<ScanHeightHistogram>();
+    public int RejectionCount { get; init; } = 10;
+    public IReadOnlyList<string> Warnings { get; init; } = Array.Empty<string>();
     public IReadOnlyList<ScanCorridorSelection> CorridorSelections { get; init; } = Array.Empty<ScanCorridorSelection>();
     public bool CalculateOffsets { get; init; }
     public IReadOnlyList<ScanOffsetReading> Offsets { get; init; } = Array.Empty<ScanOffsetReading>();
@@ -69,8 +78,9 @@ public static partial class TrackScan
 
     public static ScanProcessingResult ProcessLas(string path, DateTime utcTimestamp,
         IReadOnlyList<ScanProcessingRail> rails, IProgress<string>? progress = null, bool calculateOffsets = false,
-        IProgress<ScanEpochReading>? readingProgress = null, CancellationToken cancellationToken = default)
+        IProgress<ScanEpochReading>? readingProgress = null, CancellationToken cancellationToken = default, bool collectDebugHistograms = false, int rejectionCount = 10)
     {
+        ValidateRejectionCount(rejectionCount: rejectionCount);
         if (rails.Count == 0) throw new InvalidOperationException(message: "Select at least one rail with saved polygons.");
         cancellationToken.ThrowIfCancellationRequested();
         string? offsetWarning = MissingScanCorridorMessage(rails: rails) ?? MissingScanOffsetMessage(rails: rails, calculateOffsets: calculateOffsets);
@@ -101,7 +111,8 @@ public static partial class TrackScan
                 }
             foreach (ScanProcessingHead head in rail.Heads)
             {
-                ProcessingTarget target = new(rail: rail, head: head, corridor: boundary, index: targets.Count);
+                ProcessingTarget target = new(rail: rail, head: head, corridor: boundary, index: targets.Count, rejectionCount: rejectionCount);
+                if (collectDebugHistograms && ScanHeightHistogram.IsRequested(pointId: head.PointId)) target.DebugHistogram = new(pointId: head.PointId);
                 targets.Add(item: target);
                 for (long e = Cell(value: target.Boundary.MinE - BoundaryArithmeticAllowance); e <= Cell(value: target.Boundary.MaxE + BoundaryArithmeticAllowance); e++)
                     for (long n = Cell(value: target.Boundary.MinN - BoundaryArithmeticAllowance); n <= Cell(value: target.Boundary.MaxN + BoundaryArithmeticAllowance); n++)
@@ -196,15 +207,22 @@ public static partial class TrackScan
             cancellationToken.ThrowIfCancellationRequested();
             ReadHashed(stream: stream, hash: hash, buffer: buffer.AsSpan(start: 0, length: (int)Math.Min(val1: buffer.Length, val2: stream.Length - stream.Position)));
         }
-        progress?.Report(value: "Filtering polygon heights around their initial means...");
+        progress?.Report(value: "Rejecting sparse 1 mm bands and selecting points below each surviving maximum...");
         spoolWriter.Flush();
         spool.Position = 0;
         using BinaryReader spoolReader = new(input: spool, encoding: System.Text.Encoding.UTF8, leaveOpen: true);
-        while (spool.Position < spool.Length)
+        foreach (ProcessingTarget target in targets) target.PrepareSurface();
+        for (int pass = 0; pass < 2 && targets.Any(predicate: target => target.NeedsPass); pass++)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            int index = spoolReader.ReadInt32();
-            targets[index].Accumulate(height: spoolReader.ReadDouble());
+            foreach (ProcessingTarget target in targets) target.BeginPass();
+            spool.Position = 0;
+            while (spool.Position < spool.Length)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                int index = spoolReader.ReadInt32();
+                targets[index].Accumulate(height: spoolReader.ReadDouble());
+            }
+            foreach (ProcessingTarget target in targets) target.EndPass();
         }
         List<ScanEpochReading> readings = new();
         List<ScanOffsetReading> offsets = new();
@@ -221,7 +239,7 @@ public static partial class TrackScan
             selections.Add(item: new(TrackName: corridor.Rail.TrackName, Rail: corridor.Rail.Rail, ScanPointCount: corridor.PointCount));
         return new(SourcePath: fullPath, Sha256: Convert.ToHexString(inArray: hash.GetHashAndReset()), FileBytes: stream.Length,
             LasPointCount: total, Rails: rails, Readings: readings.AsReadOnly())
-        { CalculateOffsets = calculateOffsets, Offsets = offsets.AsReadOnly(), CorridorSelections = selections.AsReadOnly() };
+        { RejectionCount = rejectionCount, DebugHistograms = targets.Where(predicate: target => target.DebugHistogram is not null).OrderBy(keySelector: target => target.PointId, comparer: StringComparer.OrdinalIgnoreCase).SelectMany(selector: target => new[] { target.DebugHistogram!, target.FilteredHistogram! }).ToArray(), Warnings = targets.Where(predicate: target => target.Warning is not null).Select(selector: target => target.PointId + ": " + target.Warning).ToArray(), CalculateOffsets = calculateOffsets, Offsets = offsets.AsReadOnly(), CorridorSelections = selections.AsReadOnly() };
     }
 
     private static void ReadHashed(Stream stream, IncrementalHash hash, Span<byte> buffer)
@@ -250,36 +268,90 @@ public static partial class TrackScan
         private readonly ScanProcessingRail _rail;
         private readonly ScanProcessingHead _head;
         private long _accepted, _rejected;
-        private double _mean, _m2, _initialMean;
-        private long _initialCount;
+        private double _mean, _m2, _lower, _upper, _minimum, _maximum;
+        private readonly SurfaceRange _surface;
+        private readonly Dictionary<long, long> _finalBands = new();
+        private bool _finalPass;
+        private static long FinalBand(double height) => checked((long)Math.Floor(d: height / 0.001d + 1e-8d));
+        public ScanHeightHistogram? DebugHistogram { get; set; }
+        public ScanHeightHistogram? FilteredHistogram { get; private set; }
+        public string PointId => _head.PointId;
+        public string? Warning { get; private set; }
+        public bool NeedsPass { get; private set; }
         public int Index { get; }
         public PreparedBoundary? Corridor { get; }
         public PreparedBoundary Boundary { get; }
-        public ProcessingTarget(ScanProcessingRail rail, ScanProcessingHead head, PreparedBoundary? corridor, int index)
+        public ProcessingTarget(ScanProcessingRail rail, ScanProcessingHead head, PreparedBoundary? corridor, int index, int rejectionCount)
         {
+            _surface = new(rejectionCount: rejectionCount);
             Index = index; _rail = rail; _head = head; Corridor = corridor; Boundary = new(polygon: head.Polygon);
             if (Boundary.MaxE - Boundary.MinE > 2d || Boundary.MaxN - Boundary.MinN > 2d)
                 throw new InvalidDataException(message: "A saved railhead polygon exceeds the supported dimensions. Recompute its polygons.");
         }
         public void ObserveInitial(double height)
         {
-            _initialCount++;
-            _initialMean += (height - _initialMean) / _initialCount;
+            DebugHistogram?.Observe(height: height); // Before both height filters.
+            _surface.Observe(height: height, referenceHeight: (double)_head.ReferenceHeight);
+        }
+        public void PrepareSurface()
+        {
+            if (DebugHistogram is not null) FilteredHistogram = new(pointId: PointId, isFiltered: true);
+            _surface.SelectSupportedMaximum();
+            if (!_surface.Maximum.HasValue)
+            {
+                Fail(message: _surface.Count == 0 ? "No scan points inside polygon." : $"No 1 mm height band contains at least {_surface.RejectionCount} eligible points after the 1 m reference check.");
+                return;
+            }
+            _upper = _surface.Maximum.Value;
+            _lower = _upper - _rail.HeightFilterMillimetres / 1000d;
+            NeedsPass = true;
+        }
+        public void BeginPass()
+        {
+            if (!NeedsPass) return;
+            _accepted = 0; _mean = 0; _m2 = 0; _minimum = double.PositiveInfinity; _maximum = double.NegativeInfinity;
         }
         public void Accumulate(double height)
         {
-            // Tolerance only covers binary representation at the inclusive height-filter boundary.
-            if (Math.Abs(value: height - _initialMean) > _rail.HeightFilterMillimetres / 1000d + 1e-9d)
-            { _rejected++; return; }
+            if (!NeedsPass || !_surface.IsSupported(height: height) || Math.Abs(value: height - (double)_head.ReferenceHeight) > MaximumReferenceDeviationMetres + BoundaryArithmeticAllowance ||
+                height < _lower - BoundaryArithmeticAllowance || height > _upper + BoundaryArithmeticAllowance) return;
+            long band = FinalBand(height: height);
+            if (!_finalPass)
+            {
+                _finalBands.TryGetValue(key: band, value: out long count);
+                _finalBands[band] = checked(count + 1);
+                return;
+            }
+            if (!_finalBands.TryGetValue(key: band, value: out long population) || population < _surface.RejectionCount) return;
+            _minimum = Math.Min(val1: _minimum, val2: height);
+            _maximum = Math.Max(val1: _maximum, val2: height);
+            FilteredHistogram?.Observe(height: height);
             _accepted++;
             double delta = height - _mean;
             _mean += delta / _accepted;
             _m2 += delta * (height - _mean);
         }
+        public void EndPass()
+        {
+            if (!NeedsPass) return;
+            if (!_finalPass)
+            {
+                _finalPass = true;
+                if (!_finalBands.Values.Any(predicate: count => count >= _surface.RejectionCount))
+                    Fail(message: $"No final 1 mm band contains at least {_surface.RejectionCount} points. Earlier offset retained where available.");
+                return;
+            }
+            _rejected = _surface.Count - _accepted;
+            NeedsPass = false;
+            if (_accepted == 0) Fail(message: "No scan points remain within the maximum-height band.");
+        }
+        private void Fail(string message)
+        { Warning = message; NeedsPass = false; _accepted = 0; _rejected = _surface.Count; _mean = 0; _m2 = 0; }
         private double? Error => _accepted > 1 ? Math.Sqrt(d: Math.Max(val1: 0d, val2: _m2) / (_accepted - 1) / _accepted) : null;
         public ScanOffsetReading OffsetReading() => new(PolygonId: _head.PolygonId, PointId: _head.PointId,
             ReferenceHeight: _head.ReferenceHeight, ScanOffset: _accepted > 0 ? (double)_head.ReferenceHeight - _mean : _head.ScanOffset,
-            ScanPointCount: _accepted, StandardError: Error, RawMean: _accepted > 0 ? _mean : null, RejectedPointCount: _rejected);
+            ScanPointCount: _accepted, StandardError: Error, RawMean: _accepted > 0 ? _mean : null, RejectedPointCount: _rejected)
+            { MaximumHeight = _accepted > 0 ? _maximum : null, MinimumHeight = _accepted > 0 ? _minimum : null, ReferenceRejectedPointCount = _surface.ReferenceRejectedCount, Warning = Warning };
         public ScanEpochReading Reading(DateTime epoch, bool calculateOffset)
         {
             double? offset = calculateOffset && _accepted > 0 ? (double)_head.ReferenceHeight - _mean : _head.ScanOffset;

@@ -27,15 +27,15 @@ public partial class MainWindow
 
     private void InitialisePolygonOptions()
     {
-        cmbCorridorWidth.ItemsSource = new[] { 0.30m, 0.50m };
+        cmbCorridorWidth.ItemsSource = new[] { 0.30m, 0.50m, 0.75m, 1.00m };
         cmbCollinearity.ItemsSource = new[] {
             new ScanCollinearityOption(Value: 0m, Label: "None"),
             new ScanCollinearityOption(Value: 0.01m, Label: "0.01"),
             new ScanCollinearityOption(Value: 0.05m, Label: "0.05"),
             new ScanCollinearityOption(Value: 0.10m, Label: "0.1") };
-        cmbHeadWidth.ItemsSource = new[] { 0.02m, 0.03m, 0.04m, 0.05m, 0.06m, 0.075m };
+        cmbHeadWidth.ItemsSource = new[] { 0.02m, 0.03m, 0.04m, 0.05m, 0.06m, 0.075m, 0.10m, 0.20m, 0.25m, 0.50m, 0.75m };
         cmbHeadLength.ItemsSource = new[] { 0.40m, 0.50m, 0.60m };
-        cmbHeightFilter.ItemsSource = new[] { 2, 3, 4, 5, 10 };
+        cmbHeightFilter.ItemsSource = new[] { 2, 3, 4, 5, 6, 7, 8, 9, 10 };
         ApplyPolygonOptions(options: ScanPolygonOptions.Default);
     }
 
