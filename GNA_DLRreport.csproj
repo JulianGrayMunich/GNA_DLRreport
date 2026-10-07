@@ -10,15 +10,9 @@
 
   <ItemGroup>
     <!-- Retained only to stop/disable a previously installed Revision 103 service. -->
-    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.0" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.12" />
     <PackageReference Include="EPPlus" Version="8.7.1" />
-    <PackageReference Include="Microsoft.Data.SqlClient" Version="7.1.0" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Reference Include="GNAtools">
-      <HintPath>..\..\GNAtools\GNAtools\bin\Release\net8.0\GNAtools.dll</HintPath>
-    </Reference>
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="7.1.1" />
   </ItemGroup>
 
 <ItemGroup>
@@ -34,5 +28,9 @@
     <EmbeddedResource Include="DBTrackScan.sql" />
     <EmbeddedResource Include="DBTrackScan.Upgrade.sql" />
     <EmbeddedResource Include="DBTrackScan.Computation.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\GNAtools\GNAtools\GNAtools.csproj" />
   </ItemGroup>
 </Project>

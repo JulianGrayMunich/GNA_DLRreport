@@ -1,3 +1,7 @@
 <Solution>
+  <Project Path="../../DBapi/databaseAPI/databaseAPI.csproj" />
+  <Project Path="../../gnaDataClasses/gnaDataClasses/gnaDataClasses.csproj" />
+  <Project Path="../../GNAsurveytools/GNAsurvey/GNAsurveycalcs.csproj" />
+  <Project Path="../../GNAtools/GNAtools/GNAtools.csproj" />
   <Project Path="GNA_DLRreport.csproj" />
 </Solution>
