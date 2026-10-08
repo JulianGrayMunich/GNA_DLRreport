@@ -67,8 +67,10 @@ internal sealed partial class ScanRepository
         // that disposal releases the SQL session lock even when database creation fails.
         await using SqlConnection master = Connection(database: "master", pooling: false);
         await master.OpenAsync();
+        bool databaseCreated;
         using (SqlCommand create = Command(connection: master, transaction: null, sql: """
                 DECLARE @r int;
+                DECLARE @created bit=0;
                 EXEC @r = sys.sp_getapplock @Resource=N'GNA:CreateDBTrackScan', @LockMode=N'Exclusive',
                     @LockOwner=N'Session', @LockTimeout=10000;
                 IF @r < 0 THROW 51063, 'DBTrackScan creation is busy. Please retry.', 1;
@@ -78,7 +80,11 @@ internal sealed partial class ScanRepository
                         ALTER DATABASE [DBTrackScan] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
                         DROP DATABASE [DBTrackScan];
                     END;
-                    IF DB_ID(N'DBTrackScan') IS NULL EXEC(N'CREATE DATABASE [DBTrackScan]');
+                    IF DB_ID(N'DBTrackScan') IS NULL
+                    BEGIN
+                        EXEC(N'CREATE DATABASE [DBTrackScan]');
+                        SET @created=1;
+                    END;
                 END TRY
                 BEGIN CATCH
                     -- If DROP failed, do not leave the surviving database in single-user mode.
@@ -91,14 +97,28 @@ internal sealed partial class ScanRepository
                     END CATCH;
                     THROW;
                 END CATCH;
+                SELECT CONVERT(int,@created);
                 """))
         {
             Add(command: create, name: "@recreate", type: SqlDbType.Bit, value: recreateExistingDatabase);
-            await create.ExecuteNonQueryAsync();
+            databaseCreated = (int)(await create.ExecuteScalarAsync()
+                ?? throw new InvalidOperationException(message: "Cannot confirm DBTrackScan creation.")) == 1;
         }
         await using SqlConnection connection = Connection(database: DatabaseName);
         await connection.OpenAsync();
         await EnsurePreparationSchemaAsync(connection: connection, allowCreate: true);
+        if (databaseCreated)
+        {
+            // Reduction tables are installed only in a newly created database.
+            // Opening an existing database must not perform this schema update.
+            using SqlTransaction transaction = connection.BeginTransaction(iso: IsolationLevel.Serializable);
+            await LockAsync(connection: connection, transaction: transaction, resource: "GNA:ScanEpochSchema");
+            using SqlCommand epochs = Command(connection: connection, transaction: transaction, sql: EpochSchema);
+            await epochs.ExecuteNonQueryAsync();
+            using SqlCommand reductions = Command(connection: connection, transaction: transaction, sql: ReductionCreationSchema);
+            await reductions.ExecuteNonQueryAsync();
+            await transaction.CommitAsync();
+        }
     }
 
     private static async Task EnsurePreparationSchemaAsync(SqlConnection connection, bool allowCreate)

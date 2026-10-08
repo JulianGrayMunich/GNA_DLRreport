@@ -35,7 +35,7 @@ namespace GNA_DLRreport
         #region Application Footer
 
         private const string ApplicationRevision =
-            "105";
+            "107";
 
         private const string ChartDataIntervalEpoch =
             "Epoch";
@@ -29802,5 +29802,7 @@ namespace GNA_DLRreport
     #endregion
 
 }
+
+
 
 
